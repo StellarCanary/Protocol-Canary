@@ -40,6 +40,9 @@ During development, run the CLI directly from the workspace:
 
 ```bash
 cargo run -p canary-cli -- check
+cargo run -p canary-cli -- inspect
+cargo run -p canary-cli -- fixtures --protocol 28
+cargo run -p canary-cli -- check --json > result.json && cargo run -p canary-cli -- report result.json --format markdown
 ```
 
 ## Example output
@@ -91,19 +94,14 @@ warnings_are_failures = false
 
 ## Protocol 28
 
-The first compatibility pack targets Stellar Protocol 28. It exercises the
-following real protocol changes:
-
-- **CAP-0083** — new `StellarValue` behavior used by validators to vote to
-  drop a transaction set, tested at the XDR level.
-- **CAP-0085** — externally managed contract executable references, tested
-  through the Soroban simulation surface.
-- **CAP-0086** — sparse-map host functions for efficient migration, tested
-  through the Soroban simulation surface.
-
-Fixture data for these checks lives in the separate `ProtocolCanary-Fixtures`
-repository; see [docs/protocol-28.md](docs/protocol-28.md) once fixtures are
-integrated.
+The first compatibility pack targets Stellar Protocol 28: a real CAP-0083
+XDR fixture, a live RPC network-identity fixture, and a real Soroban
+simulation fixture, all verified against `soroban-testnet.stellar.org` and
+included under `tests/fixtures/protocol-28/` for local development. See
+[docs/protocol-28.md](docs/protocol-28.md) for exactly what is and is not
+covered — CAP-0085 and CAP-0086 host-function semantics specifically are
+intentionally left to the dedicated `ProtocolCanary-Fixtures` repository
+rather than guessed at here.
 
 ## CI
 

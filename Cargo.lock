@@ -97,6 +97,10 @@ dependencies = [
 [[package]]
 name = "canary-git"
 version = "0.1.0"
+dependencies = [
+ "canary-core",
+ "thiserror",
+]
 
 [[package]]
 name = "canary-project"

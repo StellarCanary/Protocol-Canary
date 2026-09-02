@@ -29,6 +29,12 @@ dependencies = [
 [[package]]
 name = "canary-fixtures"
 version = "0.1.0"
+dependencies = [
+ "canary-core",
+ "serde",
+ "thiserror",
+ "toml",
+]
 
 [[package]]
 name = "canary-git"

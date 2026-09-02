@@ -11,3 +11,9 @@ repository.workspace = true
 all = "warn"
 
 [dependencies]
+canary-core.workspace = true
+canary-fixtures.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+toml.workspace = true
+stellar-xdr = { version = "=28.0.0", features = ["base64", "alloc"] }

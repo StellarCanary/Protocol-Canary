@@ -56,7 +56,16 @@ pub fn parse_fixture_file(path: &Path) -> Result<LoadedFixture, FixtureError> {
         path: path.to_path_buf(),
         source,
     })?;
-    let raw: RawFixtureFile = toml::from_str(&raw_text).map_err(|source| FixtureError::Parse {
+    parse_fixture_str(&raw_text, path)
+}
+
+/// Parses fixture TOML already in memory, as if it had come from `path`
+/// (used to resolve `input_file`/`expected_file` and for error messages).
+///
+/// This is split out from [`parse_fixture_file`] so surface-runner crates
+/// can build a [`LoadedFixture`] in tests without touching the filesystem.
+pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, FixtureError> {
+    let raw: RawFixtureFile = toml::from_str(raw_text).map_err(|source| FixtureError::Parse {
         path: path.to_path_buf(),
         source: Box::new(source),
     })?;

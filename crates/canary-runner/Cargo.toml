@@ -11,3 +11,16 @@ repository.workspace = true
 all = "warn"
 
 [dependencies]
+canary-core.workspace = true
+canary-fixtures.workspace = true
+canary-xdr.workspace = true
+canary-rpc.workspace = true
+canary-soroban.workspace = true
+futures = "0.3"
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"
+serde_json.workspace = true
+stellar-strkey = "0.0.13"

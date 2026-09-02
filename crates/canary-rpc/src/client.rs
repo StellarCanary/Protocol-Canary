@@ -96,6 +96,7 @@ impl Default for RetryPolicy {
 }
 
 /// A [`RpcClient`] backed by a real HTTP endpoint.
+#[derive(Clone)]
 pub struct HttpRpcClient {
     http: reqwest::Client,
     endpoint: String,

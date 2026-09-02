@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.88"
 license = "Apache-2.0"
@@ -23,16 +23,16 @@ repository = "https://github.com/StellarCanary/Protocol-Canary"
 authors = ["Stellar Canary Contributors"]
 
 [workspace.dependencies]
-canary-core = { path = "crates/canary-core", version = "0.1.0" }
-canary-config = { path = "crates/canary-config", version = "0.1.0" }
-canary-project = { path = "crates/canary-project", version = "0.1.0" }
-canary-fixtures = { path = "crates/canary-fixtures", version = "0.1.0" }
-canary-xdr = { path = "crates/canary-xdr", version = "0.1.0" }
-canary-rpc = { path = "crates/canary-rpc", version = "0.1.0" }
-canary-soroban = { path = "crates/canary-soroban", version = "0.1.0" }
-canary-runner = { path = "crates/canary-runner", version = "0.1.0" }
-canary-report = { path = "crates/canary-report", version = "0.1.0" }
-canary-git = { path = "crates/canary-git", version = "0.1.0" }
+canary-core = { path = "crates/canary-core", version = "0.1.1" }
+canary-config = { path = "crates/canary-config", version = "0.1.1" }
+canary-project = { path = "crates/canary-project", version = "0.1.1" }
+canary-fixtures = { path = "crates/canary-fixtures", version = "0.1.1" }
+canary-xdr = { path = "crates/canary-xdr", version = "0.1.1" }
+canary-rpc = { path = "crates/canary-rpc", version = "0.1.1" }
+canary-soroban = { path = "crates/canary-soroban", version = "0.1.1" }
+canary-runner = { path = "crates/canary-runner", version = "0.1.1" }
+canary-report = { path = "crates/canary-report", version = "0.1.1" }
+canary-git = { path = "crates/canary-git", version = "0.1.1" }
 
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }

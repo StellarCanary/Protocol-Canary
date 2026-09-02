@@ -8,18 +8,20 @@
 
 use std::fmt;
 
-use stellar_xdr::{Limits, ReadXdr, StellarValue};
+use stellar_xdr::{ContractExecutable, Limits, ReadXdr, StellarValue};
 
 /// A type name a fixture can name in its `type` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum XdrTypeName {
     StellarValue,
+    ContractExecutable,
 }
 
 impl fmt::Display for XdrTypeName {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             XdrTypeName::StellarValue => f.write_str("StellarValue"),
+            XdrTypeName::ContractExecutable => f.write_str("ContractExecutable"),
         }
     }
 }
@@ -30,8 +32,10 @@ impl std::str::FromStr for XdrTypeName {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
             "StellarValue" => Ok(XdrTypeName::StellarValue),
+            "ContractExecutable" => Ok(XdrTypeName::ContractExecutable),
             other => Err(format!(
-                "unsupported XDR type name {other:?}: supported types are: StellarValue"
+                "unsupported XDR type name {other:?}: supported types are: StellarValue, \
+                 ContractExecutable"
             )),
         }
     }
@@ -41,12 +45,14 @@ impl std::str::FromStr for XdrTypeName {
 #[derive(Debug, Clone)]
 pub enum DecodedValue {
     StellarValue(StellarValue),
+    ContractExecutable(ContractExecutable),
 }
 
 impl DecodedValue {
     pub fn type_name(&self) -> XdrTypeName {
         match self {
             DecodedValue::StellarValue(_) => XdrTypeName::StellarValue,
+            DecodedValue::ContractExecutable(_) => XdrTypeName::ContractExecutable,
         }
     }
 }
@@ -61,6 +67,10 @@ pub fn decode(type_name: XdrTypeName, base64: &str) -> Result<DecodedValue, stel
     match type_name {
         XdrTypeName::StellarValue => {
             StellarValue::from_xdr_base64(base64, Limits::none()).map(DecodedValue::StellarValue)
+        }
+        XdrTypeName::ContractExecutable => {
+            ContractExecutable::from_xdr_base64(base64, Limits::none())
+                .map(DecodedValue::ContractExecutable)
         }
     }
 }

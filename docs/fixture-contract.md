@@ -112,7 +112,7 @@ which surface crate parses its body:
 
 | `surface` | Parsed by | Expected body fields |
 |---|---|---|
-| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (currently only `"StellarValue"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (currently `"StellarValue"` or `"ContractExecutable"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
 | `"rpc"` | `canary_rpc::RpcFixture::from_loaded` | `method` (`"get-network"` \| `"get-latest-ledger"`), `[[assert]]` array of `{kind, field, value?, expected_type?}` |
 | `"soroban"` | `canary_soroban::SorobanFixture::from_loaded` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]`, and `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 

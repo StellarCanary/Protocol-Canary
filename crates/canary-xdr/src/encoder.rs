@@ -8,6 +8,7 @@ use crate::decoder::DecodedValue;
 pub fn encode(value: &DecodedValue) -> Result<String, stellar_xdr::Error> {
     match value {
         DecodedValue::StellarValue(v) => v.to_xdr_base64(Limits::none()),
+        DecodedValue::ContractExecutable(v) => v.to_xdr_base64(Limits::none()),
     }
 }
 
@@ -15,7 +16,7 @@ pub fn encode(value: &DecodedValue) -> Result<String, stellar_xdr::Error> {
 mod tests {
     use super::*;
     use crate::decoder::{decode, DecodedValue, XdrTypeName};
-    use stellar_xdr::StellarValue;
+    use stellar_xdr::{ContractExecutable, StellarValue};
 
     #[test]
     fn encoding_a_decoded_value_reproduces_the_same_value() {
@@ -28,6 +29,22 @@ mod tests {
         assert_eq!(base64, re_encoded);
         match decoded {
             DecodedValue::StellarValue(v) => assert_eq!(v, value),
+            DecodedValue::ContractExecutable(_) => panic!("expected StellarValue"),
+        }
+    }
+
+    #[test]
+    fn encoding_a_decoded_contract_executable_reproduces_the_same_value() {
+        let value = ContractExecutable::Wasm(stellar_xdr::Hash([7; 32]));
+        let base64 = encode(&DecodedValue::ContractExecutable(value.clone())).expect("encodes");
+
+        let decoded = decode(XdrTypeName::ContractExecutable, &base64).expect("decodes");
+        let re_encoded = encode(&decoded).expect("re-encodes");
+
+        assert_eq!(base64, re_encoded);
+        match decoded {
+            DecodedValue::ContractExecutable(v) => assert_eq!(v, value),
+            DecodedValue::StellarValue(_) => panic!("expected ContractExecutable"),
         }
     }
 }

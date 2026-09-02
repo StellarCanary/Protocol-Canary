@@ -4,6 +4,10 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- `canary-xdr` now also supports the `"ContractExecutable"` XDR type name
+  (previously only `"StellarValue"`), needed by `ProtocolCanary-Fixtures`
+  to test CAP-0085's `CONTRACT_EXECUTABLE_EXTERNAL_REF` case.
+
 ## [0.1.0]
 
 Initial release.

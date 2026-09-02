@@ -23,4 +23,6 @@ pub use model::{
     Surface,
 };
 pub use planner::CompatibilityPlanner;
-pub use policy::{Policy, PolicyDecision, PolicyEvaluator};
+pub use policy::{
+    exit_code_for_run, DefaultPolicyEvaluator, Policy, PolicyDecision, PolicyEvaluator,
+};

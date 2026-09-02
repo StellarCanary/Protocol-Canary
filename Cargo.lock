@@ -109,6 +109,11 @@ dependencies = [
 [[package]]
 name = "canary-report"
 version = "0.1.0"
+dependencies = [
+ "canary-core",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "canary-rpc"

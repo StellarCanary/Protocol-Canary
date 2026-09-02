@@ -23,6 +23,8 @@ pub enum Command {
     Inspect(InspectArgs),
     /// List fixtures available for a protocol.
     Fixtures(FixturesArgs),
+    /// Render a previously generated JSON report.
+    Report(ReportArgs),
     /// Print the tool version.
     Version,
 }
@@ -95,4 +97,14 @@ pub struct FixturesArgs {
     /// project root).
     #[arg(long)]
     pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct ReportArgs {
+    /// Path to a JSON report produced by `stellar-canary check --json`.
+    pub path: PathBuf,
+
+    /// Output format to render the stored report as.
+    #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
+    pub format: OutputFormat,
 }

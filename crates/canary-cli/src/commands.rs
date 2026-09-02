@@ -11,7 +11,7 @@ use canary_report::{
 use canary_rpc::{HttpRpcClient, RpcClient};
 use canary_runner::EnabledSurfaces;
 
-use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat};
+use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat, ReportArgs};
 use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
@@ -321,6 +321,37 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     }
 
     Ok(ExitCode::Pass)
+}
+
+pub fn run_report(args: ReportArgs) -> ExitCode {
+    match run_report_inner(args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::from(&err)
+        }
+    }
+}
+
+fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
+    let json_text = std::fs::read_to_string(&args.path).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "failed to read report file {}: {e}",
+            args.path.display()
+        ))
+    })?;
+    let report_input = canary_report::JsonReporter::parse(&json_text)
+        .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
+
+    let rendered = match args.format {
+        OutputFormat::Terminal => TerminalReporter::render(&report_input),
+        OutputFormat::Json => JsonReporter::render(&report_input),
+        OutputFormat::Markdown => MarkdownReporter::render(&report_input),
+    };
+    println!("{rendered}");
+
+    let exit_code = canary_core::exit_code_for_run(&report_input.results, report_input.decision);
+    Ok(exit_code)
 }
 
 pub fn run_version() -> ExitCode {

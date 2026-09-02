@@ -1,0 +1,44 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/canary-cli",
+    "crates/canary-core",
+    "crates/canary-config",
+    "crates/canary-project",
+    "crates/canary-fixtures",
+    "crates/canary-xdr",
+    "crates/canary-rpc",
+    "crates/canary-soroban",
+    "crates/canary-runner",
+    "crates/canary-report",
+    "crates/canary-git",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85.0"
+license = "Apache-2.0"
+repository = "https://github.com/StellarCanary/Protocol-Canary"
+authors = ["Stellar Canary Contributors"]
+
+[workspace.dependencies]
+canary-core = { path = "crates/canary-core", version = "0.1.0" }
+canary-config = { path = "crates/canary-config", version = "0.1.0" }
+canary-project = { path = "crates/canary-project", version = "0.1.0" }
+canary-fixtures = { path = "crates/canary-fixtures", version = "0.1.0" }
+canary-xdr = { path = "crates/canary-xdr", version = "0.1.0" }
+canary-rpc = { path = "crates/canary-rpc", version = "0.1.0" }
+canary-soroban = { path = "crates/canary-soroban", version = "0.1.0" }
+canary-runner = { path = "crates/canary-runner", version = "0.1.0" }
+canary-report = { path = "crates/canary-report", version = "0.1.0" }
+canary-git = { path = "crates/canary-git", version = "0.1.0" }
+
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+[profile.release]
+lto = true
+codegen-units = 1

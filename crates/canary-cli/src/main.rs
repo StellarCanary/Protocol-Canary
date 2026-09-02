@@ -14,6 +14,7 @@ async fn main() {
 
     let exit_code = match cli.command {
         Command::Check(args) => commands::run_check(args).await,
+        Command::Inspect(args) => commands::run_inspect(args),
         Command::Version => commands::run_version(),
     };
 

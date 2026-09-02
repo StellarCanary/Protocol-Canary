@@ -11,7 +11,7 @@ use canary_report::{
 use canary_rpc::{HttpRpcClient, RpcClient};
 use canary_runner::EnabledSurfaces;
 
-use crate::cli::{CheckArgs, OutputFormat};
+use crate::cli::{CheckArgs, InspectArgs, OutputFormat};
 use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
@@ -176,6 +176,90 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     }
 
     Ok(exit_code)
+}
+
+pub fn run_inspect(args: InspectArgs) -> ExitCode {
+    match run_inspect_inner(args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::from(&err)
+        }
+    }
+}
+
+fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
+    let root = std::env::current_dir()
+        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+
+    let config = match &args.config {
+        Some(path) => canary_config::load(path)?,
+        None => canary_config::load_from_root(&root)?.unwrap_or_default(),
+    };
+
+    let detected = canary_project::detect(&root);
+    let explicit_type = match config.project.project_type {
+        canary_config::ProjectTypeSetting::Auto => None,
+        canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
+    };
+    let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
+
+    println!("Project root: {}", root.display());
+    println!("Project type: {resolved_type}");
+    if explicit_type.is_some() && resolved_type != detected.project_type {
+        println!(
+            "  (detected as {} by auto-detection; overridden by configuration)",
+            detected.project_type
+        );
+    }
+    println!();
+
+    println!(
+        "Detected Stellar SDK/XDR dependency: {}",
+        detected.has_capability(&canary_core::Capability::StellarSdkDependency)
+    );
+    println!(
+        "Detected Soroban contract usage: {}",
+        detected.has_capability(&canary_core::Capability::SorobanContract)
+    );
+    println!(
+        "Detected RPC client dependency: {}",
+        detected.has_capability(&canary_core::Capability::RpcClient)
+    );
+    println!(
+        "Detected WASM artifact: {}",
+        detected.has_capability(&canary_core::Capability::WasmArtifact)
+    );
+    println!();
+
+    println!("Configured protocol: {}", config.protocol);
+    println!("Available compatibility surfaces:");
+    println!(
+        "  xdr:     {}",
+        if config.tests.xdr {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  rpc:     {}",
+        if config.tests.rpc {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!(
+        "  soroban: {}",
+        if config.tests.soroban {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+
+    Ok(ExitCode::Pass)
 }
 
 pub fn run_version() -> ExitCode {

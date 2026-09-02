@@ -19,6 +19,8 @@ pub struct Cli {
 pub enum Command {
     /// Run compatibility checks against the current project.
     Check(CheckArgs),
+    /// Print offline project diagnostics.
+    Inspect(InspectArgs),
     /// Print the tool version.
     Version,
 }
@@ -66,4 +68,12 @@ pub struct CheckArgs {
 
     #[arg(long)]
     pub quiet: bool,
+}
+
+#[derive(Debug, Parser)]
+pub struct InspectArgs {
+    /// Path to a configuration file (default: .stellar-canary.toml in the
+    /// project root).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }

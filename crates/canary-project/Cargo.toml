@@ -11,3 +11,5 @@ repository.workspace = true
 all = "warn"
 
 [dependencies]
+canary-core.workspace = true
+toml.workspace = true

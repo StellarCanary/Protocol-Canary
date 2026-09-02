@@ -37,6 +37,10 @@ version = "0.1.0"
 [[package]]
 name = "canary-project"
 version = "0.1.0"
+dependencies = [
+ "canary-core",
+ "toml",
+]
 
 [[package]]
 name = "canary-report"

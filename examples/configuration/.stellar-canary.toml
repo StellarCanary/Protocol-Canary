@@ -1,0 +1,24 @@
+# Schema version for this file. This build only understands version 1;
+# an unrecognized version is a configuration error (exit code 2), not a
+# silent misread.
+version = 1
+
+# The Stellar protocol version to check compatibility against.
+protocol = 28
+
+[project]
+# "auto" runs detection (Cargo.toml dependencies, stellar.toml, WASM
+# artifacts). Set an explicit type to skip detection entirely:
+# "soroban" | "rpc-consumer" | "stellar-sdk" | "generic-stellar" | "unknown".
+type = "auto"
+
+[tests]
+# Which compatibility surfaces to run. At least one must be true.
+xdr = true
+rpc = true
+soroban = true
+
+[policy]
+# When true, any Warning result is promoted to a Fail for the purposes of
+# the pass/warning/fail decision (and therefore the process exit code).
+warnings_are_failures = false

@@ -122,6 +122,11 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
+The local result cache (`canary_core::CacheStore`) exists and is tested,
+but is not yet wired into `check`'s execution path — every run currently
+calls RPC/Soroban fresh rather than reusing a prior result. See
+[CHANGELOG.md](CHANGELOG.md) for the full known-gaps list.
+
 ## Workspace layout
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the crate layout and development

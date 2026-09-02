@@ -123,6 +123,7 @@ dependencies = [
  "canary-rpc",
  "canary-runner",
  "clap",
+ "serde_json",
  "tokio",
 ]
 

@@ -25,3 +25,6 @@ canary-report.workspace = true
 canary-git.workspace = true
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[dev-dependencies]
+serde_json.workspace = true

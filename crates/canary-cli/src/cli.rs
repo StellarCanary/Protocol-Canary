@@ -21,6 +21,8 @@ pub enum Command {
     Check(CheckArgs),
     /// Print offline project diagnostics.
     Inspect(InspectArgs),
+    /// List fixtures available for a protocol.
+    Fixtures(FixturesArgs),
     /// Print the tool version.
     Version,
 }
@@ -72,6 +74,23 @@ pub struct CheckArgs {
 
 #[derive(Debug, Parser)]
 pub struct InspectArgs {
+    /// Path to a configuration file (default: .stellar-canary.toml in the
+    /// project root).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+}
+
+#[derive(Debug, Parser)]
+pub struct FixturesArgs {
+    /// Protocol version to list fixtures for (default: the configured
+    /// protocol, or 28 if there is no configuration file).
+    #[arg(long)]
+    pub protocol: Option<u32>,
+
+    /// Directory containing fixture files.
+    #[arg(long = "fixtures-dir", default_value = "fixtures")]
+    pub fixtures_dir: PathBuf,
+
     /// Path to a configuration file (default: .stellar-canary.toml in the
     /// project root).
     #[arg(long)]

@@ -11,7 +11,7 @@ use canary_report::{
 use canary_rpc::{HttpRpcClient, RpcClient};
 use canary_runner::EnabledSurfaces;
 
-use crate::cli::{CheckArgs, InspectArgs, OutputFormat};
+use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat};
 use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
@@ -258,6 +258,67 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
             "disabled"
         }
     );
+
+    Ok(ExitCode::Pass)
+}
+
+pub fn run_fixtures(args: FixturesArgs) -> ExitCode {
+    match run_fixtures_inner(args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::from(&err)
+        }
+    }
+}
+
+fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
+    let root = std::env::current_dir()
+        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+
+    let protocol = match args.protocol {
+        Some(p) => p,
+        None => {
+            let config = match &args.config {
+                Some(path) => canary_config::load(path)?,
+                None => canary_config::load_from_root(&root)?.unwrap_or_default(),
+            };
+            config.protocol
+        }
+    };
+
+    let loaded_fixtures = if args.fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&args.fixtures_dir)?
+    } else {
+        Vec::new()
+    };
+    let store = canary_fixtures::validate(&loaded_fixtures)?;
+
+    println!("Protocol {protocol} fixtures");
+    println!();
+
+    let target = canary_core::ProtocolVersion(protocol);
+    let mut any = false;
+    for surface in canary_report::SURFACE_ORDER {
+        let ids: Vec<&str> = store
+            .for_protocol(target)
+            .filter(|f| f.surface == surface)
+            .map(|f| f.id.as_str())
+            .collect();
+        if ids.is_empty() {
+            continue;
+        }
+        any = true;
+        println!("{}", canary_report::surface_heading(surface));
+        for id in ids {
+            println!("  {id}");
+        }
+        println!();
+    }
+
+    if !any {
+        println!("(no fixtures found in {})", args.fixtures_dir.display());
+    }
 
     Ok(ExitCode::Pass)
 }

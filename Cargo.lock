@@ -132,6 +132,19 @@ version = "0.1.0"
 [[package]]
 name = "canary-soroban"
 version = "0.1.0"
+dependencies = [
+ "canary-core",
+ "canary-fixtures",
+ "canary-rpc",
+ "serde",
+ "serde_json",
+ "stellar-strkey",
+ "stellar-xdr",
+ "thiserror",
+ "tokio",
+ "toml",
+ "wiremock",
+]
 
 [[package]]
 name = "canary-xdr"

@@ -11,3 +11,16 @@ repository.workspace = true
 all = "warn"
 
 [dependencies]
+canary-core.workspace = true
+canary-fixtures.workspace = true
+canary-rpc.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+stellar-xdr = { version = "=28.0.0", features = ["base64", "alloc"] }
+stellar-strkey = "0.0.13"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

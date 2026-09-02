@@ -11,3 +11,6 @@ repository.workspace = true
 all = "warn"
 
 [dependencies]
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true

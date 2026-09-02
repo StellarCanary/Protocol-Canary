@@ -1,0 +1,39 @@
+# Protocol 28 Soroban simulation smoke fixture.
+#
+# Builds and simulates a real, unsigned InvokeHostFunction transaction
+# calling `name()` on the testnet Stellar Asset Contract for the native
+# XLM asset (CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC), a
+# reserved, network-wide, always-present contract address — not something
+# this project deployed. `name` is part of the standard SEP-41 token
+# interface and is a pure read with no authorization required, so
+# simulation succeeds even with an arbitrary (unfunded) source account.
+#
+# This is a deliberately narrow first Soroban fixture: it proves the full
+# construction -> simulateTransaction -> result pipeline works against
+# real Protocol 28 infrastructure. It does not exercise CAP-0085/CAP-0086
+# host-function semantics specifically; fixtures for those depend on
+# knowing the exact upstream host-function signatures/CAP text closely
+# enough to avoid guessing, and are expected to arrive from the dedicated
+# ProtocolCanary-Fixtures repository (see docs/protocol-28.md).
+#
+# Verified live against https://soroban-testnet.stellar.org on 2026-09-02:
+# the real simulateTransaction response returned result XDR
+# "AAAADgAAAAZuYXRpdmUAAA==", which decodes as ScVal::String("native").
+#
+# Reference: https://developers.stellar.org/docs/tokens/stellar-asset-contract
+# Reference: https://stellar.org/protocol-upgrades (Protocol 28 / CAP-0085, CAP-0086)
+
+id = "p28-soroban-native-asset-name"
+protocol = 28
+surface = "soroban"
+category = "smoke"
+description = "simulateTransaction succeeds for a real Protocol 28 Soroban invocation (native asset contract name())"
+source_reference = "https://developers.stellar.org/docs/tokens/stellar-asset-contract"
+
+source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+function = "name"
+sequence_number = 1
+
+[expect]
+kind = "simulation-success"

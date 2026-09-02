@@ -1,0 +1,28 @@
+# Protocol 28 / CAP-0083: STELLAR_VALUE_EMPTY_TX_SET.
+#
+# CAP-0083 gives validators a way to vote to drop a transaction set from
+# the ledger being closed, by proposing a StellarValue whose `ext` carries
+# the new STELLAR_VALUE_EMPTY_TX_SET discriminant instead of the previous
+# BASIC/SIGNED cases. Per the CAP: a StellarValue using this case has its
+# top-level `txSetHash` field set to the zero hash, with the real previous
+# transaction set hash carried instead inside the nested
+# `proposedValue.txSetHash`.
+#
+# This fixture is a real, well-formed encoding of that shape (built with
+# this project's own canary-soroban/canary-xdr code against the official
+# stellar-xdr 28.0.0 StellarValue/StellarValueExt types, not hand-crafted
+# bytes), asserting that a project's configured XDR implementation can
+# round-trip it byte-for-byte.
+#
+# Reference: https://github.com/stellar/stellar-protocol/blob/master/core/cap-0083.md
+
+id = "p28-xdr-cap83-empty-tx-set"
+protocol = 28
+surface = "xdr"
+category = "cap-83"
+description = "StellarValue with the CAP-0083 STELLAR_VALUE_EMPTY_TX_SET ext round-trips byte-for-byte"
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "roundtrip"
+value_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAZVPxAAAAAAAAAAACAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAABsAAAAACQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkAAABAAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=="

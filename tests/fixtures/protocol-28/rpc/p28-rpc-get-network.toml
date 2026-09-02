@@ -1,0 +1,33 @@
+# Protocol 28 / RPC network identity.
+#
+# Calls the real Stellar RPC `getNetwork` method and checks that the
+# endpoint reports Protocol 28 with a passphrase field present. This is
+# the network-identity check described in the project's protocol-version-
+# detection rule: it fails, honestly, the moment a configured RPC endpoint
+# stops reporting protocol 28 (for example, once the endpoint upgrades to
+# a later protocol), rather than silently continuing to report success.
+#
+# Reference: https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork
+
+id = "p28-rpc-get-network"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "getNetwork reports protocol 28 and a passphrase"
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+[[assert]]
+kind = "field-exists"
+field = "passphrase"
+
+[[assert]]
+kind = "field-type"
+field = "passphrase"
+expected_type = "string"
+
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+value = 28

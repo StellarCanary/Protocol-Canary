@@ -33,6 +33,8 @@ struct JsonReport {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     network: Option<JsonNetwork>,
     status: String,
+    #[serde(default)]
+    counts: JsonCounts,
     results: Vec<JsonResult>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     skipped: Vec<JsonSkip>,
@@ -78,6 +80,44 @@ struct JsonSkip {
     reason: String,
 }
 
+/// Aggregate counts over `results` (never over `skipped`, which is
+/// reported separately: a skip is neither a pass nor a failure).
+///
+/// This is computed here rather than reusing `canary_runner::ResultSummary`
+/// because `canary-report` must not depend on `canary-runner` (the runner
+/// depends on the reporters' input types' sibling crates, not the other
+/// way around) — the two are intentionally kept in sync by hand instead.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct JsonCounts {
+    total: usize,
+    passed: usize,
+    failed: usize,
+    warnings: usize,
+    errors: usize,
+    #[serde(default)]
+    skipped: usize,
+}
+
+impl JsonCounts {
+    fn from_results(results: &[CompatibilityResult], skipped: usize) -> Self {
+        let mut counts = JsonCounts {
+            total: results.len(),
+            skipped,
+            ..JsonCounts::default()
+        };
+        for result in results {
+            match result.status {
+                Status::Pass => counts.passed += 1,
+                Status::Fail => counts.failed += 1,
+                Status::Warning => counts.warnings += 1,
+                Status::Error => counts.errors += 1,
+                Status::Skipped => {}
+            }
+        }
+        counts
+    }
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct JsonGit {
     #[serde(default)]
@@ -103,6 +143,7 @@ impl From<&ReportInput> for JsonReport {
                 observed_protocol: n.observed_protocol.map(|p| p.0),
             }),
             status: input.overall_status().as_str().to_string(),
+            counts: JsonCounts::from_results(&input.results, input.skipped.len()),
             results: input
                 .results
                 .iter()
@@ -330,6 +371,45 @@ mod tests {
         assert!(value["results"].is_array());
         assert_eq!(value["results"][0]["testId"], "p28-xdr-1");
         assert_eq!(value["skipped"][0]["fixtureId"], "p28-soroban-1");
+        assert_eq!(value["counts"]["total"], 1);
+        assert_eq!(value["counts"]["passed"], 1);
+        assert_eq!(value["counts"]["failed"], 0);
+        // Skipped fixtures never ran, so they count separately from `total`
+        // (which is over `results` only), not as part of it.
+        assert_eq!(value["counts"]["skipped"], 1);
+    }
+
+    #[test]
+    fn counts_reflect_a_mix_of_outcomes() {
+        let mut mixed = input();
+        mixed.results.push(CompatibilityResult {
+            test_id: "p28-rpc-1".into(),
+            protocol: ProtocolVersion(28),
+            surface: Surface::Rpc,
+            status: Status::Fail,
+            summary: "mismatch".into(),
+            details: None,
+            duration_ms: 1,
+            fixture_id: Some("p28-rpc-1".into()),
+        });
+        mixed.results.push(CompatibilityResult {
+            test_id: "p28-soroban-1".into(),
+            protocol: ProtocolVersion(28),
+            surface: Surface::Soroban,
+            status: Status::Warning,
+            summary: "deprecated".into(),
+            details: None,
+            duration_ms: 1,
+            fixture_id: Some("p28-soroban-1".into()),
+        });
+
+        let json_text = JsonReporter::render(&mixed);
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert_eq!(value["counts"]["total"], 3);
+        assert_eq!(value["counts"]["passed"], 1);
+        assert_eq!(value["counts"]["failed"], 1);
+        assert_eq!(value["counts"]["warnings"], 1);
+        assert_eq!(value["counts"]["errors"], 0);
     }
 
     #[test]

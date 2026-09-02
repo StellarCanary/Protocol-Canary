@@ -107,7 +107,12 @@ rather than guessed at here.
 
 This repository is CLI-only and has no GitHub dependency. A separate
 repository, `ProtocolCanary-Action`, wraps this CLI as a GitHub Action and
-maps its exit codes to CI annotations and job summaries.
+maps its exit codes to CI annotations and job summaries. See
+[docs/json-report-contract.md](docs/json-report-contract.md) for the exact
+`--json` shape it should consume, and
+[docs/fixture-contract.md](docs/fixture-contract.md) for how it should
+supply fixtures (from `ProtocolCanary-Fixtures` or elsewhere) via
+`--fixtures-dir`.
 
 ## Security
 

@@ -2,9 +2,9 @@
 
 use std::fmt::Write as _;
 
-use canary_core::{PolicyDecision, Status};
+use canary_core::Status;
 
-use crate::{ReportInput, SURFACE_ORDER};
+use crate::{ReportInput, ReportStatus, SURFACE_ORDER};
 
 const RULE: &str = "────────────────────────────────────────";
 
@@ -19,14 +19,11 @@ fn status_badge(status: Status) -> &'static str {
 }
 
 fn decision_label(input: &ReportInput) -> &'static str {
-    if input.has_any_error() {
-        "ERROR"
-    } else {
-        match input.decision {
-            PolicyDecision::Pass => "PASS",
-            PolicyDecision::Warning => "WARNING",
-            PolicyDecision::Fail => "NOT READY",
-        }
+    match input.overall_status() {
+        ReportStatus::Pass => "PASS",
+        ReportStatus::Warning => "WARNING",
+        ReportStatus::Fail => "NOT READY",
+        ReportStatus::Error => "ERROR",
     }
 }
 
@@ -139,7 +136,7 @@ impl TerminalReporter {
 mod tests {
     use super::*;
     use crate::{ProjectSummary, ReportInput};
-    use canary_core::{GitContext, ProjectType, ProtocolVersion};
+    use canary_core::{GitContext, PolicyDecision, ProjectType, ProtocolVersion};
 
     fn result(
         id: &str,

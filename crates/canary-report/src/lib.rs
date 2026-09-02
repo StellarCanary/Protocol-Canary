@@ -67,6 +67,43 @@ impl ReportInput {
             .iter()
             .any(|r| r.status == canary_core::Status::Error)
     }
+
+    /// The overall outcome every reporter renders, factoring in that an
+    /// execution error overrides the underlying policy decision (see
+    /// `canary_core::exit_code_for_run`, which applies the same rule to
+    /// the process exit code).
+    pub fn overall_status(&self) -> ReportStatus {
+        if self.has_any_error() {
+            ReportStatus::Error
+        } else {
+            match self.decision {
+                PolicyDecision::Pass => ReportStatus::Pass,
+                PolicyDecision::Warning => ReportStatus::Warning,
+                PolicyDecision::Fail => ReportStatus::Fail,
+            }
+        }
+    }
+}
+
+/// The overall outcome of a run, as every reporter renders it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportStatus {
+    Pass,
+    Warning,
+    Fail,
+    Error,
+}
+
+impl ReportStatus {
+    /// The lowercase machine-readable form used in JSON output.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ReportStatus::Pass => "pass",
+            ReportStatus::Warning => "warning",
+            ReportStatus::Fail => "fail",
+            ReportStatus::Error => "error",
+        }
+    }
 }
 
 /// The fixed surface display order used by every reporter, matching the

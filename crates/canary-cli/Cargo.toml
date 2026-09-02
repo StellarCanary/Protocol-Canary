@@ -15,3 +15,13 @@ path = "src/main.rs"
 all = "warn"
 
 [dependencies]
+canary-core.workspace = true
+canary-config.workspace = true
+canary-project.workspace = true
+canary-fixtures.workspace = true
+canary-rpc.workspace = true
+canary-runner.workspace = true
+canary-report.workspace = true
+canary-git.workspace = true
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

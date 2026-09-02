@@ -110,3 +110,14 @@ impl ReportStatus {
 /// order fixtures are executed in (see `canary-runner`'s execution
 /// engine).
 pub const SURFACE_ORDER: [Surface; 3] = [Surface::Xdr, Surface::Rpc, Surface::Soroban];
+
+/// The heading each reporter uses for a surface. `Surface`'s own
+/// `Display` is lowercase (it doubles as the JSON `"surface"` value), but
+/// report headings read better capitalized as an acronym/proper noun.
+pub fn surface_heading(surface: Surface) -> &'static str {
+    match surface {
+        Surface::Xdr => "XDR",
+        Surface::Rpc => "RPC",
+        Surface::Soroban => "Soroban",
+    }
+}

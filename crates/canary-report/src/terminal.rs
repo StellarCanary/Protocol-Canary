@@ -4,7 +4,7 @@ use std::fmt::Write as _;
 
 use canary_core::Status;
 
-use crate::{ReportInput, ReportStatus, SURFACE_ORDER};
+use crate::{surface_heading, ReportInput, ReportStatus, SURFACE_ORDER};
 
 const RULE: &str = "────────────────────────────────────────";
 
@@ -64,7 +64,7 @@ impl TerminalReporter {
             if results.is_empty() {
                 continue;
             }
-            let _ = writeln!(out, "{surface}");
+            let _ = writeln!(out, "{}", surface_heading(surface));
             let all_passed = results.iter().all(|r| r.status == Status::Pass);
             if all_passed {
                 let _ = writeln!(out, "  {}/{} PASS", results.len(), results.len());

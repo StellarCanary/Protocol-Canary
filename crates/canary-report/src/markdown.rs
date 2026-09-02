@@ -2,17 +2,9 @@
 
 use std::fmt::Write as _;
 
-use canary_core::{Status, Surface};
+use canary_core::Status;
 
-use crate::{ReportInput, SURFACE_ORDER};
-
-fn surface_heading(surface: Surface) -> &'static str {
-    match surface {
-        Surface::Xdr => "XDR",
-        Surface::Rpc => "RPC",
-        Surface::Soroban => "Soroban",
-    }
-}
+use crate::{surface_heading, ReportInput, SURFACE_ORDER};
 
 fn surface_cell(results: &[&canary_core::CompatibilityResult]) -> &'static str {
     if results.iter().any(|r| r.status == Status::Error) {

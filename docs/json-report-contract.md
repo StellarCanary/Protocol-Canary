@@ -27,7 +27,7 @@ a compatibility failure.
 ```json
 {
   "schemaVersion": 1,
-  "toolVersion": "0.1.0",
+  "toolVersion": "0.1.1",
   "targetProtocol": 28,
   "project": {
     "name": "example-project",
@@ -122,7 +122,7 @@ regression test) produces, with exit code `1`:
 ```json
 {
   "schemaVersion": 1,
-  "toolVersion": "0.1.0",
+  "toolVersion": "0.1.1",
   "targetProtocol": 28,
   "project": { "name": "check-fail-json", "type": "unknown" },
   "status": "fail",

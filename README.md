@@ -31,6 +31,15 @@ endpoint, before the network moves.
 
 ## Quick start
 
+Install a released version from source:
+
+```bash
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+stellar-canary check
+```
+
+Or, from a local checkout of this repository:
+
 ```bash
 cargo install --path crates/canary-cli
 stellar-canary check
@@ -103,16 +112,35 @@ covered — CAP-0085 and CAP-0086 host-function semantics specifically are
 intentionally left to the dedicated `ProtocolCanary-Fixtures` repository
 rather than guessed at here.
 
-## CI
+## Ecosystem
 
-This repository is CLI-only and has no GitHub dependency. A separate
-repository, `ProtocolCanary-Action`, wraps this CLI as a GitHub Action and
-maps its exit codes to CI annotations and job summaries. See
-[docs/json-report-contract.md](docs/json-report-contract.md) for the exact
-`--json` shape it should consume, and
-[docs/fixture-contract.md](docs/fixture-contract.md) for how it should
-supply fixtures (from `ProtocolCanary-Fixtures` or elsewhere) via
-`--fixtures-dir`.
+This repository is CLI-only and has no GitHub dependency of its own. Two
+sibling repositories build on it:
+
+- [`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures) —
+  canonical, versioned compatibility fixtures (what gets tested).
+- [`ProtocolCanary-Action`](https://github.com/StellarCanary/ProtocolCanary-Action) —
+  the GitHub Actions integration that installs a pinned release of this
+  CLI, runs it, and publishes a job summary, annotations, and a report
+  artifact from its JSON output.
+
+See [docs/architecture.md](docs/architecture.md) for how the three
+repositories fit together, [docs/json-report-contract.md](docs/json-report-contract.md)
+for the exact `--json` shape a consumer like the Action should parse, and
+[docs/fixture-contract.md](docs/fixture-contract.md) for how fixtures are
+supplied via `--fixtures-dir`.
+
+## Version compatibility
+
+| `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
+|---|---|---|---|
+| `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
+
+Only combinations that have actually been run together are listed here.
+`v0.1.0` reports predate the `counts` field and predate `ContractExecutable`
+XDR support (needed by two of the current Protocol 28 fixtures); the Action
+tolerates the missing field but `v0.1.1` is the version this table
+verifies against.
 
 ## Security
 
@@ -131,6 +159,13 @@ The local result cache (`canary_core::CacheStore`) exists and is tested,
 but is not yet wired into `check`'s execution path — every run currently
 calls RPC/Soroban fresh rather than reusing a prior result. See
 [CHANGELOG.md](CHANGELOG.md) for the full known-gaps list.
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for planned work. Highlights: Protocol 29
+support once its CAPs are finalized upstream, wiring the existing
+`CacheStore` into `check`'s execution path, and additional RPC/Soroban
+compatibility assertions.
 
 ## Workspace layout
 

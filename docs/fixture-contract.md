@@ -1,9 +1,10 @@
 # Fixture loading contract
 
 This document is the precise, verified contract between `Protocol-Canary`
-(this repository) and any external source of fixtures, including the
-planned `ProtocolCanary-Fixtures` repository. It reflects the actual
-current implementation — nothing here is aspirational.
+(this repository) and any external source of fixtures, including
+[`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures).
+It reflects the actual current implementation — nothing here is
+aspirational.
 
 ## 1. Where fixtures are loaded from
 
@@ -123,8 +124,10 @@ ever reaches a surface crate.
 ## 7. Can this loader already consume `ProtocolCanary-Fixtures` with zero code changes?
 
 **Yes.** The loader has no awareness of Git, repositories, or where a
-directory came from — it only reads a filesystem path. `ProtocolCanary-Fixtures`
-(or any GitHub Action wrapping this CLI) needs to:
+directory came from — it only reads a filesystem path.
+[`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures)
+(consumed today by [`ProtocolCanary-Action`](https://github.com/StellarCanary/ProtocolCanary-Action))
+needs to:
 
 1. Get the fixtures onto local disk in the format above (a `git clone`/
    `actions/checkout`, or an already-vendored copy — no code in this

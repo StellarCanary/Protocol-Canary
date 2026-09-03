@@ -3,8 +3,9 @@
 This documents the actual `stellar-canary check --json` (equivalently
 `--format json`) output, as implemented in `crates/canary-report/src/json.rs`,
 and verified by running the built CLI against the real fixtures in
-`tests/fixtures/protocol-28/`. This is the contract the planned
-`ProtocolCanary-Action` repository should consume.
+`tests/fixtures/protocol-28/`. This is the contract
+[`ProtocolCanary-Action`](https://github.com/StellarCanary/ProtocolCanary-Action)
+consumes to build its GitHub job summary and annotations.
 
 ## Command
 

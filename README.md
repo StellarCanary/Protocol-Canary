@@ -1,5 +1,8 @@
 # Stellar Protocol Canary
 
+[![CI](https://github.com/StellarCanary/Protocol-Canary/actions/workflows/ci.yml/badge.svg)](https://github.com/StellarCanary/Protocol-Canary/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+
 Rehearse Stellar protocol upgrades before they reach your production stack.
 
 ## What is Protocol Canary?

@@ -35,6 +35,13 @@ Dependencies are chosen deliberately (see `CONTRIBUTING.md`) and kept to
 what the compatibility checks actually require. XDR-bearing types come from
 the official `stellar-xdr` crate rather than a hand-rolled parser.
 
+## Audit status
+
+No formal third-party security audit has been performed on this
+repository. Confidence in the claims above comes from the design itself
+(no key material path exists in the code) and from the automated test
+suite, not from an external review.
+
 ## Reporting a vulnerability
 
 If you find a security issue in this repository, please open a private

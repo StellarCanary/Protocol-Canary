@@ -105,6 +105,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "bytes"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -209,7 +215,7 @@ dependencies = [
  "canary-xdr",
  "futures",
  "serde_json",
- "stellar-strkey",
+ "stellar-strkey 0.0.18",
  "tokio",
  "wiremock",
 ]
@@ -223,7 +229,7 @@ dependencies = [
  "canary-rpc",
  "serde",
  "serde_json",
- "stellar-strkey",
+ "stellar-strkey 0.0.18",
  "stellar-xdr",
  "thiserror",
  "tokio",
@@ -601,10 +607,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "hash32"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47d60b12902ba28e2730cd37e95b8c9223af2808df9e902d4df49588d1470606"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "hashbrown"
 version = "0.17.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
+
+[[package]]
+name = "heapless"
+version = "0.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25ba4bd83f9415b58b4ed8dc5714c76e626a105be4646c02630ad730ad3b5aa4"
+dependencies = [
+ "hash32",
+ "stable_deref_trait",
+ "zeroize",
+]
 
 [[package]]
 name = "heck"
@@ -1323,6 +1349,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "stellar-strkey"
+version = "0.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0f34ff61c0ca6f1c2b4169e8d1633417bd9225f58b6175e4e317204565d16277"
+dependencies = [
+ "crate-git-revision 0.0.9",
+ "data-encoding",
+ "heapless",
+ "zeroize",
+]
+
+[[package]]
 name = "stellar-xdr"
 version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1334,7 +1372,7 @@ dependencies = [
  "ethnum",
  "hex",
  "sha2",
- "stellar-strkey",
+ "stellar-strkey 0.0.13",
 ]
 
 [[package]]
@@ -1919,6 +1957,20 @@ name = "zeroize"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e"
+dependencies = [
+ "zeroize_derive",
+]
+
+[[package]]
+name = "zeroize_derive"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c50655cbb0fe3fc43170059e702f1ce5e19b84cec58dc87b037a09935c2f328"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
 
 [[package]]
 name = "zerotrie"

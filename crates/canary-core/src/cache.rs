@@ -190,15 +190,27 @@ mod tests {
 
     /// Minimal temp-dir helper so this crate does not need a `tempfile`
     /// dev-dependency for a handful of cache tests.
+    ///
+    /// Combines a nanosecond timestamp with a per-process atomic counter:
+    /// the timestamp alone is not a real uniqueness guarantee across
+    /// threads run in parallel by the test harness, since clock
+    /// resolution on some (especially virtualized) hosts can be coarser
+    /// than the interval between two threads' reads — a collision here
+    /// previously let one test's `clear()` (`remove_dir_all`) delete
+    /// another concurrently-running test's cache directory mid-test.
     fn tempdir() -> TempDir {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "canary-core-cache-test-{}-{}",
+            "canary-core-cache-test-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();

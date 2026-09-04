@@ -53,9 +53,15 @@ During development, run the CLI directly from the workspace:
 ```bash
 cargo run -p canary-cli -- check
 cargo run -p canary-cli -- inspect
+cargo run -p canary-cli -- inspect --fixtures-dir tests/fixtures/protocol-28 --protocol 28
 cargo run -p canary-cli -- fixtures --protocol 28
 cargo run -p canary-cli -- check --json > result.json && cargo run -p canary-cli -- report result.json --format markdown
 ```
+
+`inspect` is offline. With `--fixtures-dir` and `--protocol`, it uses the same
+compatibility planner as `check` to list fixtures that would run and fixtures
+skipped for a protocol mismatch, disabled surface, or missing project
+capability. It does not contact Stellar RPC or Soroban endpoints.
 
 ## Example output
 

@@ -76,6 +76,14 @@ pub struct CheckArgs {
 
 #[derive(Debug, Parser)]
 pub struct InspectArgs {
+    /// Target protocol version (overrides configuration).
+    #[arg(long)]
+    pub protocol: Option<u32>,
+
+    /// Directory containing fixture files to inspect.
+    #[arg(long = "fixtures-dir", default_value = "fixtures")]
+    pub fixtures_dir: PathBuf,
+
     /// Path to a configuration file (default: .stellar-canary.toml in the
     /// project root).
     #[arg(long)]

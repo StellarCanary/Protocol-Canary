@@ -203,6 +203,8 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
     };
     let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
+    let mut project = detected.clone();
+    project.project_type = resolved_type;
 
     println!("Project root: {}", root.display());
     println!("Project type: {resolved_type}");
@@ -233,6 +235,8 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
     println!();
 
     println!("Configured protocol: {}", config.protocol);
+    let target_protocol = ProtocolVersion(args.protocol.unwrap_or(config.protocol));
+    println!("Target protocol for fixture plan: {target_protocol}");
     println!("Available compatibility surfaces:");
     println!(
         "  xdr:     {}",
@@ -258,6 +262,48 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
             "disabled"
         }
     );
+
+    let loaded_fixtures = if args.fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&args.fixtures_dir)?
+    } else {
+        Vec::new()
+    };
+    let _fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
+    let enabled = EnabledSurfaces {
+        xdr: config.tests.xdr,
+        rpc: config.tests.rpc,
+        soroban: config.tests.soroban,
+    };
+    let plan = canary_runner::build_plan(&loaded_fixtures, target_protocol, enabled, &project)?;
+
+    println!();
+    println!("Fixture compatibility plan (offline):");
+    println!("  Directory: {}", args.fixtures_dir.display());
+    println!("  Loaded fixtures that would run:");
+    if plan.applicable_count() == 0 {
+        println!("    (none)");
+    } else {
+        for fixture in &plan.xdr {
+            println!("    xdr: {}", fixture.metadata.id);
+        }
+        for fixture in &plan.rpc {
+            println!("    rpc: {}", fixture.metadata.id);
+        }
+        for fixture in &plan.soroban {
+            println!("    soroban: {}", fixture.metadata.id);
+        }
+    }
+    println!("  Skipped fixtures:");
+    if plan.skipped.is_empty() {
+        println!("    (none)");
+    } else {
+        for skipped in &plan.skipped {
+            println!(
+                "    {} [{}]: {}",
+                skipped.fixture_id, skipped.surface, skipped.reason
+            );
+        }
+    }
 
     Ok(ExitCode::Pass)
 }

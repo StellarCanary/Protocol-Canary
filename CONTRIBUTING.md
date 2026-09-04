@@ -2,7 +2,7 @@
 
 ## Development setup
 
-You need the Rust toolchain pinned in `rust-toolchain.toml` (1.85.0,
+You need the Rust toolchain pinned in `rust-toolchain.toml` (1.91.0,
 including `rustfmt` and `clippy`). `rustup` will install it automatically
 the first time you run a `cargo` command in this repository.
 

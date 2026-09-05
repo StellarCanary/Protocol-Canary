@@ -151,6 +151,10 @@ Protocol Canary never asks for or stores a secret key, seed phrase, or
 private key, and the MVP never submits a transaction to any network — only
 read operations and simulation are performed. See [SECURITY.md](SECURITY.md).
 
+## Code of Conduct
+
+See [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## Limitations
 
 A passing result means the declared compatibility assertions for the

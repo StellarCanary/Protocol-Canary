@@ -29,9 +29,25 @@ mdbook build      # writes static HTML to docs-site/book/
 mdbook serve      # local preview at http://localhost:3000 with live reload
 ```
 
-`mdbook build` fails the build on a broken internal link (mdBook validates
-relative links between chapters at build time), so a successful build is
-itself a partial correctness check.
+`mdbook build` itself does **not** fail on a broken internal link — it
+only renders Markdown to HTML (verified directly: an intentionally broken
+link built successfully with exit code `0`). Link checking is a separate
+step; see [Checking links](#checking-links) below and
+[`../.github/workflows/docs.yml`](../.github/workflows/docs.yml), which
+runs it in CI before deploying.
+
+## Checking links
+
+```bash
+# one-time: install lychee (a static binary, no other dependency)
+cargo install lychee --locked
+# or download a prebuilt binary from
+# https://github.com/lycheeverse/lychee/releases
+
+mdbook build
+lychee --offline book/          # internal links only, no network calls
+lychee book/                    # also checks external (https://...) links
+```
 
 ## Structure
 

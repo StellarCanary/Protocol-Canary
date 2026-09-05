@@ -37,7 +37,8 @@ jobs:
       - name: Install lychee
         run: |
           curl -sL "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /usr/local/bin
+            | tar xz -C /tmp
+          install -m 755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee /usr/local/bin/lychee
 
       - name: Check internal links
         working-directory: docs-site

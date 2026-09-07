@@ -5,6 +5,10 @@
 
 Rehearse Stellar protocol upgrades before they reach your production stack.
 
+[Documentation](https://stellarcanary.github.io/Protocol-Canary/) | [Fixtures](https://github.com/StellarCanary/ProtocolCanary-Fixtures) | [Action](https://github.com/StellarCanary/ProtocolCanary-Action)
+
+![Protocol-Canary](assets/ProtocolCanary-banner.svg)
+
 ## What is Protocol Canary?
 
 Stellar Protocol Canary is a command-line tool that checks whether a Stellar

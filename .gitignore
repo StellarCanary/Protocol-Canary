@@ -2,3 +2,4 @@
 **/*.rs.bk
 .stellar-canary-cache/
 *.pdb
+/docs-site/book/

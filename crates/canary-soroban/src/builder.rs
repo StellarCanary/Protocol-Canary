@@ -152,8 +152,8 @@ mod tests {
         let source_account = StrkeyPublicKey([0u8; 32]).to_string();
         let contract_id = StrkeyContract([0u8; 32]).to_string();
         InvocationSpec {
-            source_account,
-            contract_id,
+            source_account: source_account.to_string(),
+            contract_id: contract_id.to_string(),
             function_name: "hello".to_string(),
             args: vec![ScValInput::Symbol("world".to_string())],
             sequence_number: 1,

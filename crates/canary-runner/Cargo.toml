@@ -23,4 +23,4 @@ tokio = { version = "1", features = ["time"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 wiremock = "0.6"
 serde_json.workspace = true
-stellar-strkey = "0.0.13"
+stellar-strkey = "0.0.18"

@@ -37,7 +37,7 @@ canary-git = { path = "crates/canary-git", version = "0.1.1" }
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-toml = "0.8"
+toml = "1.1"
 
 [profile.release]
 lto = true

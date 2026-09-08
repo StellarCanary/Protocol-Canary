@@ -1,0 +1,22 @@
+[book]
+title = "Protocol Canary"
+description = "Documentation for Protocol Canary, the Stellar protocol compatibility checker"
+authors = ["Stellar Canary Contributors"]
+language = "en"
+src = "src"
+
+[output.html]
+git-repository-url = "https://github.com/StellarCanary/Protocol-Canary"
+edit-url-template = "https://github.com/StellarCanary/Protocol-Canary/edit/main/docs-site/src/{path}"
+site-url = "/Protocol-Canary/"
+default-theme = "light"
+preferred-dark-theme = "navy"
+
+[output.html.search]
+enable = true
+limit-results = 20
+use-boolean-and = true
+
+[output.html.fold]
+enable = true
+level = 1

@@ -1,9 +1,13 @@
 # Stellar Protocol Canary
 
+![Protocol-Canary](assets/ProtocolCanary-banner.svg)
+
+Rehearse Stellar protocol upgrades before they reach your production stack.
+
 [![CI](https://github.com/StellarCanary/Protocol-Canary/actions/workflows/ci.yml/badge.svg)](https://github.com/StellarCanary/Protocol-Canary/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Rehearse Stellar protocol upgrades before they reach your production stack.
+[Documentation](https://stellarcanary.github.io/Protocol-Canary/) | [Fixtures](https://github.com/StellarCanary/ProtocolCanary-Fixtures) | [Action](https://github.com/StellarCanary/ProtocolCanary-Action)
 
 ## What is Protocol Canary?
 
@@ -120,6 +124,23 @@ included under `tests/fixtures/protocol-28/` for local development. See
 covered — CAP-0085 and CAP-0086 host-function semantics specifically are
 intentionally left to the dedicated `ProtocolCanary-Fixtures` repository
 rather than guessed at here.
+
+## How it runs
+
+`stellar-canary` is a single binary with no backend of its own:
+
+- **Locally** — install the CLI, point `--fixtures-dir` at a local or
+  `ProtocolCanary-Fixtures` checkout, and run `check`. XDR checks run
+  fully offline; RPC and Soroban checks make read-only/simulate-only
+  calls to a configured Stellar RPC endpoint (Testnet by default).
+- **In CI** — `ProtocolCanary-Action` runs the identical binary inside a
+  GitHub-hosted runner and turns its JSON report into a job summary,
+  annotations, and an artifact.
+
+No database, no persistent server, no Docker, and no private key or
+seed phrase are required for either path. See
+[docs/architecture.md](docs/architecture.md) for the full execution
+topology, external dependencies, and failure behavior.
 
 ## Ecosystem
 

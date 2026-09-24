@@ -118,4 +118,20 @@ mod tests {
         f.input_file = Some(file_path);
         assert!(validate(&[f]).is_ok());
     }
+
+    #[test]
+    fn rejects_missing_referenced_expected_file() {
+        let dir = crate::test_support::temp_dir("validator-missing-expected-file");
+        let mut f = fixture("a", "a.toml");
+        f.input_file = None;
+        f.expected_file = Some(dir.path.join("does-not-exist.bin"));
+        let err = validate(&[f]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FixtureError::MissingReferencedFile { kind: "expected", .. }
+            ),
+            "expected MissingReferencedFile with kind \"expected\", got: {err:?}"
+        );
+    }
 }

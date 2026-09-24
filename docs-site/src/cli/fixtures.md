@@ -19,6 +19,17 @@ This loads and validates `--fixtures-dir` exactly the way `check` does
 stops before running anything — no network call, regardless of the
 fixtures' surfaces.
 
+As with `check`, a `--fixtures-dir` that does not exist is treated as zero
+fixtures, not an error: the command exits `0` and prints the same message
+as a real but empty directory, so check the path if you expected fixtures.
+
+```text
+$ stellar-canary fixtures --fixtures-dir /does/not/exist --protocol 28
+Protocol 28 fixtures
+
+(no fixtures found in /does/not/exist)
+```
+
 ## Example
 
 ```bash

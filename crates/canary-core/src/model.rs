@@ -244,10 +244,12 @@ impl FixtureStore {
         self.fixtures.is_empty()
     }
 
+    /// Currently unused outside this crate's tests.
     pub fn by_id(&self, id: &str) -> Option<&FixtureMetadata> {
         self.fixtures.iter().find(|f| f.id == id)
     }
 
+    /// Currently unused outside this crate's tests.
     pub fn for_surface(&self, surface: Surface) -> impl Iterator<Item = &FixtureMetadata> {
         self.fixtures.iter().filter(move |f| f.surface == surface)
     }
@@ -262,10 +264,11 @@ impl FixtureStore {
 
 /// The set of fixtures known for a given protocol version.
 ///
-/// This is the seam that lets a new protocol version be added as data
-/// rather than as new branches scattered through the engine: adding
-/// `protocol-29` means constructing a new `ProtocolPack`, not editing the
-/// `protocol-28` one.
+/// **Currently unused:** nothing constructs a `ProtocolPack`. Which fixtures
+/// apply to a run is decided per fixture by `canary_runner::build_plan`,
+/// which compares each fixture's `protocol` metadata against the run's
+/// target protocol, so adding a protocol version means adding fixtures that
+/// declare it (see `CONTRIBUTING.md`, "Adding a new protocol pack").
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProtocolPack {
     pub version: ProtocolVersion,

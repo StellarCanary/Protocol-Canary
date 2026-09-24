@@ -1,6 +1,6 @@
 mod support;
 
-use support::{run_in, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
 
 const OFFLINE_CONFIG: &str = r#"
 version = 1
@@ -164,4 +164,20 @@ fn a_real_compatibility_failure_is_reported_consistently_in_terminal_and_json() 
         value["results"][0]["details"].is_string(),
         "a failure result must carry details explaining what went wrong"
     );
+}
+
+#[test]
+fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
+    let dir = TempProject::new("check-protocol-zero");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--protocol", "0"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(err.contains("configuration error"), "stderr: {err}");
+    assert!(err.contains("--protocol"), "stderr: {err}");
 }

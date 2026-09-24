@@ -16,6 +16,17 @@ use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
 
+/// Rejects `--protocol 0` the same way the config loader rejects
+/// `protocol = 0`, so the flag can't bypass that validation.
+fn validated_protocol_flag(protocol: Option<u32>) -> Result<Option<u32>, CanaryError> {
+    match protocol {
+        Some(0) => Err(CanaryError::Configuration(
+            "--protocol must be a positive protocol version number".to_string(),
+        )),
+        other => Ok(other),
+    }
+}
+
 pub async fn run_check(args: CheckArgs) -> ExitCode {
     match run_check_inner(args).await {
         Ok(exit_code) => exit_code,
@@ -35,7 +46,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
 
-    let target_protocol = ProtocolVersion(args.protocol.unwrap_or(config.protocol));
+    let target_protocol =
+        ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
 
     let project = canary_project::detect(&root);
     let explicit_type = match config.project.project_type {
@@ -235,7 +247,8 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
     println!();
 
     println!("Configured protocol: {}", config.protocol);
-    let target_protocol = ProtocolVersion(args.protocol.unwrap_or(config.protocol));
+    let target_protocol =
+        ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
     println!("Target protocol for fixture plan: {target_protocol}");
     println!("Available compatibility surfaces:");
     println!(
@@ -322,7 +335,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     let root = std::env::current_dir()
         .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
 
-    let protocol = match args.protocol {
+    let protocol = match validated_protocol_flag(args.protocol)? {
         Some(p) => p,
         None => {
             let config = match &args.config {

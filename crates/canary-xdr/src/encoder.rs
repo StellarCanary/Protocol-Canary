@@ -9,6 +9,7 @@ pub fn encode(value: &DecodedValue) -> Result<String, stellar_xdr::Error> {
     match value {
         DecodedValue::StellarValue(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::ContractExecutable(v) => v.to_xdr_base64(Limits::none()),
+        DecodedValue::ScVal(v) => v.to_xdr_base64(Limits::none()),
     }
 }
 
@@ -30,6 +31,7 @@ mod tests {
         match decoded {
             DecodedValue::StellarValue(v) => assert_eq!(v, value),
             DecodedValue::ContractExecutable(_) => panic!("expected StellarValue"),
+            DecodedValue::ScVal(_) => panic!("expected StellarValue"),
         }
     }
 
@@ -45,6 +47,7 @@ mod tests {
         match decoded {
             DecodedValue::ContractExecutable(v) => assert_eq!(v, value),
             DecodedValue::StellarValue(_) => panic!("expected ContractExecutable"),
+            DecodedValue::ScVal(_) => panic!("expected ContractExecutable"),
         }
     }
 }

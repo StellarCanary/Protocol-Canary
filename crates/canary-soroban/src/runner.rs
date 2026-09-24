@@ -436,6 +436,68 @@ mod tests {
         assert_eq!(result.status, Status::Pass);
     }
 
+    #[tokio::test]
+    async fn fails_when_simulation_unexpectedly_succeeds() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "latestLedger": 1000, "transactionData": "AAAA" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture =
+            SorobanFixture::from_loaded(&fixture("p28-soroban-4", "simulation-error", "")).unwrap();
+        let runner = DefaultSorobanRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Fail);
+        assert_eq!(
+            result.summary,
+            "expected simulation to fail, but it succeeded"
+        );
+    }
+
+    #[tokio::test]
+    async fn fails_when_simulation_error_does_not_match_expected_substring() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "latestLedger": 1000, "error": "Error(Budget, ExceededLimit)" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture = SorobanFixture::from_loaded(&fixture(
+            "p28-soroban-5",
+            "simulation-error",
+            "message_contains = \"Contract\"\n",
+        ))
+        .unwrap();
+        let runner = DefaultSorobanRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Fail);
+    }
+
+    #[tokio::test]
+    async fn a_transport_failure_produces_an_error_status_not_a_fail() {
+        // Port 0 on loopback has no listener, so the simulateTransaction
+        // POST fails at the transport level before any JSON-RPC exchange.
+        let runner = DefaultSorobanRunner::new(HttpRpcClient::new("http://127.0.0.1:0"));
+        let fixture =
+            SorobanFixture::from_loaded(&fixture("p28-soroban-6", "simulation-success", ""))
+                .unwrap();
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.summary, "failed to call simulateTransaction");
+        assert!(result.details.is_some());
+    }
+
     #[test]
     fn rejects_a_fixture_missing_the_expect_table() {
         let toml = format!(
@@ -449,6 +511,48 @@ mod tests {
         assert!(matches!(
             err,
             SorobanFixtureError::InvalidFixtureBody { .. }
+        ));
+    }
+
+    /// Parses a fixture whose single `[[args]]` entry has the given
+    /// `kind` and raw TOML `value`.
+    fn from_loaded_with_arg(
+        kind: &str,
+        value: &str,
+    ) -> Result<SorobanFixture, SorobanFixtureError> {
+        let toml = format!(
+            "id = \"bad-arg\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"x\"\ndescription = \"x\"\nsource_account = \"{}\"\ncontract_id = \"{}\"\nfunction = \"f\"\nsequence_number = 1\n\n[[args]]\nkind = \"{kind}\"\nvalue = {value}\n\n[expect]\nkind = \"simulation-success\"\n",
+            StrkeyPublicKey([0u8; 32]),
+            StrkeyContract([0u8; 32]),
+        );
+        let loaded =
+            canary_fixtures::parse_fixture_str(&toml, std::path::Path::new("t.toml")).unwrap();
+        SorobanFixture::from_loaded(&loaded)
+    }
+
+    #[test]
+    fn rejects_a_negative_u32_arg() {
+        let err = from_loaded_with_arg("u32", "-1").unwrap_err();
+        assert!(matches!(
+            err,
+            SorobanFixtureError::InvalidFixtureBody { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_string_value_for_a_bool_arg() {
+        let err = from_loaded_with_arg("bool", "\"true\"").unwrap_err();
+        assert!(matches!(
+            err,
+            SorobanFixtureError::InvalidFixtureBody { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_an_unsupported_arg_kind_and_lists_the_supported_ones() {
+        let err = from_loaded_with_arg("map", "1").unwrap_err();
+        assert!(err.to_string().contains(
+            "expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"symbol\", \"string\""
         ));
     }
 }

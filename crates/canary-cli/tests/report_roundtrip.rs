@@ -1,6 +1,6 @@
 mod support;
 
-use support::{run_in, stdout, TempProject};
+use support::{run_in, stderr, stdout, TempProject};
 
 const OFFLINE_CONFIG: &str = r#"
 version = 1
@@ -38,4 +38,9 @@ fn report_on_a_malformed_file_exits_with_a_configuration_error() {
 
     let output = run_in(&dir.path, &["report", "result.json"]);
     assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(
+        err.contains("error: configuration error: invalid report file:"),
+        "stderr: {err}"
+    );
 }

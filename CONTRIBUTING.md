@@ -76,14 +76,20 @@ change.
 
 ## Adding a new protocol pack
 
-Protocol-specific assumptions live behind the `ProtocolPack` abstraction in
-`canary-core`, not scattered through the runners. To add support for a new
-protocol version:
+A protocol pack is just the set of fixtures that declare that protocol
+version. There is no separate registration step: `canary_runner::build_plan`
+(`crates/canary-runner/src/scheduler.rs`) decides applicability per fixture
+by comparing each fixture's `protocol` metadata field against the run's
+target protocol (`--protocol`, else `.stellar-canary.toml`'s `protocol`,
+else the default `28`). Fixtures for any other protocol are reported as
+skipped, not run. To add support for a new protocol version:
 
-1. add fixtures for the new protocol to `ProtocolCanary-Fixtures` (or the
-   local fixture directory used in development/tests);
-2. add a `ProtocolPack` entry describing which fixtures apply;
-3. do not modify or delete the previous protocol's pack or fixtures.
+1. add fixtures with `protocol = <new version>` to `ProtocolCanary-Fixtures`
+   (or the local fixture directory used in development/tests);
+2. check them with `stellar-canary fixtures --protocol <new version>`;
+3. do not modify or delete the previous protocol's fixtures.
+
+`canary_core::ProtocolPack` is not used for this (see its rustdoc).
 
 ## Adding a fixture
 

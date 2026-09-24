@@ -44,6 +44,52 @@ first, to see exactly what would be loaded, before running `check`.
 **Fix.** Correct the path, or confirm you're in the directory you think
 you're in.
 
+## Malformed `.stellar-canary.toml`
+
+**Symptom.** `check` exits with code `2` and a `failed to parse
+configuration file` error, for example with `protocol = "28"` (a string
+instead of a number):
+
+```text
+error: configuration error: failed to parse configuration file .stellar-canary.toml: TOML parse error at line 2, column 12
+  |
+2 | protocol = "28"
+  |            ^^^^
+invalid type: string "28", expected u32
+```
+
+**Likely cause.** The config file exists but isn't valid for the schema:
+a TOML syntax error (an unclosed quote or `[table` header), a value of
+the wrong type, or a missing required field (`version` and `protocol`
+are required). This applies both to a file passed with `--config` and to
+a `.stellar-canary.toml` picked up from the project root.
+
+**What to check.** The line and column in the error; the caret marks the
+offending text.
+
+**Fix.** Correct that line and rerun. Nothing runs until the file parses.
+
+## Unsupported config `version`
+
+**Symptom.** `check` exits with code `2` and:
+
+```text
+error: configuration error: unsupported configuration version 2 in .stellar-canary.toml: this build supports version 1
+```
+
+**Likely cause.** The file's `version` field doesn't match the config
+schema version (`SUPPORTED_CONFIG_VERSION`) of the installed CLI. This
+is typically a config written for a newer or older Protocol Canary
+release than the one you have installed. `0.1.1` supports version `1`
+only.
+
+**What to check.** The `version` line in the config file, and
+`stellar-canary version`.
+
+**Fix.** Set `version = 1` if the rest of the file matches this
+release's schema, or install the Protocol Canary release the config was
+written for.
+
 ## Malformed fixture
 
 **Symptom.** `check`/`fixtures` exits with code `4` and a TOML parse

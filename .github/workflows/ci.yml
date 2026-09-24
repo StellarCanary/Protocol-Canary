@@ -5,16 +5,19 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-
 permissions:
   contents: read
 
 jobs:
   test:
-    name: fmt, check, test, clippy
-    runs-on: ubuntu-latest
+    name: fmt, check, test, clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
     steps:
       - uses: actions/checkout@v7
 
@@ -28,7 +31,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
         run: cargo fmt --all --check

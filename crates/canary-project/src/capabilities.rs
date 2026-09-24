@@ -71,6 +71,28 @@ mod tests {
     }
 
     #[test]
+    fn stellar_rpc_client_dependency_yields_rpc_client_capability() {
+        let signals = DetectionSignals {
+            manifest: Some(CargoManifest {
+                dependency_names: vec!["stellar-rpc-client".to_string()],
+            }),
+            ..Default::default()
+        };
+        assert!(detect_capabilities(&signals).contains(&Capability::RpcClient));
+    }
+
+    #[test]
+    fn soroban_rpc_dependency_yields_rpc_client_capability() {
+        let signals = DetectionSignals {
+            manifest: Some(CargoManifest {
+                dependency_names: vec!["soroban-rpc".to_string()],
+            }),
+            ..Default::default()
+        };
+        assert!(detect_capabilities(&signals).contains(&Capability::RpcClient));
+    }
+
+    #[test]
     fn wasm_artifact_signal_yields_wasm_artifact_capability() {
         let signals = DetectionSignals {
             has_wasm_artifact: true,

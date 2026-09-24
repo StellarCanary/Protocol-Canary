@@ -85,6 +85,25 @@ mod tests {
     }
 
     #[test]
+    fn manifest_without_a_dependencies_table_parses_with_no_dependencies() {
+        let dir = super::super::test_support::temp_dir("manifest-no-dependencies");
+        write_manifest(
+            &dir.path,
+            r#"
+            [package]
+            name = "dependency-free"
+            version = "0.1.0"
+            "#,
+        );
+
+        let manifest =
+            read_cargo_manifest(&dir.path).expect("a valid [package]-only manifest parses");
+        assert!(manifest.dependency_names.is_empty());
+        assert!(!manifest.has_dependency("soroban-sdk"));
+        assert!(!manifest.has_any_dependency(&["soroban-sdk", "stellar-rpc-client"]));
+    }
+
+    #[test]
     fn missing_manifest_returns_none() {
         let dir = super::super::test_support::temp_dir("manifest-missing");
         assert!(read_cargo_manifest(&dir.path).is_none());

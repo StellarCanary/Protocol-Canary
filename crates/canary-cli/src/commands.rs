@@ -73,11 +73,12 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         let passphrase = default_passphrase(&network_name).unwrap_or("").to_string();
 
         let client = HttpRpcClient::new(rpc_url.clone());
-        let observed_protocol = client
-            .get_network()
-            .await
+        let network_res = client.get_network().await;
+        let observed_protocol = network_res
+            .as_ref()
             .ok()
             .map(|info| ProtocolVersion(info.protocol_version));
+        let network_error = network_res.err().map(|e| e.to_string());
 
         let context = NetworkContext {
             name: network_name.clone(),
@@ -88,6 +89,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         let summary = NetworkSummary {
             name: network_name,
             observed_protocol,
+            error: network_error,
         };
         (context, Some(summary))
     } else {

@@ -337,6 +337,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_max_attempts_one_disables_retries() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 1,
+            base_delay: Duration::from_millis(1),
+        });
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(err, RpcError::Transport { .. }));
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+    }
+
+    #[tokio::test]
     async fn simulate_transaction_reports_a_host_error() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))

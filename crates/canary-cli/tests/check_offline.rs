@@ -123,6 +123,30 @@ fn json_output_is_valid_json_with_the_expected_top_level_fields() {
     assert_eq!(value["status"], "pass");
 }
 
+/// The Markdown reporter is unit-tested in canary-report, but the CLI
+/// wiring that selects it via OutputFormat::Markdown is not exercised
+/// anywhere else. This pins that wiring end-to-end against the offline
+/// fixture setup and checks the documented leading shape.
+#[test]
+fn markdown_output_starts_with_the_documented_heading() {
+    let dir = TempProject::new("check-markdown");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--format", "markdown"]);
+    assert_eq!(output.status.code(), Some(0));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("## Stellar Protocol Canary"),
+        "markdown output must begin with the documented heading, got: {text}"
+    );
+    assert!(text.contains("**Result: PASS**"));
+    assert!(text.contains("| XDR | ✅ Pass |"));
+}
+
 /// Regression test for the full deterministic-failure path: a real failed
 /// assertion (not a manually forced exit code) must produce Status::Fail,
 /// exit code 1, and a JSON report whose top-level "status" also reads

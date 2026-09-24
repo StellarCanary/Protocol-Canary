@@ -76,6 +76,24 @@ fn an_unsupported_configuration_schema_version_exits_two() {
 }
 
 #[test]
+fn all_surfaces_disabled_exits_two_with_an_actionable_message() {
+    let dir = TempProject::new("check-all-surfaces-disabled");
+    dir.write(
+        ".stellar-canary.toml",
+        "version = 1\nprotocol = 28\n\n[tests]\nxdr = false\nrpc = false\nsoroban = false\n",
+    );
+
+    let output = run_in(&dir.path, &["check"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(err.contains("configuration error"), "stderr: {err}");
+    assert!(
+        err.contains("at least one of [tests].xdr, [tests].rpc, [tests].soroban must be enabled"),
+        "stderr: {err}"
+    );
+}
+
+#[test]
 fn a_duplicate_fixture_id_exits_four() {
     let dir = TempProject::new("check-dup-fixture");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);

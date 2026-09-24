@@ -9,6 +9,10 @@ use canary_core::ProjectType;
 /// Bump this, and add explicit migration/rejection logic, before changing
 /// the shape of [`ConfigFile`] in a way that would silently misread an
 /// older file.
+///
+/// The current rejection logic lives in `crate::loader::validate`, which
+/// returns [`ConfigError::UnsupportedVersion`](crate::loader::ConfigError::UnsupportedVersion)
+/// for any other version. A version bump needs to extend that check.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
 /// The default target protocol used when a project does not pin one.

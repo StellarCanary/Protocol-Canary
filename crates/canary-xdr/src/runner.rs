@@ -368,6 +368,32 @@ mod tests {
     }
 
     #[test]
+    fn encode_equals_fixture_with_malformed_expected_base64_fails_with_mismatch() {
+        // `expected_base64` is compared byte-for-byte as a plain string, and the
+        // fixture loader does not validate that it is syntactically valid base64.
+        // A typo'd `expected_base64` therefore currently parses fine and is
+        // reported as an ordinary encode mismatch (`Status::Fail`), not as an
+        // `InvalidFixtureBody` parse error. This test locks in that current
+        // behavior; whether it should become a parse-time error is a separate
+        // design decision.
+        let base64 = valid_stellar_value_base64();
+        let body = format!(
+            "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"{base64}\"\nexpected_base64 = \"not valid base64!!!\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+
+        assert_eq!(result.status, canary_core::Status::Fail);
+        assert_eq!(
+            result.summary,
+            "StellarValue did not encode to the expected bytes"
+        );
+        let details = result.details.expect("details should be present");
+        assert!(details.contains("expected: not valid base64!!!"));
+        assert!(details.contains(&format!("actual:   {base64}")));
+    }
+
+    #[test]
     fn rejects_a_fixture_body_missing_the_type_field() {
         let body = "kind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-8", body)).unwrap_err();

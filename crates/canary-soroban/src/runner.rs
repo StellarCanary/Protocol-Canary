@@ -484,6 +484,20 @@ mod tests {
         assert_eq!(result.status, Status::Fail);
     }
 
+    #[tokio::test]
+    async fn a_transport_failure_produces_an_error_status_not_a_fail() {
+        // Port 0 on loopback has no listener, so the simulateTransaction
+        // POST fails at the transport level before any JSON-RPC exchange.
+        let runner = DefaultSorobanRunner::new(HttpRpcClient::new("http://127.0.0.1:0"));
+        let fixture =
+            SorobanFixture::from_loaded(&fixture("p28-soroban-6", "simulation-success", ""))
+                .unwrap();
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.summary, "failed to call simulateTransaction");
+        assert!(result.details.is_some());
+    }
+
     #[test]
     fn rejects_a_fixture_missing_the_expect_table() {
         let toml = format!(

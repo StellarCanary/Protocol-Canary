@@ -380,4 +380,22 @@ mod tests {
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-9", body)).unwrap_err();
         assert!(matches!(err, XdrError::InvalidFixtureBody { .. }));
     }
+
+    #[test]
+    fn test_roundtrip_fixture_fails_for_non_canonical_input() {
+        // A non-canonical boolean in ScVal: ScVal::B(true) encoded with non-canonical 2 instead of 1.
+        let input_base64 = "AAAAAAAAAAI=";
+        let expected_output = "AAAAAAAAAAA=";
+
+        let body =
+            format!("type = \"ScVal\"\nkind = \"roundtrip\"\nvalue_base64 = \"{input_base64}\"\n");
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-roundtrip-fail", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+
+        assert_eq!(result.status, canary_core::Status::Fail);
+        let details = result.details.expect("details should be present");
+        assert!(details.contains(input_base64));
+        assert!(details.contains(expected_output));
+    }
 }

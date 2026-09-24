@@ -188,6 +188,26 @@ mod tests {
         assert_ne!(key_a.to_file_stem(), key_b.to_file_stem());
     }
 
+    #[test]
+    fn get_returns_none_for_malformed_bytes() {
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+
+        std::fs::write(store.entry_path(&key), b"corrupted raw bytes {{").unwrap();
+        assert!(store.get(&key).is_none());
+    }
+
+    #[test]
+    fn get_returns_none_for_schema_mismatch() {
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+
+        std::fs::write(store.entry_path(&key), b"{\"invalid\": \"schema\"}").unwrap();
+        assert!(store.get(&key).is_none());
+    }
+
     /// Minimal temp-dir helper so this crate does not need a `tempfile`
     /// dev-dependency for a handful of cache tests.
     ///

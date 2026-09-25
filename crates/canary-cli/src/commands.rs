@@ -115,6 +115,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         let summary = NetworkSummary {
             name: network_name,
             observed_protocol,
+            error: network_error,
         };
         (context, Some(summary))
     } else {

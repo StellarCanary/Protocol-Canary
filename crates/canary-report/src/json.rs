@@ -54,6 +54,8 @@ struct JsonNetwork {
     name: String,
     #[serde(rename = "observedProtocol", skip_serializing_if = "Option::is_none")]
     observed_protocol: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,6 +143,7 @@ impl From<&ReportInput> for JsonReport {
             network: input.network.as_ref().map(|n| JsonNetwork {
                 name: n.name.to_string(),
                 observed_protocol: n.observed_protocol.map(|p| p.0),
+                error: n.error.clone(),
             }),
             status: input.overall_status().as_str().to_string(),
             counts: JsonCounts::from_results(&input.results, input.skipped.len()),
@@ -282,6 +285,7 @@ impl TryFrom<JsonReport> for ReportInput {
             network: report.network.map(|n| NetworkSummary {
                 name: parse_network_name(&n.name),
                 observed_protocol: n.observed_protocol.map(ProtocolVersion),
+                error: n.error,
             }),
             results,
             skipped,
@@ -341,6 +345,7 @@ mod tests {
             network: Some(NetworkSummary {
                 name: NetworkName::Testnet,
                 observed_protocol: Some(ProtocolVersion(28)),
+                error: None,
             }),
             results: vec![CompatibilityResult {
                 test_id: "p28-xdr-1".into(),

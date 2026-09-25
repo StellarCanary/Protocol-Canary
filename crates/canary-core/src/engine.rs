@@ -1,14 +1,11 @@
-//! The execution context and compatibility-test abstraction that every
-//! surface runner implements against.
+//! The execution context that every surface runner is handed.
 
 use crate::cache::CacheStore;
-use crate::errors::CanaryError;
 use crate::model::{
-    CompatibilityResult, FixtureStore, GitContext, NetworkContext, ProjectContext, ProtocolVersion,
-    RunOptions, Surface,
+    FixtureStore, GitContext, NetworkContext, ProjectContext, ProtocolVersion, RunOptions,
 };
 
-/// Everything a [`CompatibilityTest`] needs to run, explicitly. There is no
+/// Everything a compatibility test needs to run, explicitly. There is no
 /// hidden global state: two runs constructed with equal `ExecutionContext`
 /// values (modulo genuinely live network state) must behave identically.
 pub struct ExecutionContext {
@@ -19,15 +16,4 @@ pub struct ExecutionContext {
     pub git: GitContext,
     pub cache: CacheStore,
     pub options: RunOptions,
-}
-
-/// A single compatibility assertion for one protocol version and surface.
-pub trait CompatibilityTest {
-    fn id(&self) -> &str;
-
-    fn protocol_version(&self) -> ProtocolVersion;
-
-    fn surface(&self) -> Surface;
-
-    fn execute(&self, context: &ExecutionContext) -> Result<CompatibilityResult, CanaryError>;
 }

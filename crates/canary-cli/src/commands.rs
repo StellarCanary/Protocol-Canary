@@ -8,7 +8,7 @@ use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
     JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary, ReportInput, TerminalReporter,
 };
-use canary_rpc::{HttpRpcClient, RpcClient};
+use canary_rpc::{validate_network_info, HttpRpcClient, RpcClient, RpcError};
 use canary_runner::EnabledSurfaces;
 
 use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat, ReportArgs};
@@ -72,12 +72,39 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             })?;
         let passphrase = default_passphrase(&network_name).unwrap_or("").to_string();
 
+        // Fetch the endpoint's network identity and compare it against
+        // what this run assumed (see `canary_rpc::validate_network_info`,
+        // the constructor of RpcError::NetworkMismatch/ProtocolMismatch):
+        //
+        // - A transport-level failure leaves `observed_protocol` as `None`
+        //   (rendered as "protocol not observed"); it does not block the
+        //   run — individual RPC/Soroban fixtures still report the outage
+        //   as execution errors.
+        // - A passphrase mismatch means `--network` and `--rpc-url` refer
+        //   to different networks: abort as a configuration error rather
+        //   than attribute results to the wrong network.
+        // - A protocol mismatch is a warning, not a failure: running a
+        //   target-protocol run against a not-yet-upgraded network is a
+        //   core upgrade-rehearsal use case, but it must be visible
+        //   rather than only an annotation in the report.
         let client = HttpRpcClient::new(rpc_url.clone());
-        let observed_protocol = client
-            .get_network()
-            .await
-            .ok()
-            .map(|info| ProtocolVersion(info.protocol_version));
+        let observed_protocol = match client.get_network().await {
+            Ok(info) => {
+                if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
+                    match err {
+                        RpcError::NetworkMismatch { .. } => {
+                            return Err(CanaryError::Configuration(err.to_string()));
+                        }
+                        RpcError::ProtocolMismatch { .. } => {
+                            eprintln!("warning: {err}");
+                        }
+                        other => return Err(other.into()),
+                    }
+                }
+                Some(ProtocolVersion(info.protocol_version))
+            }
+            Err(_) => None,
+        };
 
         let context = NetworkContext {
             name: network_name.clone(),

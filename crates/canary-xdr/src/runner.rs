@@ -381,6 +381,27 @@ mod tests {
         assert!(matches!(err, XdrError::InvalidFixtureBody { .. }));
     }
 
+    /// `LedgerEntry` is a real XDR type name — just not one of the ones
+    /// this tool supports. The rejection must surface through fixture
+    /// parsing with `XdrTypeName::from_str`'s supported-types list intact,
+    /// so a fixture author can self-correct from the error alone.
+    #[test]
+    fn rejects_a_well_formed_but_unsupported_xdr_type_name_and_lists_the_supported_ones() {
+        let body = "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
+        let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", body)).unwrap_err();
+        match err {
+            XdrError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("LedgerEntry"), "reason: {reason}");
+                for supported in ["StellarValue", "ContractExecutable", "ScVal"] {
+                    assert!(
+                        reason.contains(supported),
+                        "reason must list supported type {supported:?}: {reason}"
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_roundtrip_fixture_fails_for_non_canonical_input() {
         // A non-canonical boolean in ScVal: ScVal::B(true) encoded with non-canonical 2 instead of 1.

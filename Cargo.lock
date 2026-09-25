@@ -131,6 +131,7 @@ dependencies = [
  "clap",
  "serde_json",
  "tokio",
+ "wiremock",
 ]
 
 [[package]]

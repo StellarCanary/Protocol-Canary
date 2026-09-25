@@ -155,7 +155,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         options: RunOptions {
             verbose: args.verbose,
             quiet: args.quiet,
-            max_concurrency: args.max_concurrency,
+            max_concurrency: 4,
+            rpc_timeout: args.rpc_timeout,
         },
     };
 

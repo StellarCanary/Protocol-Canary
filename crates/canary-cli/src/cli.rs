@@ -55,6 +55,10 @@ pub struct CheckArgs {
     #[arg(long)]
     pub config: Option<PathBuf>,
 
+    /// Request timeout for the RPC client in seconds.
+    #[arg(long = "rpc-timeout", default_value = "10")]
+    pub rpc_timeout: u64,
+
     /// Directory containing fixture files.
     #[arg(long = "fixtures-dir", default_value = "fixtures")]
     pub fixtures_dir: PathBuf,

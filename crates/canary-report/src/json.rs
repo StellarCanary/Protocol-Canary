@@ -466,4 +466,24 @@ mod tests {
         let err = JsonReporter::parse("not json").unwrap_err();
         assert!(matches!(err, JsonReportError::Parse(_)));
     }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_surface() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["surface"] = "wire".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownSurface(surface) if surface == "wire"));
+    }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_status() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["status"] = "inconclusive".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownStatus(status) if status == "inconclusive"));
+    }
 }

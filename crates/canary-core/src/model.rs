@@ -85,6 +85,30 @@ pub struct CompatibilityResult {
 }
 
 impl CompatibilityResult {
+    /// Whether this single result should fail a run: `true` for
+    /// [`Status::Fail`] and [`Status::Error`], `false` otherwise.
+    ///
+    /// This is public API for external consumers of `canary-core` that
+    /// inspect individual results. The CLI does not call it: its run-level
+    /// decision uses `canary_runner::ResultSummary::has_required_failure`,
+    /// which applies the same `Fail`/`Error` rule to summary counts. Keep
+    /// the two in sync if either rule changes.
+    ///
+    /// ```
+    /// use canary_core::{CompatibilityResult, ProtocolVersion, Status, Surface};
+    ///
+    /// let result = CompatibilityResult {
+    ///     test_id: "t1".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     status: Status::Error,
+    ///     summary: "rpc timeout".into(),
+    ///     details: None,
+    ///     duration_ms: 1,
+    ///     fixture_id: None,
+    /// };
+    /// assert!(result.is_required_failure());
+    /// ```
     pub fn is_required_failure(&self) -> bool {
         matches!(self.status, Status::Fail | Status::Error)
     }

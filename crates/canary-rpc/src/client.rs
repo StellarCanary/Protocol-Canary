@@ -157,10 +157,20 @@ pub struct HttpRpcClient {
 impl HttpRpcClient {
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             endpoint: endpoint.into(),
             retry_policy: RetryPolicy::default(),
         }
+    }
+
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        if let Ok(http) = reqwest::Client::builder().timeout(timeout).build() {
+            self.http = http;
+        }
+        self
     }
 
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {

@@ -39,13 +39,19 @@ pub fn detect_capabilities(signals: &DetectionSignals) -> Vec<Capability> {
     let mut capabilities = Vec::new();
 
     for manifest in &signals.manifests {
-        if manifest.has_any_dependency(SOROBAN_DEPENDENCIES) && !capabilities.contains(&Capability::SorobanContract) {
+        if manifest.has_any_dependency(SOROBAN_DEPENDENCIES)
+            && !capabilities.contains(&Capability::SorobanContract)
+        {
             capabilities.push(Capability::SorobanContract);
         }
-        if manifest.has_any_dependency(STELLAR_SDK_DEPENDENCIES) && !capabilities.contains(&Capability::StellarSdkDependency) {
+        if manifest.has_any_dependency(STELLAR_SDK_DEPENDENCIES)
+            && !capabilities.contains(&Capability::StellarSdkDependency)
+        {
             capabilities.push(Capability::StellarSdkDependency);
         }
-        if manifest.has_any_dependency(RPC_CLIENT_DEPENDENCIES) && !capabilities.contains(&Capability::RpcClient) {
+        if manifest.has_any_dependency(RPC_CLIENT_DEPENDENCIES)
+            && !capabilities.contains(&Capability::RpcClient)
+        {
             capabilities.push(Capability::RpcClient);
         }
     }

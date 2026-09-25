@@ -140,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_max_concurrency_flag_default() {
-        let cli = Cli::parse_from(&["stellar-canary", "check"]);
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.max_concurrency, 4);
         } else {
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn test_max_concurrency_flag_custom() {
-        let cli = Cli::parse_from(&["stellar-canary", "check", "--max-concurrency", "10"]);
+        let cli = Cli::parse_from(["stellar-canary", "check", "--max-concurrency", "10"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.max_concurrency, 10);
         } else {

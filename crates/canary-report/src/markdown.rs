@@ -153,6 +153,17 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_with_multiline_details_renders_as_nested_bullets() {
+        let mut failing = result("p28-xdr-2", Surface::Xdr, Status::Fail);
+        failing.details =
+            Some("error summary\nbyte offset: 12\nexpected something else".to_string());
+        let input = base_input(vec![failing], PolicyDecision::Fail);
+        let text = MarkdownReporter::render(&input);
+        let expected = "- **p28-xdr-2**: p28-xdr-2 summary\n  - error summary\n  - byte offset: 12\n  - expected something else\n";
+        assert!(text.contains(expected));
+    }
+
+    #[test]
     fn an_execution_error_renders_as_error_result() {
         let input = base_input(
             vec![result("p28-rpc-1", Surface::Rpc, Status::Error)],

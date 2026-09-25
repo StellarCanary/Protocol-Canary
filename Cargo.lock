@@ -177,6 +177,7 @@ name = "canary-project"
 version = "0.1.1"
 dependencies = [
  "canary-core",
+ "serde_json",
  "toml",
 ]
 

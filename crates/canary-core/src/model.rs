@@ -41,7 +41,7 @@ impl fmt::Display for Surface {
     }
 }
 
-/// The outcome of running a single [`crate::engine::CompatibilityTest`].
+/// The outcome of running a single compatibility test.
 ///
 /// `Fail` means the compatibility assertion ran and failed; `Error` means
 /// the test could not be executed correctly (e.g. a network timeout). Do
@@ -140,8 +140,8 @@ impl fmt::Display for ProjectType {
 
 /// A declared or detected capability of the project under test.
 ///
-/// Used by the [planner](crate::planner::CompatibilityPlanner) to decide
-/// whether a fixture that requires a capability is applicable.
+/// Used by the runner's fixture planner (see `canary-runner`'s scheduler) to
+/// decide whether a fixture that requires a capability is applicable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {

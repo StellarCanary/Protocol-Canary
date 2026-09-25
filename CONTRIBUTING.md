@@ -18,7 +18,7 @@ This is a Cargo workspace. Each crate has one responsibility:
 | Crate | Responsibility |
 |---|---|
 | `canary-cli` | Command-line interface (`stellar-canary` binary) |
-| `canary-core` | Domain model, compatibility test trait, planner, policy |
+| `canary-core` | Domain model, execution context, policy |
 | `canary-config` | `.stellar-canary.toml` loading and validation |
 | `canary-project` | Project type detection |
 | `canary-fixtures` | Fixture schema, loading, validation |

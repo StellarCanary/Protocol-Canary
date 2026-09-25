@@ -85,6 +85,22 @@ mod tests {
     }
 
     #[test]
+    fn reads_manifest_without_dependencies() {
+        let dir = super::super::test_support::temp_dir("manifest-no-dependencies");
+        write_manifest(
+            &dir.path,
+            r#"
+            [package]
+            name = "example"
+            version = "0.1.0"
+            "#,
+        );
+
+        let manifest = read_cargo_manifest(&dir.path).expect("manifest");
+        assert!(manifest.dependency_names.is_empty());
+    }
+
+    #[test]
     fn missing_manifest_returns_none() {
         let dir = super::super::test_support::temp_dir("manifest-missing");
         assert!(read_cargo_manifest(&dir.path).is_none());

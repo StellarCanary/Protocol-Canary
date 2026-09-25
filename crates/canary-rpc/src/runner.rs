@@ -507,4 +507,70 @@ mod tests {
             RpcFixture::from_loaded(&fixture("bad", "method = \"not-a-method\"\n")).unwrap_err();
         assert!(matches!(err, RpcFixtureError::InvalidFixtureBody { .. }));
     }
+
+    #[test]
+    fn field_type_assertion_is_parsed_successfully() {
+        let body = r#"
+        method = "get-network"
+
+        [[assert]]
+        kind = "field-type"
+        field = "protocolVersion"
+        expected_type = "number"
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("field-type-parse", body)).unwrap();
+        assert_eq!(fixture.assertions.len(), 1);
+        if let FieldAssertion::TypeIs { field, expected } = &fixture.assertions[0] {
+            assert_eq!(field, "protocolVersion");
+            assert_eq!(*expected, JsonType::Number);
+        } else {
+            panic!("Parsed wrong assertion type");
+        }
+    }
+
+    #[test]
+    fn field_type_assertion_passes_when_type_matches() {
+        let assertion = FieldAssertion::TypeIs {
+            field: "protocolVersion".to_string(),
+            expected: JsonType::Number,
+        };
+        let response = json!({ "protocolVersion": 28 });
+        assert_eq!(assertion.check(&response), Ok(()));
+        
+        let assertion_str = FieldAssertion::TypeIs {
+            field: "passphrase".to_string(),
+            expected: JsonType::String,
+        };
+        let response_str = json!({ "passphrase": "test" });
+        assert_eq!(assertion_str.check(&response_str), Ok(()));
+    }
+
+    #[test]
+    fn field_type_assertion_fails_when_type_mismatches() {
+        let assertion = FieldAssertion::TypeIs {
+            field: "protocolVersion".to_string(),
+            expected: JsonType::String,
+        };
+        // It's a number, but expected string
+        let response = json!({ "protocolVersion": 28 });
+        let result = assertion.check(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("protocolVersion"));
+        assert!(err_msg.contains("String"));
+    }
+
+    #[test]
+    fn field_type_assertion_fails_when_field_is_missing() {
+        let assertion = FieldAssertion::TypeIs {
+            field: "protocolVersion".to_string(),
+            expected: JsonType::Number,
+        };
+        let response = json!({});
+        let result = assertion.check(&response);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err();
+        assert!(err_msg.contains("protocolVersion"));
+        assert!(err_msg.contains("missing"));
+    }
 }

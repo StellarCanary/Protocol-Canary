@@ -229,4 +229,53 @@ mod tests {
         let text = TerminalReporter::render(&input);
         assert!(text.contains("Skipped fixtures: 1"));
     }
+
+    fn skip(fixture_id: &str, surface: canary_core::Surface, reason: &str) -> crate::SkipSummary {
+        crate::SkipSummary {
+            fixture_id: fixture_id.into(),
+            surface,
+            reason: reason.into(),
+        }
+    }
+
+    #[test]
+    fn verbose_output_lists_each_skipped_fixture_with_its_reason() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.verbose = true;
+        input.skipped.push(skip(
+            "p28-soroban-1",
+            canary_core::Surface::Soroban,
+            "requires a capability not declared by this project",
+        ));
+        input.skipped.push(skip(
+            "p28-rpc-2",
+            canary_core::Surface::Rpc,
+            "no RPC endpoint configured",
+        ));
+        let text = TerminalReporter::render(&input);
+        assert!(text.contains("Skipped fixtures: 2"));
+        assert!(text.contains("p28-soroban-1 (soroban): requires a capability not declared by this project"));
+        assert!(text.contains("p28-rpc-2 (rpc): no RPC endpoint configured"));
+    }
+
+    #[test]
+    fn non_verbose_output_only_prints_the_skipped_count() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.skipped.push(skip(
+            "p28-soroban-1",
+            canary_core::Surface::Soroban,
+            "requires a capability not declared by this project",
+        ));
+        input.skipped.push(skip(
+            "p28-rpc-2",
+            canary_core::Surface::Rpc,
+            "no RPC endpoint configured",
+        ));
+        let text = TerminalReporter::render(&input);
+        assert!(text.contains("Skipped fixtures: 2"));
+        assert!(!text.contains("requires a capability not declared by this project"));
+        assert!(!text.contains("no RPC endpoint configured"));
+        assert!(!text.contains("p28-soroban-1 ("));
+        assert!(!text.contains("p28-rpc-2 ("));
+    }
 }

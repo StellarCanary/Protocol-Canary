@@ -180,6 +180,8 @@ impl From<&ReportInput> for JsonReport {
 pub enum JsonReportError {
     #[error("failed to parse JSON report: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("unsupported schema version (found {found}, expected {expected})")]
+    UnsupportedSchemaVersion { found: u32, expected: u32 },
     #[error("unrecognized surface {0:?} in JSON report")]
     UnknownSurface(String),
     #[error("unrecognized status {0:?} in JSON report")]
@@ -309,6 +311,12 @@ impl JsonReporter {
     /// anything.
     pub fn parse(json_text: &str) -> Result<ReportInput, JsonReportError> {
         let report: JsonReport = serde_json::from_str(json_text)?;
+        if report.schema_version != SCHEMA_VERSION {
+            return Err(JsonReportError::UnsupportedSchemaVersion {
+                found: report.schema_version,
+                expected: SCHEMA_VERSION,
+            });
+        }
         report.try_into()
     }
 }
@@ -465,5 +473,41 @@ mod tests {
     fn rejects_malformed_json() {
         let err = JsonReporter::parse("not json").unwrap_err();
         assert!(matches!(err, JsonReportError::Parse(_)));
+    }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_surface() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["surface"] = "wire".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownSurface(surface) if surface == "wire"));
+    }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_status() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["status"] = "inconclusive".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownStatus(status) if status == "inconclusive"));
+    }
+
+    #[test]
+    fn rejects_a_report_with_an_unsupported_schema_version() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["schemaVersion"] = 999.into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        match err {
+            JsonReportError::UnsupportedSchemaVersion { found, expected } => {
+                assert_eq!(found, 999);
+                assert_eq!(expected, SCHEMA_VERSION);
+            }
+            _ => panic!("Expected UnsupportedSchemaVersion error, got {:?}", err),
+        }
     }
 }

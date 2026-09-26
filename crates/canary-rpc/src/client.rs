@@ -155,12 +155,34 @@ pub struct HttpRpcClient {
 }
 
 impl HttpRpcClient {
+        /// Creates a new instance of the RPC [`HttpRpcClient`] connected to the specified endpoint.
+    ///
+    /// This initializes the underlying transport layer and configures default 
+    /// connection parameters for communicating with the Canary RPC server.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - A type that can be converted into a string slice representing 
+    ///   the target RPC node URL (e.g., `"http://127.0.0.1:8545"`).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use canary_rpc::Client;
+    ///
+    /// let client = HttpRpcClient::new("http://127.0.0.1:8545");
+    /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if the provided endpoint URL fails internal parsing or contains an 
+    /// unsupported URI scheme.
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
             http: reqwest::Client::builder()
                 .timeout(Duration::from_secs(10))
                 .build()
-                .unwrap_or_else(|_| reqwest::Client::new()),
+                .unwrap_or_else(|_| reqwest::HttpRpcClient::new()),
             endpoint: endpoint.into(),
             retry_policy: RetryPolicy::default(),
         }
@@ -343,7 +365,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri());
+        let client = HttpRpcHttpRpcClient::new(server.uri());
         let info = client.get_network().await.expect("ok");
         assert_eq!(info.protocol_version, 28);
     }
@@ -361,7 +383,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri());
+        let client = HttpRpcHttpRpcClient::new(server.uri());
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::JsonRpcError { code: -32602, .. }));
     }
@@ -375,7 +397,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri());
+        let client = HttpRpcHttpRpcClient::new(server.uri());
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::InvalidJson { .. }));
     }
@@ -389,7 +411,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+        let client = HttpRpcHttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 2,
             base_delay: Duration::from_millis(1),
         });
@@ -406,7 +428,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+        let client = HttpRpcHttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 1,
             base_delay: Duration::from_millis(1),
         });
@@ -433,7 +455,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcClient::new(server.uri());
+        let client = HttpRpcHttpRpcClient::new(server.uri());
         let response = client
             .simulate_transaction(SimulationRequest {
                 transaction: "AAAA".to_string(),

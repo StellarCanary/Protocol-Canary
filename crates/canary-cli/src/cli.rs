@@ -78,6 +78,10 @@ pub struct CheckArgs {
     /// Shorten terminal-format output to a single status line.
     #[arg(long)]
     pub quiet: bool,
+
+    /// Maximum number of concurrent network requests for RPC/Soroban fixtures.
+    #[arg(long, default_value_t = 4)]
+    pub max_concurrency: u32,
 }
 
 #[derive(Debug, Parser)]
@@ -121,4 +125,36 @@ pub struct ReportArgs {
     /// Output format to render the stored report as.
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub format: OutputFormat,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[test]
+    fn verify_cli() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn test_max_concurrency_flag_default() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.max_concurrency, 4);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn test_max_concurrency_flag_custom() {
+        let cli = Cli::parse_from(["stellar-canary", "check", "--max-concurrency", "10"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.max_concurrency, 10);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
 }

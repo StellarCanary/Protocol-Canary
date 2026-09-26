@@ -202,6 +202,7 @@ mod tests {
         });
         let text = MarkdownReporter::render(&input);
         assert!(text.contains("Skipped 1 fixture(s)."));
-        assert!(text.contains("- **p28-soroban-1**: requires a capability not declared by this project"));
+        assert!(text
+            .contains("- **p28-soroban-1**: requires a capability not declared by this project"));
     }
 }

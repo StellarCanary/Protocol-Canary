@@ -478,8 +478,8 @@ mod tests {
         original.verbose = true;
         let json_text = JsonReporter::render(&original);
         let parsed = JsonReporter::parse(&json_text).expect("parses");
-        assert_eq!(parsed.verbose, true);
-        
+        assert!(parsed.verbose);
+
         let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
         assert_eq!(value["verbose"], true);
     }

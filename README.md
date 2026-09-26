@@ -38,7 +38,9 @@ endpoint, before the network moves.
 
 ## Quick start
 
-Install a released version from source:
+Download a prebuilt binary and its checksum from the [Releases](https://github.com/StellarCanary/Protocol-Canary/releases) page. Checksums are verified via `sha256sum -c SHA256SUMS`.
+
+Alternatively, install a released version from source:
 
 ```bash
 cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked

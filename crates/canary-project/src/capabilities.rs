@@ -2,7 +2,7 @@
 
 use canary_core::Capability;
 
-use crate::manifest::CargoManifest;
+use crate::manifest::ProjectManifest;
 
 /// Dependency names that indicate a Soroban contract project.
 const SOROBAN_DEPENDENCIES: &[&str] = &["soroban-sdk"];
@@ -14,15 +14,22 @@ const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
     "stellar-xdr",
     "stellar-base",
     "stellar-strkey",
+    "@stellar/stellar-sdk",
+    "@stellar/stellar-base",
 ];
 
 /// Dependency names that indicate the project talks to Stellar RPC.
-const RPC_CLIENT_DEPENDENCIES: &[&str] = &["stellar-rpc-client", "soroban-rpc"];
+const RPC_CLIENT_DEPENDENCIES: &[&str] = &[
+    "stellar-rpc-client",
+    "soroban-rpc",
+    "@stellar/stellar-sdk", // JS SDK includes RPC client
+    "soroban-client",
+];
 
 /// The raw, filesystem-level signals gathered for a project root.
 #[derive(Debug, Default, Clone)]
 pub struct DetectionSignals {
-    pub manifest: Option<CargoManifest>,
+    pub manifests: Vec<ProjectManifest>,
     pub has_stellar_toml: bool,
     pub has_wasm_artifact: bool,
 }
@@ -31,14 +38,20 @@ pub struct DetectionSignals {
 pub fn detect_capabilities(signals: &DetectionSignals) -> Vec<Capability> {
     let mut capabilities = Vec::new();
 
-    if let Some(manifest) = &signals.manifest {
-        if manifest.has_any_dependency(SOROBAN_DEPENDENCIES) {
+    for manifest in &signals.manifests {
+        if manifest.has_any_dependency(SOROBAN_DEPENDENCIES)
+            && !capabilities.contains(&Capability::SorobanContract)
+        {
             capabilities.push(Capability::SorobanContract);
         }
-        if manifest.has_any_dependency(STELLAR_SDK_DEPENDENCIES) {
+        if manifest.has_any_dependency(STELLAR_SDK_DEPENDENCIES)
+            && !capabilities.contains(&Capability::StellarSdkDependency)
+        {
             capabilities.push(Capability::StellarSdkDependency);
         }
-        if manifest.has_any_dependency(RPC_CLIENT_DEPENDENCIES) {
+        if manifest.has_any_dependency(RPC_CLIENT_DEPENDENCIES)
+            && !capabilities.contains(&Capability::RpcClient)
+        {
             capabilities.push(Capability::RpcClient);
         }
     }
@@ -57,12 +70,25 @@ mod tests {
     #[test]
     fn soroban_dependency_yields_soroban_contract_capability() {
         let signals = DetectionSignals {
-            manifest: Some(CargoManifest {
+            manifests: vec![ProjectManifest {
                 dependency_names: vec!["soroban-sdk".to_string()],
-            }),
+            }],
             ..Default::default()
         };
         assert!(detect_capabilities(&signals).contains(&Capability::SorobanContract));
+    }
+
+    #[test]
+    fn js_stellar_sdk_dependency_yields_capabilities() {
+        let signals = DetectionSignals {
+            manifests: vec![ProjectManifest {
+                dependency_names: vec!["@stellar/stellar-sdk".to_string()],
+            }],
+            ..Default::default()
+        };
+        let caps = detect_capabilities(&signals);
+        assert!(caps.contains(&Capability::StellarSdkDependency));
+        assert!(caps.contains(&Capability::RpcClient));
     }
 
     #[test]
@@ -73,9 +99,9 @@ mod tests {
     #[test]
     fn stellar_rpc_client_dependency_yields_rpc_client_capability() {
         let signals = DetectionSignals {
-            manifest: Some(CargoManifest {
+            manifests: vec![ProjectManifest {
                 dependency_names: vec!["stellar-rpc-client".to_string()],
-            }),
+            }],
             ..Default::default()
         };
         assert!(detect_capabilities(&signals).contains(&Capability::RpcClient));
@@ -84,9 +110,9 @@ mod tests {
     #[test]
     fn soroban_rpc_dependency_yields_rpc_client_capability() {
         let signals = DetectionSignals {
-            manifest: Some(CargoManifest {
+            manifests: vec![ProjectManifest {
                 dependency_names: vec!["soroban-rpc".to_string()],
-            }),
+            }],
             ..Default::default()
         };
         assert!(detect_capabilities(&signals).contains(&Capability::RpcClient));

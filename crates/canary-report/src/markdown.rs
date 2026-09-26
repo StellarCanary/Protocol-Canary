@@ -75,6 +75,11 @@ impl MarkdownReporter {
         if !input.skipped.is_empty() {
             let _ = writeln!(out);
             let _ = writeln!(out, "Skipped {} fixture(s).", input.skipped.len());
+            if input.verbose {
+                for skip in &input.skipped {
+                    let _ = writeln!(out, "- **{}**: {}", skip.fixture_id, skip.reason);
+                }
+            }
         }
 
         out
@@ -183,5 +188,21 @@ mod tests {
         });
         let text = MarkdownReporter::render(&input);
         assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(!text.contains("requires a capability"));
+    }
+
+    #[test]
+    fn mentions_skipped_fixture_reasons_when_verbose() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.verbose = true;
+        input.skipped.push(SkipSummary {
+            fixture_id: "p28-soroban-1".into(),
+            surface: Surface::Soroban,
+            reason: "requires a capability not declared by this project".into(),
+        });
+        let text = MarkdownReporter::render(&input);
+        assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(text
+            .contains("- **p28-soroban-1**: requires a capability not declared by this project"));
     }
 }

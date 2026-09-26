@@ -40,6 +40,8 @@ struct JsonReport {
     skipped: Vec<JsonSkip>,
     #[serde(default)]
     git: JsonGit,
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -172,6 +174,7 @@ impl From<&ReportInput> for JsonReport {
                 branch: input.git.branch.clone(),
                 is_dirty: input.git.is_dirty,
             },
+            verbose: input.verbose,
         }
     }
 }
@@ -291,7 +294,7 @@ impl TryFrom<JsonReport> for ReportInput {
                 branch: report.git.branch,
                 is_dirty: report.git.is_dirty,
             },
-            verbose: false,
+            verbose: report.verbose,
         })
     }
 }
@@ -467,6 +470,18 @@ mod tests {
         let json_text = JsonReporter::render(&original);
         let parsed = JsonReporter::parse(&json_text).expect("parses");
         assert_eq!(parsed.overall_status(), crate::ReportStatus::Error);
+    }
+
+    #[test]
+    fn parsing_preserves_verbose_flag() {
+        let mut original = input();
+        original.verbose = true;
+        let json_text = JsonReporter::render(&original);
+        let parsed = JsonReporter::parse(&json_text).expect("parses");
+        assert!(parsed.verbose);
+
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert_eq!(value["verbose"], true);
     }
 
     #[test]

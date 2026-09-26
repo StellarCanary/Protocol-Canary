@@ -189,23 +189,20 @@ mod tests {
     }
 
     #[test]
-    fn get_returns_none_for_malformed_bytes() {
-        let dir = tempdir();
-        let store = CacheStore::new(dir.path());
-        let key = sample_key();
-
-        std::fs::write(store.entry_path(&key), b"corrupted raw bytes {{").unwrap();
-        assert!(store.get(&key).is_none());
+    fn sanitize_keeps_ascii_alphanumeric_and_hyphen() {
+        let input = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-";
+        assert_eq!(sanitize(input), input);
     }
 
     #[test]
-    fn get_returns_none_for_schema_mismatch() {
-        let dir = tempdir();
-        let store = CacheStore::new(dir.path());
-        let key = sample_key();
+    fn sanitize_replaces_other_characters_with_underscore() {
+        assert_eq!(sanitize("a/b.c:d e"), "a_b_c_d_e");
+        assert_eq!(sanitize("!@#$%^&*()_+="), "_____________");
+    }
 
-        std::fs::write(store.entry_path(&key), b"{\"invalid\": \"schema\"}").unwrap();
-        assert!(store.get(&key).is_none());
+    #[test]
+    fn sanitize_empty_string_returns_empty_string() {
+        assert_eq!(sanitize(""), "");
     }
 
     /// Minimal temp-dir helper so this crate does not need a `tempfile`

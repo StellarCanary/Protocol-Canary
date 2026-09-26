@@ -129,7 +129,10 @@ mod tests {
         assert!(
             matches!(
                 err,
-                FixtureError::MissingReferencedFile { kind: "expected", .. }
+                FixtureError::MissingReferencedFile {
+                    kind: "expected",
+                    ..
+                }
             ),
             "expected MissingReferencedFile with kind \"expected\", got: {err:?}"
         );

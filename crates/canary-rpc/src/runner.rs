@@ -507,4 +507,31 @@ mod tests {
             RpcFixture::from_loaded(&fixture("bad", "method = \"not-a-method\"\n")).unwrap_err();
         assert!(matches!(err, RpcFixtureError::InvalidFixtureBody { .. }));
     }
+
+    #[tokio::test]
+    async fn fails_when_a_field_absent_assertion_does_not_hold() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "passphrase": "Test SDF Network ; September 2015", "protocolVersion": 28, "friendbotUrl": "https://friendbot.stellar.org" }
+            })))
+            .mount(&server)
+            .await;
+
+        let body = r#"
+        method = "get-network"
+
+        [[assert]]
+        kind = "field-absent"
+        field = "friendbotUrl"
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-absent-fail", body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Fail);
+        assert!(result.details.unwrap().contains("expected field \"friendbotUrl\" to be absent, but it was present"));
+    }
 }

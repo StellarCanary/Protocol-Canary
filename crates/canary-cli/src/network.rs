@@ -62,4 +62,12 @@ mod tests {
         assert!(default_rpc_url(&NetworkName::Mainnet).is_none());
         assert!(default_rpc_url(&NetworkName::Futurenet).is_none());
     }
+
+    #[test]
+    fn default_passphrase_mapping() {
+        assert_eq!(default_passphrase(&NetworkName::Testnet), Some(TESTNET_PASSPHRASE));
+        assert_eq!(default_passphrase(&NetworkName::Mainnet), Some(MAINNET_PASSPHRASE));
+        assert_eq!(default_passphrase(&NetworkName::Futurenet), Some(FUTURENET_PASSPHRASE));
+        assert_eq!(default_passphrase(&NetworkName::Custom("x".into())), None);
+    }
 }

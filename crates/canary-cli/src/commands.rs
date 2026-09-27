@@ -449,6 +449,9 @@ pub fn run_version() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use canary_core::{
+        CompatibilityResult, GitContext, PolicyDecision, ProjectType, Status, Surface,
+    };
     use std::path::PathBuf;
 
     fn fixtures_args(
@@ -489,10 +492,24 @@ mod tests {
             err.to_string()
                 .contains("--protocol must be a positive protocol version number"),
             "unexpected error text: {err}"
-    use canary_core::{
-        CompatibilityResult, GitContext, PolicyDecision, ProjectType, Status, Surface,
-    };
-    use std::path::PathBuf;
+        );
+    }
+
+    #[test]
+    fn run_fixtures_reports_a_missing_explicit_configuration_file() {
+        // Only reached when no --protocol was given, since an explicit protocol
+        // skips configuration loading entirely.
+        let err = run_fixtures_inner(fixtures_args(
+            None,
+            "no-such-fixtures-dir",
+            Some("no-such-config.stellar-canary.toml"),
+        ))
+        .expect_err("an explicit --config that does not exist must fail");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+    }
 
     /// Minimal temp-file helper: the repo deliberately hand-rolls these
     /// rather than adding a `tempfile` dev-dependency for a few tests.
@@ -652,18 +669,6 @@ mod tests {
     }
 
     #[test]
-    fn run_fixtures_reports_a_missing_explicit_configuration_file() {
-        // Only reached when no --protocol was given, since an explicit protocol
-        // skips configuration loading entirely.
-        let err = run_fixtures_inner(fixtures_args(
-            None,
-            "no-such-fixtures-dir",
-            Some("no-such-config.stellar-canary.toml"),
-        ))
-        .expect_err("an explicit --config that does not exist must fail");
-        assert!(
-            matches!(err, CanaryError::Configuration(_)),
-            "unexpected error: {err:?}"
     fn run_report_inner_reports_an_unparseable_file_as_a_configuration_error() {
         let file = TempReport::with_contents("not json at all");
         let err = run_report_inner(report_args(file.path(), OutputFormat::Markdown))

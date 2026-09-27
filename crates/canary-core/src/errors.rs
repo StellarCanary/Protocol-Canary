@@ -161,4 +161,20 @@ mod tests {
         assert_eq!(ExitCode::InvalidFixture.code(), 4);
         assert_eq!(ExitCode::InternalError.code(), 5);
     }
+
+    #[test]
+    fn exit_codes_display_as_their_documented_lowercase_names() {
+        assert_eq!(ExitCode::Pass.to_string(), "pass");
+        assert_eq!(
+            ExitCode::CompatibilityFailure.to_string(),
+            "compatibility_failure"
+        );
+        assert_eq!(
+            ExitCode::ConfigurationError.to_string(),
+            "configuration_error"
+        );
+        assert_eq!(ExitCode::ExecutionError.to_string(), "execution_error");
+        assert_eq!(ExitCode::InvalidFixture.to_string(), "invalid_fixture");
+        assert_eq!(ExitCode::InternalError.to_string(), "internal_error");
+    }
 }

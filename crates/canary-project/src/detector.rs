@@ -25,12 +25,19 @@ const KNOWN_WASM_OUTPUT_DIRS: &[&str] = &[
 /// `Unknown` is a valid, non-error outcome: it means the project has no
 /// recognizable Stellar surface and needs explicit configuration.
 pub fn detect(root: &Path) -> ProjectContext {
-    let manifest = read_cargo_manifest(root);
+    let mut manifests = Vec::new();
+    if let Some(m) = read_cargo_manifest(root) {
+        manifests.push(m);
+    }
+    if let Some(m) = crate::manifest::read_package_json(root) {
+        manifests.push(m);
+    }
+
     let has_stellar_toml = root.join("stellar.toml").is_file();
     let has_wasm_artifact = find_wasm_artifact(root);
 
     let signals = DetectionSignals {
-        manifest,
+        manifests,
         has_stellar_toml,
         has_wasm_artifact,
     };

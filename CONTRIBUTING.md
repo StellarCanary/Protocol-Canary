@@ -40,12 +40,15 @@ other.
 cargo fmt --all --check
 cargo check --workspace --all-targets
 cargo test --workspace
+cargo test -p canary-rpc
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
-All four must pass before a change is considered done. Unit tests must not
-require network access; anything that talks to a real RPC endpoint belongs
-in `tests/integration` and must be explicitly opt-in.
+Use `cargo test -p <crate>` when iterating on one crate at a time; valid crate
+names are listed in the table above (for example, `canary-rpc`). All five must
+pass before a change is considered done. Unit tests must not require network
+access; anything that talks to a real RPC endpoint belongs in `tests/integration`
+and must be explicitly opt-in.
 
 ## Coding standards
 

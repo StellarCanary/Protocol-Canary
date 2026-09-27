@@ -368,9 +368,12 @@ fn evaluate(fixture: &RpcFixture, response: &JsonValue) -> (Status, String, Opti
     }
 }
 
-/// Fetches network identity from `client` and reports how it compares to
-/// `target_protocol`, without treating a mismatch as a hard failure to
-/// execute: the caller decides what a mismatch means for its run.
+/// Fetches network identity from `client`, without treating any
+/// comparison against the run's expectations as a hard failure to
+/// execute: the caller decides what a mismatch means for its run. To
+/// compare the result against an expected passphrase and target protocol
+/// (constructing [`RpcError::NetworkMismatch`]/[`RpcError::ProtocolMismatch`]),
+/// pass it to [`crate::validate_network_info`].
 pub async fn observe_network(client: &impl RpcClient) -> Result<NetworkInfo, RpcError> {
     client.get_network().await
 }

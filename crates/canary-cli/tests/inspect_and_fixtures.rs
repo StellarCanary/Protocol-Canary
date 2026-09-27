@@ -83,6 +83,27 @@ fn fixtures_command_lists_fixture_ids_grouped_by_surface() {
 }
 
 #[test]
+fn fixtures_protocol_flag_overrides_the_config_file() {
+    let dir = TempProject::new("fixtures-protocol-override");
+    dir.write(".stellar-canary.toml", "version = 1\nprotocol = 27\n");
+    dir.write(
+        "fixtures/xdr/p28-xdr-1.toml",
+        &format!(
+            "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+
+    let output = run_in(&dir.path, &["fixtures", "--protocol", "28"]);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    // The flag, not the config file's protocol = 27, decides which
+    // fixtures are listed.
+    assert!(text.contains("Protocol 28 fixtures"));
+    assert!(text.contains("p28-xdr-1"));
+    assert!(!text.contains("Protocol 27 fixtures"));
+}
+
+#[test]
 fn fixtures_command_reports_when_none_are_found() {
     let dir = TempProject::new("fixtures-none");
     let output = run_in(&dir.path, &["fixtures", "--protocol", "28"]);

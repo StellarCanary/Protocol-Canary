@@ -76,6 +76,24 @@ fn an_unsupported_configuration_schema_version_exits_two() {
 }
 
 #[test]
+fn all_surfaces_disabled_exits_two_with_an_actionable_message() {
+    let dir = TempProject::new("check-all-surfaces-disabled");
+    dir.write(
+        ".stellar-canary.toml",
+        "version = 1\nprotocol = 28\n\n[tests]\nxdr = false\nrpc = false\nsoroban = false\n",
+    );
+
+    let output = run_in(&dir.path, &["check"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(err.contains("configuration error"), "stderr: {err}");
+    assert!(
+        err.contains("at least one of [tests].xdr, [tests].rpc, [tests].soroban must be enabled"),
+        "stderr: {err}"
+    );
+}
+
+#[test]
 fn a_duplicate_fixture_id_exits_four() {
     let dir = TempProject::new("check-dup-fixture");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
@@ -123,6 +141,30 @@ fn json_output_is_valid_json_with_the_expected_top_level_fields() {
     assert_eq!(value["status"], "pass");
 }
 
+/// The Markdown reporter is unit-tested in canary-report, but the CLI
+/// wiring that selects it via OutputFormat::Markdown is not exercised
+/// anywhere else. This pins that wiring end-to-end against the offline
+/// fixture setup and checks the documented leading shape.
+#[test]
+fn markdown_output_starts_with_the_documented_heading() {
+    let dir = TempProject::new("check-markdown");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--format", "markdown"]);
+    assert_eq!(output.status.code(), Some(0));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("## Stellar Protocol Canary"),
+        "markdown output must begin with the documented heading, got: {text}"
+    );
+    assert!(text.contains("**Result: PASS**"));
+    assert!(text.contains("| XDR | ✅ Pass |"));
+}
+
 /// Regression test for the full deterministic-failure path: a real failed
 /// assertion (not a manually forced exit code) must produce Status::Fail,
 /// exit code 1, and a JSON report whose top-level "status" also reads
@@ -164,6 +206,81 @@ fn a_real_compatibility_failure_is_reported_consistently_in_terminal_and_json() 
         value["results"][0]["details"].is_string(),
         "a failure result must carry details explaining what went wrong"
     );
+}
+
+/// Issue #69 regression coverage: `check --quiet` (terminal format) must
+/// print exactly one `Status: <STATUS>` line instead of the full
+/// multi-line report — PASS for a green run, NOT READY for a red one.
+#[test]
+fn quiet_flag_prints_exactly_one_status_line_for_pass_and_fail_runs() {
+    // Passing run: stdout is exactly one line, "Status: PASS".
+    let pass_dir = TempProject::new("check-quiet-pass");
+    pass_dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    pass_dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let pass_output = run_in(&pass_dir.path, &["check", "--quiet"]);
+    assert_eq!(pass_output.status.code(), Some(0));
+    let pass_text = stdout(&pass_output);
+    assert_eq!(
+        pass_text.trim_end(),
+        "Status: PASS",
+        "--quiet must shorten terminal output to a single status line, got: {pass_text:?}"
+    );
+    assert_eq!(
+        pass_text.lines().count(),
+        1,
+        "--quiet terminal output must be exactly one line, got: {pass_text:?}"
+    );
+
+    // Failing run: still one line, but "Status: NOT READY".
+    let fail_dir = TempProject::new("check-quiet-fail");
+    fail_dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    fail_dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", "not-valid-xdr-bytes!!!"),
+    );
+
+    let fail_output = run_in(&fail_dir.path, &["check", "--quiet"]);
+    assert_eq!(fail_output.status.code(), Some(1));
+    let fail_text = stdout(&fail_output);
+    assert_eq!(
+        fail_text.trim_end(),
+        "Status: NOT READY",
+        "--quiet must shorten terminal output to a single status line, got: {fail_text:?}"
+    );
+    assert_eq!(
+        fail_text.lines().count(),
+        1,
+        "--quiet terminal output must be exactly one line, got: {fail_text:?}"
+    );
+}
+
+/// Issue #69: `--quiet` only shortens terminal-format output. Combined
+/// with `--json` the full JSON report must still be printed.
+#[test]
+fn quiet_with_json_still_prints_the_full_json_report() {
+    let dir = TempProject::new("check-quiet-json");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--quiet", "--json"]);
+    assert_eq!(output.status.code(), Some(0));
+
+    let value: serde_json::Value =
+        serde_json::from_str(&stdout(&output)).expect("--quiet --json must print valid JSON");
+    assert_eq!(value["schemaVersion"], 1);
+    assert_eq!(value["targetProtocol"], 28);
+    assert_eq!(value["status"], "pass");
+    assert_eq!(value["counts"]["total"], 1);
+    assert_eq!(value["counts"]["passed"], 1);
+    assert_eq!(value["results"][0]["testId"], "p28-xdr-1");
+    assert_eq!(value["results"][0]["status"], "pass");
 }
 
 #[test]

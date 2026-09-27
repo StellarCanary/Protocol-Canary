@@ -445,3 +445,13 @@ pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_version_returns_the_success_exit_code() {
+        assert_eq!(run_version(), ExitCode::Pass);
+    }
+}

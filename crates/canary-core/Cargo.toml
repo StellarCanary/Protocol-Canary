@@ -1,6 +1,6 @@
 [package]
 name = "canary-core"
-description = "Compatibility domain model, planning, and policy engine for Stellar Protocol Canary."
+description = "Compatibility domain model and policy engine for Stellar Protocol Canary."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

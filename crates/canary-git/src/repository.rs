@@ -145,6 +145,35 @@ mod tests {
     }
 
     #[test]
+    fn a_detached_head_reports_no_branch_but_still_reports_its_commit() {
+        let dir = temp_dir("canary-git-detached-head");
+        run(&dir, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(dir.join("file.txt"), "content").unwrap();
+        run(&dir, &["add", "file.txt"]);
+        run(&dir, &["commit", "--quiet", "-m", "initial commit"]);
+
+        let branch_commit = CliGitRepository::new(&dir)
+            .current_commit()
+            .unwrap()
+            .expect("a repository with one commit has a HEAD");
+
+        run(&dir, &["checkout", "--quiet", "--detach", &branch_commit]);
+
+        let repo = CliGitRepository::new(&dir);
+        // The detached-HEAD case `current_branch` documents: `symbolic-ref`
+        // fails, so there is no branch name, but this is still a real
+        // repository and must not be reported as an error.
+        assert_eq!(repo.current_branch().unwrap(), None);
+        assert_eq!(
+            repo.current_commit().unwrap().as_deref(),
+            Some(&*branch_commit)
+        );
+        assert!(!repo.is_dirty().unwrap());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn an_uncommitted_change_is_reported_as_dirty() {
         let dir = temp_dir("canary-git-dirty-repo");
         run(&dir, &["init", "--quiet", "--initial-branch=main"]);

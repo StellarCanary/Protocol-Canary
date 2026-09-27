@@ -462,22 +462,42 @@ mod tests {
 
     impl TempReport {
         fn with_contents(contents: &str) -> Self {
-            let mut dir = std::env::temp_dir();
-            dir.push(format!(
-                "canary-cli-report-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join("result.json"), contents).unwrap();
-            TempReport { dir }
+            TempReport {
+                dir: create_unique_temp_dir(),
+            }
+            .write(contents)
+        }
+
+        fn write(self, contents: &str) -> Self {
+            std::fs::write(self.path(), contents).unwrap();
+            self
         }
 
         fn path(&self) -> PathBuf {
             self.dir.join("result.json")
+        }
+    }
+
+    /// A clock sample alone does not separate two threads that happen to
+    /// read the same nanosecond, and several of these tests run at once, so
+    /// the attempt counter is retried until `create_dir` — which fails on an
+    /// existing path — actually claims a directory.
+    fn create_unique_temp_dir() -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let dir =
+                std::env::temp_dir().join(format!("canary-cli-report-{pid}-{nanos}-{attempt}"));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => panic!("could not create a temporary directory: {err}"),
+            }
         }
     }
 

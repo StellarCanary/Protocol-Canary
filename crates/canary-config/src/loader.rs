@@ -157,6 +157,9 @@ mod tests {
             xdr = true
             rpc = false
             soroban = true
+
+            [policy]
+            warnings_are_failures = true
             "#,
         )
         .unwrap();
@@ -176,6 +179,7 @@ mod tests {
         assert!(config.tests.xdr);
         assert!(!config.tests.rpc);
         assert!(config.tests.soroban);
+        assert!(config.policy.warnings_are_failures);
     }
 
     #[test]

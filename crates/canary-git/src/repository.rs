@@ -158,4 +158,29 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn a_detached_head_has_no_branch_name_but_is_still_a_real_repository() {
+        // `current_branch` deliberately returns `Ok(None)` (not an error) for a
+        // detached HEAD: `symbolic-ref` fails, but the repository and its
+        // commit are real. This is the branch the source comment calls out by
+        // name, previously unexercised.
+        let dir = temp_dir("canary-git-detached-head");
+        run(&dir, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(dir.join("file.txt"), "content").unwrap();
+        run(&dir, &["add", "file.txt"]);
+        run(&dir, &["commit", "--quiet", "-m", "initial commit"]);
+        run(&dir, &["checkout", "--quiet", "--detach", "HEAD"]);
+
+        let repo = CliGitRepository::new(&dir);
+        assert_eq!(repo.current_branch().unwrap(), None);
+        let commit = repo.current_commit().unwrap();
+        assert!(
+            commit.is_some(),
+            "a detached HEAD is still a real repository with a commit"
+        );
+        assert_eq!(commit.unwrap().len(), 40);
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

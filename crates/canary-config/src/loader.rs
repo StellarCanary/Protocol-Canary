@@ -138,6 +138,43 @@ mod tests {
     }
 
     #[test]
+    fn load_from_root_finds_an_existing_config_file() {
+        // The CLI discovers a project's config through `load_from_root`, not
+        // `load`, so the present-file branch — joining `root` with
+        // `CONFIG_FILE_NAME` and returning the parsed config — needs its own
+        // coverage. `write_temp_config` places the file exactly there.
+        let (dir, _) = write_temp_config(
+            r#"
+            version = 1
+            protocol = 22
+
+            [project]
+            type = "soroban"
+
+            [tests]
+            xdr = true
+            rpc = false
+            soroban = true
+
+            [policy]
+            warnings_are_failures = true
+            "#,
+        );
+
+        let config = load_from_root(&dir.path)
+            .expect("no io error")
+            .expect("the config file is discovered under the root");
+        assert_eq!(config.version, 1);
+        assert_eq!(config.protocol, 22);
+        assert_eq!(
+            config.project.project_type,
+            ProjectTypeSetting::Explicit(canary_core::ProjectType::Soroban)
+        );
+        assert!(!config.tests.rpc);
+        assert!(config.policy.warnings_are_failures);
+    }
+
+    #[test]
     fn rejects_unsupported_schema_version() {
         let (_dir, path) = write_temp_config("version = 2\nprotocol = 28\n");
         let err = load(&path).unwrap_err();

@@ -445,3 +445,134 @@ pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canary_core::{
+        CompatibilityResult, GitContext, NetworkName, PolicyDecision, ProjectType, Status, Surface,
+    };
+    use canary_report::SkipSummary;
+    use std::path::PathBuf;
+
+    // Minimal temp-dir helper, matching the crate-local style used elsewhere in
+    // this workspace (this crate has no `tempfile` dev-dependency).
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let mut path = std::env::temp_dir();
+            let unique = format!(
+                "{prefix}-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            );
+            path.push(unique);
+            std::fs::create_dir_all(&path).unwrap();
+            TempDir(path)
+        }
+
+        fn write_file(&self, name: &str, contents: &str) -> PathBuf {
+            let file = self.0.join(name);
+            std::fs::write(&file, contents).unwrap();
+            file
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn passing_report_input() -> ReportInput {
+        ReportInput {
+            tool_version: "0.1.0".into(),
+            target_protocol: ProtocolVersion(28),
+            project: ProjectSummary {
+                name: "example".into(),
+                project_type: ProjectType::Soroban,
+            },
+            network: Some(NetworkSummary {
+                name: NetworkName::Testnet,
+                observed_protocol: Some(ProtocolVersion(28)),
+            }),
+            results: vec![CompatibilityResult {
+                test_id: "p28-xdr-1".into(),
+                protocol: ProtocolVersion(28),
+                surface: Surface::Xdr,
+                status: Status::Pass,
+                summary: "decoded successfully".into(),
+                details: None,
+                duration_ms: 3,
+                fixture_id: Some("p28-xdr-1".into()),
+            }],
+            skipped: Vec::<SkipSummary>::new(),
+            decision: PolicyDecision::Pass,
+            git: GitContext::default(),
+            verbose: false,
+        }
+    }
+
+    #[test]
+    fn run_report_inner_renders_a_stored_report_and_returns_its_exit_code() {
+        let dir = TempDir::new("canary-cli-report");
+        let json_text = JsonReporter::render(&passing_report_input());
+        let path = dir.write_file("report.json", &json_text);
+
+        let exit_code = run_report_inner(ReportArgs {
+            path,
+            format: OutputFormat::Json,
+        })
+        .expect("a valid stored report renders successfully");
+
+        assert_eq!(exit_code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_report_inner_reports_a_missing_file_as_a_configuration_error() {
+        let dir = TempDir::new("canary-cli-report-missing");
+        let path = dir.0.join("does-not-exist.json");
+
+        let err = run_report_inner(ReportArgs {
+            path,
+            format: OutputFormat::Markdown,
+        })
+        .expect_err("reading a nonexistent report file must fail");
+
+        match err {
+            CanaryError::Configuration(message) => {
+                assert!(
+                    message.contains("failed to read report file"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected a Configuration error, got {other}"),
+        }
+    }
+
+    #[test]
+    fn run_report_inner_reports_an_invalid_report_as_a_configuration_error() {
+        let dir = TempDir::new("canary-cli-report-invalid");
+        let path = dir.write_file("report.json", "this is not a stored report");
+
+        let err = run_report_inner(ReportArgs {
+            path,
+            format: OutputFormat::Json,
+        })
+        .expect_err("an unparseable report file must fail");
+
+        match err {
+            CanaryError::Configuration(message) => {
+                assert!(
+                    message.contains("invalid report file"),
+                    "unexpected message: {message}"
+                );
+            }
+            other => panic!("expected a Configuration error, got {other}"),
+        }
+    }
+}

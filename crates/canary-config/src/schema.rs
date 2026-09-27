@@ -162,6 +162,7 @@ mod tests {
             ProjectTypeSetting::Explicit(ProjectType::RpcConsumer),
             ProjectTypeSetting::Explicit(ProjectType::StellarSdk),
             ProjectTypeSetting::Explicit(ProjectType::GenericStellar),
+            ProjectTypeSetting::Explicit(ProjectType::Unknown),
         ] {
             let json = serde_json::to_string(&setting).unwrap();
             let parsed: ProjectTypeSetting = serde_json::from_str(&json).unwrap();

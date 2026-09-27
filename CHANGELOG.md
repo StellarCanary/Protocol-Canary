@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- `canary-core` no longer exports the unused `CompatibilityTest` trait and
+  `CompatibilityPlanner` marker type; the `planner` module is removed and
+  `engine` now exports only `ExecutionContext`. Surface runners implement
+  their own execution traits, and fixture planning lives in
+  `canary-runner`'s scheduler (`build_plan`).
 - `RpcError::NetworkMismatch` and `RpcError::ProtocolMismatch` are now
   actively raised: `canary_rpc::validate_network_info` constructs them
   from a `getNetwork` response, and `check` compares the observed network

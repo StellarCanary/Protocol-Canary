@@ -18,7 +18,7 @@ This is a Cargo workspace. Each crate has one responsibility:
 | Crate | Responsibility |
 |---|---|
 | `canary-cli` | Command-line interface (`stellar-canary` binary) |
-| `canary-core` | Domain model, compatibility test trait, planner, policy |
+| `canary-core` | Domain model, execution context, policy |
 | `canary-config` | `.stellar-canary.toml` loading and validation |
 | `canary-project` | Project type detection |
 | `canary-fixtures` | Fixture schema, loading, validation |
@@ -49,6 +49,12 @@ names are listed in the table above (for example, `canary-rpc`). All five must
 pass before a change is considered done. Unit tests must not require network
 access; anything that talks to a real RPC endpoint belongs in `tests/integration`
 and must be explicitly opt-in.
+
+CI runs fmt, check, test, and clippy on Linux, macOS, and Windows
+(`ubuntu-latest`, `macos-latest`, `windows-latest` in
+`.github/workflows/ci.yml`), so keep changes portable across all three —
+use `std::path` APIs rather than hand-built separator strings, and don't
+assume a POSIX-only tool is on `PATH`.
 
 ## Coding standards
 

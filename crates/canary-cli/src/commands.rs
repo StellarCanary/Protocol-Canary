@@ -449,9 +449,62 @@ pub fn run_version() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn fixtures_args(
+        protocol: Option<u32>,
+        fixtures_dir: &str,
+        config: Option<&str>,
+    ) -> FixturesArgs {
+        FixturesArgs {
+            protocol,
+            fixtures_dir: PathBuf::from(fixtures_dir),
+            config: config.map(PathBuf::from),
+        }
+    }
 
     #[test]
     fn run_version_returns_the_success_exit_code() {
         assert_eq!(run_version(), ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_fixtures_passes_when_the_fixture_directory_is_absent() {
+        // An absent --fixtures-dir lists nothing rather than failing: fixtures
+        // live in a separate repository, so a checkout without one is normal.
+        let code = run_fixtures_inner(fixtures_args(Some(28), "no-such-fixtures-dir", None))
+            .expect("an absent fixture directory is not an error");
+        assert_eq!(code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_fixtures_rejects_a_zero_protocol_before_touching_the_filesystem() {
+        let err = run_fixtures_inner(fixtures_args(Some(0), "no-such-fixtures-dir", None))
+            .expect_err("--protocol 0 must not be accepted");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("--protocol must be a positive protocol version number"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn run_fixtures_reports_a_missing_explicit_configuration_file() {
+        // Only reached when no --protocol was given, since an explicit protocol
+        // skips configuration loading entirely.
+        let err = run_fixtures_inner(fixtures_args(
+            None,
+            "no-such-fixtures-dir",
+            Some("no-such-config.stellar-canary.toml"),
+        ))
+        .expect_err("an explicit --config that does not exist must fail");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
     }
 }

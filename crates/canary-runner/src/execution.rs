@@ -24,7 +24,8 @@ pub async fn execute(
     rpc_endpoint: &str,
 ) -> Vec<CompatibilityResult> {
     let concurrency = context.options.max_concurrency.max(1) as usize;
-    let client = HttpRpcClient::new(rpc_endpoint.to_string());
+    let client = HttpRpcClient::new(rpc_endpoint.to_string())
+        .with_timeout(std::time::Duration::from_secs(context.options.rpc_timeout));
 
     let mut results = run_xdr(&plan.xdr, context);
     results.extend(run_rpc(&plan.rpc, context, client.clone(), concurrency).await);

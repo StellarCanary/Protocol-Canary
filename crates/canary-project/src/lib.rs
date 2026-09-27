@@ -6,7 +6,7 @@ pub mod manifest;
 
 pub use capabilities::{detect_capabilities, DetectionSignals};
 pub use detector::{detect, resolve_project_type};
-pub use manifest::{read_cargo_manifest, CargoManifest};
+pub use manifest::{read_cargo_manifest, read_package_json, ProjectManifest};
 
 /// Test-only temp-directory helper shared by this crate's unit tests, so no
 /// crate needs a `tempfile` dev-dependency for simple filesystem fixtures.

@@ -37,12 +37,19 @@ pub enum BuilderError {
 /// the fixtures this project needs — rather than the full `ScVal` union.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ScValInput {
+    /// Maps to the XDR [`ScVal::Bool`] variant.
     Bool(bool),
+    /// Maps to the XDR [`ScVal::U32`] variant.
     U32(u32),
+    /// Maps to the XDR [`ScVal::I32`] variant.
     I32(i32),
+    /// Maps to the XDR [`ScVal::U64`] variant.
     U64(u64),
+    /// Maps to the XDR [`ScVal::I64`] variant.
     I64(i64),
+    /// Maps to the XDR [`ScVal::Symbol`] variant; the symbol is limited to 32 bytes by XDR.
     Symbol(String),
+    /// Maps to the XDR [`ScVal::String`] variant.
     String(String),
 }
 

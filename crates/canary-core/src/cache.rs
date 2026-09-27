@@ -189,6 +189,17 @@ mod tests {
     }
 
     #[test]
+    fn file_stem_marks_an_unobserved_protocol_as_unknown() {
+        // The first RPC/Soroban check of a network runs before any protocol has
+        // been observed, so `observed_protocol` is `None` on a common path.
+        let mut key = sample_key();
+        key.observed_protocol = None;
+        let stem = key.to_file_stem();
+        assert!(stem.ends_with("__unknown"), "unexpected file stem: {stem}");
+        assert_ne!(stem, sample_key().to_file_stem());
+    }
+
+    #[test]
     fn sanitize_keeps_ascii_alphanumeric_and_hyphen() {
         let input = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-";
         assert_eq!(sanitize(input), input);

@@ -445,3 +445,161 @@ pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canary_core::{
+        CompatibilityResult, GitContext, PolicyDecision, ProjectType, Status, Surface,
+    };
+    use std::path::PathBuf;
+
+    /// Minimal temp-file helper: the repo deliberately hand-rolls these
+    /// rather than adding a `tempfile` dev-dependency for a few tests.
+    struct TempReport {
+        dir: PathBuf,
+    }
+
+    impl TempReport {
+        fn with_contents(contents: &str) -> Self {
+            let mut dir = std::env::temp_dir();
+            dir.push(format!(
+                "canary-cli-report-{}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join("result.json"), contents).unwrap();
+            TempReport { dir }
+        }
+
+        fn path(&self) -> PathBuf {
+            self.dir.join("result.json")
+        }
+    }
+
+    impl Drop for TempReport {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn stored_result(status: Status) -> CompatibilityResult {
+        CompatibilityResult {
+            test_id: "xdr/stored".into(),
+            protocol: ProtocolVersion(28),
+            surface: Surface::Xdr,
+            status,
+            summary: "stored result".into(),
+            details: None,
+            duration_ms: 1,
+            fixture_id: None,
+        }
+    }
+
+    /// Rendered through the real JSON reporter so this test feeds
+    /// `run_report_inner` the same shape `check --json` writes out.
+    fn stored_report(results: Vec<CompatibilityResult>, decision: PolicyDecision) -> String {
+        JsonReporter::render(&ReportInput {
+            tool_version: "0.0.0-test".into(),
+            target_protocol: ProtocolVersion(28),
+            project: ProjectSummary {
+                name: "stored-project".into(),
+                project_type: ProjectType::Soroban,
+            },
+            network: None,
+            results,
+            skipped: Vec::new(),
+            decision,
+            git: GitContext::default(),
+            verbose: false,
+        })
+    }
+
+    fn report_args(path: PathBuf, format: OutputFormat) -> ReportArgs {
+        ReportArgs { path, format }
+    }
+
+    #[test]
+    fn run_report_inner_returns_pass_for_a_stored_passing_run() {
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Pass)],
+            PolicyDecision::Pass,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("a valid stored report must be readable");
+        assert_eq!(exit_code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_report_inner_returns_a_compatibility_failure_for_a_stored_failed_run() {
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Fail)],
+            PolicyDecision::Fail,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("a failed run is a result, not an error of this command");
+        assert_eq!(exit_code, ExitCode::CompatibilityFailure);
+    }
+
+    #[test]
+    fn run_report_inner_lets_a_stored_execution_error_override_the_decision() {
+        // The stored decision is `Pass` (an execution error is excluded from
+        // policy evaluation), so only the override inside `exit_code_for_run`
+        // can turn this into `ExecutionError`.
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Error)],
+            PolicyDecision::Pass,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("an execution error in the report is still a readable report");
+        assert_eq!(exit_code, ExitCode::ExecutionError);
+    }
+
+    #[test]
+    fn run_report_inner_renders_every_supported_format() {
+        let contents = stored_report(vec![stored_result(Status::Pass)], PolicyDecision::Pass);
+        for format in [
+            OutputFormat::Terminal,
+            OutputFormat::Json,
+            OutputFormat::Markdown,
+        ] {
+            let file = TempReport::with_contents(&contents);
+            let exit_code = run_report_inner(report_args(file.path(), format))
+                .unwrap_or_else(|err| panic!("{format:?} output must render: {err}"));
+            assert_eq!(exit_code, ExitCode::Pass);
+        }
+    }
+
+    #[test]
+    fn run_report_inner_reports_a_missing_file_as_a_configuration_error() {
+        let missing = std::env::temp_dir().join(format!(
+            "canary-cli-absent-report-{}.json",
+            std::process::id()
+        ));
+        let err = run_report_inner(report_args(missing.clone(), OutputFormat::Markdown))
+            .expect_err("an absent report file must not be reported as success");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        let message = err.to_string();
+        assert!(
+            message.contains("failed to read report file")
+                && message.contains(&missing.display().to_string()),
+            "error must name the unreadable file, got: {message}"
+        );
+    }
+
+    #[test]
+    fn run_report_inner_reports_an_unparseable_file_as_a_configuration_error() {
+        let file = TempReport::with_contents("not json at all");
+        let err = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect_err("a file that is not a report must not be reported as success");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert!(
+            err.to_string().contains("invalid report file"),
+            "error must say the report is invalid, got: {err}"
+        );
+    }
+}

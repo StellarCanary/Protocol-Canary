@@ -445,3 +445,238 @@ pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use canary_core::{
+        CompatibilityResult, GitContext, PolicyDecision, ProjectType, Status, Surface,
+    };
+    use std::path::PathBuf;
+
+    fn fixtures_args(
+        protocol: Option<u32>,
+        fixtures_dir: &str,
+        config: Option<&str>,
+    ) -> FixturesArgs {
+        FixturesArgs {
+            protocol,
+            fixtures_dir: PathBuf::from(fixtures_dir),
+            config: config.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn run_version_returns_the_success_exit_code() {
+        assert_eq!(run_version(), ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_fixtures_passes_when_the_fixture_directory_is_absent() {
+        // An absent --fixtures-dir lists nothing rather than failing: fixtures
+        // live in a separate repository, so a checkout without one is normal.
+        let code = run_fixtures_inner(fixtures_args(Some(28), "no-such-fixtures-dir", None))
+            .expect("an absent fixture directory is not an error");
+        assert_eq!(code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_fixtures_rejects_a_zero_protocol_before_touching_the_filesystem() {
+        let err = run_fixtures_inner(fixtures_args(Some(0), "no-such-fixtures-dir", None))
+            .expect_err("--protocol 0 must not be accepted");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("--protocol must be a positive protocol version number"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn run_fixtures_reports_a_missing_explicit_configuration_file() {
+        // Only reached when no --protocol was given, since an explicit protocol
+        // skips configuration loading entirely.
+        let err = run_fixtures_inner(fixtures_args(
+            None,
+            "no-such-fixtures-dir",
+            Some("no-such-config.stellar-canary.toml"),
+        ))
+        .expect_err("an explicit --config that does not exist must fail");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    /// Minimal temp-file helper: the repo deliberately hand-rolls these
+    /// rather than adding a `tempfile` dev-dependency for a few tests.
+    struct TempReport {
+        dir: PathBuf,
+    }
+
+    impl TempReport {
+        fn with_contents(contents: &str) -> Self {
+            TempReport {
+                dir: create_unique_temp_dir(),
+            }
+            .write(contents)
+        }
+
+        fn write(self, contents: &str) -> Self {
+            std::fs::write(self.path(), contents).unwrap();
+            self
+        }
+
+        fn path(&self) -> PathBuf {
+            self.dir.join("result.json")
+        }
+    }
+
+    /// A clock sample alone does not separate two threads that happen to
+    /// read the same nanosecond, and several of these tests run at once, so
+    /// the attempt counter is retried until `create_dir` — which fails on an
+    /// existing path — actually claims a directory.
+    fn create_unique_temp_dir() -> PathBuf {
+        let pid = std::process::id();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            let dir =
+                std::env::temp_dir().join(format!("canary-cli-report-{pid}-{nanos}-{attempt}"));
+            match std::fs::create_dir(&dir) {
+                Ok(()) => return dir,
+                Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(err) => panic!("could not create a temporary directory: {err}"),
+            }
+        }
+    }
+
+    impl Drop for TempReport {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.dir);
+        }
+    }
+
+    fn stored_result(status: Status) -> CompatibilityResult {
+        CompatibilityResult {
+            test_id: "xdr/stored".into(),
+            protocol: ProtocolVersion(28),
+            surface: Surface::Xdr,
+            status,
+            summary: "stored result".into(),
+            details: None,
+            duration_ms: 1,
+            fixture_id: None,
+        }
+    }
+
+    /// Rendered through the real JSON reporter so this test feeds
+    /// `run_report_inner` the same shape `check --json` writes out.
+    fn stored_report(results: Vec<CompatibilityResult>, decision: PolicyDecision) -> String {
+        JsonReporter::render(&ReportInput {
+            tool_version: "0.0.0-test".into(),
+            target_protocol: ProtocolVersion(28),
+            project: ProjectSummary {
+                name: "stored-project".into(),
+                project_type: ProjectType::Soroban,
+            },
+            network: None,
+            results,
+            skipped: Vec::new(),
+            decision,
+            git: GitContext::default(),
+            verbose: false,
+        })
+    }
+
+    fn report_args(path: PathBuf, format: OutputFormat) -> ReportArgs {
+        ReportArgs { path, format }
+    }
+
+    #[test]
+    fn run_report_inner_returns_pass_for_a_stored_passing_run() {
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Pass)],
+            PolicyDecision::Pass,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("a valid stored report must be readable");
+        assert_eq!(exit_code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_report_inner_returns_a_compatibility_failure_for_a_stored_failed_run() {
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Fail)],
+            PolicyDecision::Fail,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("a failed run is a result, not an error of this command");
+        assert_eq!(exit_code, ExitCode::CompatibilityFailure);
+    }
+
+    #[test]
+    fn run_report_inner_lets_a_stored_execution_error_override_the_decision() {
+        // The stored decision is `Pass` (an execution error is excluded from
+        // policy evaluation), so only the override inside `exit_code_for_run`
+        // can turn this into `ExecutionError`.
+        let file = TempReport::with_contents(&stored_report(
+            vec![stored_result(Status::Error)],
+            PolicyDecision::Pass,
+        ));
+        let exit_code = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect("an execution error in the report is still a readable report");
+        assert_eq!(exit_code, ExitCode::ExecutionError);
+    }
+
+    #[test]
+    fn run_report_inner_renders_every_supported_format() {
+        let contents = stored_report(vec![stored_result(Status::Pass)], PolicyDecision::Pass);
+        for format in [
+            OutputFormat::Terminal,
+            OutputFormat::Json,
+            OutputFormat::Markdown,
+        ] {
+            let file = TempReport::with_contents(&contents);
+            let exit_code = run_report_inner(report_args(file.path(), format))
+                .unwrap_or_else(|err| panic!("{format:?} output must render: {err}"));
+            assert_eq!(exit_code, ExitCode::Pass);
+        }
+    }
+
+    #[test]
+    fn run_report_inner_reports_a_missing_file_as_a_configuration_error() {
+        let missing = std::env::temp_dir().join(format!(
+            "canary-cli-absent-report-{}.json",
+            std::process::id()
+        ));
+        let err = run_report_inner(report_args(missing.clone(), OutputFormat::Markdown))
+            .expect_err("an absent report file must not be reported as success");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        let message = err.to_string();
+        assert!(
+            message.contains("failed to read report file")
+                && message.contains(&missing.display().to_string()),
+            "error must name the unreadable file, got: {message}"
+        );
+    }
+
+    #[test]
+    fn run_report_inner_reports_an_unparseable_file_as_a_configuration_error() {
+        let file = TempReport::with_contents("not json at all");
+        let err = run_report_inner(report_args(file.path(), OutputFormat::Markdown))
+            .expect_err("a file that is not a report must not be reported as success");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert!(
+            err.to_string().contains("invalid report file"),
+            "error must say the report is invalid, got: {err}"
+        );
+    }
+}

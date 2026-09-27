@@ -138,6 +138,47 @@ mod tests {
     }
 
     #[test]
+    fn load_from_root_discovers_and_parses_an_existing_config_file() {
+        use canary_core::ProjectType;
+
+        let dir = tempdir::TempDir::new("canary-config-found");
+        // The literal on-disk name rather than `CONFIG_FILE_NAME`, so this
+        // pins the discovery contract instead of restating it.
+        std::fs::write(
+            dir.path.join(".stellar-canary.toml"),
+            r#"
+            version = 1
+            protocol = 22
+
+            [project]
+            type = "soroban"
+
+            [tests]
+            xdr = true
+            rpc = false
+            soroban = true
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_root(&dir.path)
+            .expect("an existing config file must load, not error")
+            .expect("a config file at the conventional name must be discovered");
+
+        // Values that differ from the schema defaults, so this fails if the
+        // parsed file were silently replaced by `ConfigFile::default()`.
+        assert_eq!(config.version, 1);
+        assert_eq!(config.protocol, 22);
+        assert_eq!(
+            config.project.project_type,
+            ProjectTypeSetting::Explicit(ProjectType::Soroban)
+        );
+        assert!(config.tests.xdr);
+        assert!(!config.tests.rpc);
+        assert!(config.tests.soroban);
+    }
+
+    #[test]
     fn rejects_unsupported_schema_version() {
         let (_dir, path) = write_temp_config("version = 2\nprotocol = 28\n");
         let err = load(&path).unwrap_err();

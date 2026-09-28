@@ -174,9 +174,8 @@ impl HttpRpcClient {
     /// ```
     ///
     /// # Panics
-    ///
-    /// Panics if the provided endpoint URL fails internal parsing or contains an 
-    /// unsupported URI scheme.
+   /// 
+   /// Panics if the provided endpoint URL fails to parse or is invalid.
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
             http: reqwest::Client::builder()

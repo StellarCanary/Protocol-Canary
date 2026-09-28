@@ -31,6 +31,29 @@ fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network()
     assert!(text.contains("**Result: PASS**"));
 }
 
+/// `ReportArgs::format` documents Markdown as the default, so a bare
+/// `report <path>` invocation must render Markdown rather than terminal
+/// output. This covers the default that the explicit-`--format markdown`
+/// test above does not.
+#[test]
+fn report_defaults_to_markdown_when_no_format_flag_is_given() {
+    let dir = TempProject::new("report-default-format");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    let check_output = run_in(&dir.path, &["check", "--json"]);
+    assert_eq!(check_output.status.code(), Some(0));
+    dir.write("result.json", &stdout(&check_output));
+
+    let report_output = run_in(&dir.path, &["report", "result.json"]);
+    assert_eq!(report_output.status.code(), Some(0));
+    let text = stdout(&report_output);
+    assert!(
+        text.starts_with("## Stellar Protocol Canary"),
+        "report must default to Markdown output, got: {text}"
+    );
+    assert!(text.contains("**Result: PASS**"));
+}
+
 #[test]
 fn report_on_a_malformed_file_exits_with_a_configuration_error() {
     let dir = TempProject::new("report-malformed");

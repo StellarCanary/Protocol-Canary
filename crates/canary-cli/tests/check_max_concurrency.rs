@@ -12,9 +12,16 @@
 //! assertion has no flaky direction. The hardcoded-4 regression (flag
 //! ignored, all fixtures overlapped) finishes far below the floor and fails
 //! the assertion.
+//!
+//! The `0` case cannot rely on timing alone: its regression mode is a
+//! deadlock, so that test runs the binary under an explicit deadline
+//! ([`run_bounded`]) rather than a blocking wait a hung child would hang
+//! along with it.
 
 mod support;
 
+use std::path::Path;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use support::{run_in, stderr, stdout, TempProject};
@@ -45,6 +52,12 @@ const RESPONSE_DELAY: Duration = Duration::from_millis(250);
 /// response delay). A run that ignores the flag overlaps the fixtures and
 /// finishes well below this floor.
 const SERIALIZED_FLOOR: Duration = Duration::from_millis(1300);
+
+/// How long the `--max-concurrency 0` run is allowed to take before it is
+/// declared deadlocked. Generous against a loaded CI box (the serialized
+/// suite needs ~2.5 s) yet far below a job timeout, so the real failure mode
+/// — a run that never ends — reports as an assertion instead of a stall.
+const DEADLOCK_GUARD: Duration = Duration::from_secs(30);
 
 fn rpc_fixture(id: &str) -> String {
     format!(
@@ -102,6 +115,61 @@ fn setup(project_name: &str) -> TempProject {
         );
     }
     dir
+}
+
+/// The outcome of a [`run_bounded`] invocation.
+struct TimedRun {
+    exit_code: Option<i32>,
+    stdout: String,
+    stderr: String,
+    /// `true` when the child was killed for outliving the deadline, i.e. the
+    /// command under test never terminated.
+    timed_out: bool,
+}
+
+/// [`support::run_in`] with a deadline: runs the binary in `dir` and gives up
+/// on it after `limit`, so a command that hangs fails the test instead of
+/// hanging the whole harness.
+fn run_bounded(dir: &Path, args: &[&str], limit: Duration) -> TimedRun {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellar-canary"))
+        .args(args)
+        .current_dir(dir)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute stellar-canary binary");
+
+    let deadline = Instant::now() + limit;
+    loop {
+        if child
+            .try_wait()
+            .expect("failed to poll the stellar-canary child process")
+            .is_some()
+        {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return TimedRun {
+                exit_code: None,
+                stdout: String::new(),
+                stderr: String::new(),
+                timed_out: true,
+            };
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let output = child
+        .wait_with_output()
+        .expect("failed to collect the stellar-canary output");
+    TimedRun {
+        exit_code: output.status.code(),
+        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        timed_out: false,
+    }
 }
 
 /// The acceptance case for issue #23: the flag value must actually govern
@@ -164,5 +232,52 @@ fn max_concurrency_four_still_runs_every_fixture() {
         stdout(&output).contains("8/8 applicable checks passed."),
         "stdout: {}",
         stdout(&output)
+    );
+}
+
+/// Issue #272: `0` is the value the CLI accepts but the executor must never
+/// hand to `buffer_unordered`. `execution.rs` guards it with
+/// `max_concurrency.max(1)`, and no existing test covered `0`, so dropping
+/// that one `.max(1)` would resurrect a hung `check` run.
+///
+/// Removing the clamp locally makes this fail exactly as intended: the child
+/// never produces a result and the bounded runner below reports the
+/// deadlock. The behavioural assertion is `--max-concurrency 1`'s — every
+/// fixture runs, all pass, and the delayed responses stay serialized.
+#[test]
+fn max_concurrency_zero_is_clamped_to_one_instead_of_deadlocking() {
+    let (_rt, server) = start_delayed_mock();
+    let dir = setup("check-max-concurrency-0");
+
+    let start = Instant::now();
+    let run = run_bounded(
+        &dir.path,
+        &[
+            "check",
+            "--rpc-url",
+            &server.uri(),
+            "--max-concurrency",
+            "0",
+        ],
+        DEADLOCK_GUARD,
+    );
+    let elapsed = start.elapsed();
+
+    assert!(
+        !run.timed_out,
+        "`check --max-concurrency 0` did not finish within {DEADLOCK_GUARD:?}: \
+         the zero reached the executor and deadlocked the run"
+    );
+    assert_eq!(run.exit_code, Some(0), "stderr: {}", run.stderr);
+    assert!(
+        run.stdout.contains("8/8 applicable checks passed."),
+        "a concurrency of 0 must still execute every fixture; stdout: {}",
+        run.stdout
+    );
+    assert!(
+        elapsed >= SERIALIZED_FLOOR,
+        "--max-concurrency 0 must behave like 1 (sequential, at least \
+         {SERIALIZED_FLOOR:?}), but the run finished in {elapsed:?} — \
+         the zero was passed through to the executor instead of clamped"
     );
 }

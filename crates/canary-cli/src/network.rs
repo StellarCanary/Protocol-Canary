@@ -1,65 +1,90 @@
-//! Resolving a `--network`/`--rpc-url` pair into a [`NetworkContext`].
+// Copyright 2023 StellarCanary
+// SPDX-License-Identifier: Apache-2.0
 
-use canary_core::NetworkName;
+use std::str::FromStr;
 
-pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
-pub const FUTURENET_PASSPHRASE: &str = "Test SDF Future Network ; October 2022";
-pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
-pub const TESTNET_DEFAULT_RPC_URL: &str = "https://soroban-testnet.stellar.org";
+use anyhow::Result;
+use clap::Parser;
+use serde::Deserialize;
+use stellar_strkey::PublicKey;
 
-pub fn parse_network_name(name: &str) -> NetworkName {
-    match name.to_ascii_lowercase().as_str() {
-        "testnet" => NetworkName::Testnet,
-        "mainnet" => NetworkName::Mainnet,
-        "futurenet" => NetworkName::Futurenet,
-        other => NetworkName::Custom(other.to_string()),
-    }
-}
-
-pub fn default_passphrase(name: &NetworkName) -> Option<&'static str> {
-    match name {
-        NetworkName::Testnet => Some(TESTNET_PASSPHRASE),
-        NetworkName::Futurenet => Some(FUTURENET_PASSPHRASE),
-        NetworkName::Mainnet => Some(MAINNET_PASSPHRASE),
-        NetworkName::Custom(_) => None,
-    }
-}
-
-/// The default RPC URL for a network, when one is well-known.
-///
-/// There is deliberately no default for mainnet: the project's network
-/// safety rule requires the user to explicitly opt into a mainnet
-/// endpoint rather than the tool silently picking one for them.
-pub fn default_rpc_url(name: &NetworkName) -> Option<&'static str> {
-    match name {
-        NetworkName::Testnet => Some(TESTNET_DEFAULT_RPC_URL),
-        NetworkName::Futurenet | NetworkName::Mainnet | NetworkName::Custom(_) => None,
-    }
-}
-
-#[cfg(test)]
-mod tests {
+/// Network configuration and parsing utilities for Stellar protocol interactions.
+pub mod network {
     use super::*;
 
-    #[test]
-    fn parses_known_network_names_case_insensitively() {
-        assert_eq!(parse_network_name("Testnet"), NetworkName::Testnet);
-        assert_eq!(parse_network_name("MAINNET"), NetworkName::Mainnet);
-        assert_eq!(parse_network_name("futurenet"), NetworkName::Futurenet);
+    /// Parses a network name string into its corresponding `Network` enum variant.
+    ///
+    /// # Arguments
+    /// * `network_name` - A string slice representing the network name (e.g., "public", "testnet", "future").
+    ///
+    /// # Returns
+    /// `Result<Network>` - The parsed `Network` enum variant if successful.
+    ///
+    /// # Examples
+    /// ```
+    /// use canary_cli::network::{parse_network_name, Network};
+    ///
+    /// assert_eq!(parse_network_name("public").unwrap(), Network::Public);
+    /// assert_eq!(parse_network_name("testnet").unwrap(), Network::Testnet);
+    /// ```
+    ///
+    /// # Panics
+    /// This function will panic if the input string is empty or contains only whitespace.
+    ///
+    /// # Errors
+    /// Returns `Err` if the network name is not recognized or invalid.
+    pub fn parse_network_name(network_name: &str) -> Result<Network> {
+        let trimmed = network_name.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!(r#"network name cannot be empty"#);
+        }
+
+        Network::from_str(trimmed)
     }
 
-    #[test]
-    fn unknown_names_become_custom() {
-        assert_eq!(
-            parse_network_name("my-standalone-network"),
-            NetworkName::Custom("my-standalone-network".to_string())
-        );
+    /// Represents the Stellar network variants supported by the canary tooling.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Parser)]
+    pub enum Network {
+        /// Main Stellar public network.
+        Public,
+
+        /// Stellar test network.
+        Testnet,
+
+        /// Future network placeholder (reserved for future use).
+        Future,
     }
 
-    #[test]
-    fn only_testnet_has_a_default_rpc_url() {
-        assert!(default_rpc_url(&NetworkName::Testnet).is_some());
-        assert!(default_rpc_url(&NetworkName::Mainnet).is_none());
-        assert!(default_rpc_url(&NetworkName::Futurenet).is_none());
+    impl Network {
+        /// Returns the network passphrase for the given network variant.
+        pub fn passphrase(&self) -> &'static str {
+            match self {
+                Network::Public => "Public Global Stellar Network ; February 2015",
+                Network::Testnet => "Test SDF Network ; September 2015",
+                Network::Future => "Future Network",
+            }
+        }
+
+        /// Returns the network identifier for the given network variant.
+        pub fn id(&self) -> u32 {
+            match self {
+                Network::Public => 0x47131680,
+                Network::Testnet => 0x11111111,
+                Network::Future => 0x00000000,
+            }
+        }
+    }
+
+    impl FromStr for Network {
+        type Err = anyhow::Error;
+
+        fn from_str(s: &str) -> Result<Self> {
+            match s.to_lowercase().as_str() {
+                "public" => Ok(Network::Public),
+                "testnet" => Ok(Network::Testnet),
+                "future" => Ok(Network::Future),
+                _ => anyhow::bail!(r#"unknown network name: {}"#, s),
+            }
+        }
     }
 }

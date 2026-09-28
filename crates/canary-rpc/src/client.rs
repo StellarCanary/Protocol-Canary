@@ -365,7 +365,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri());
+        let client = HttpRpcClient::new(server.uri());
         let info = client.get_network().await.expect("ok");
         assert_eq!(info.protocol_version, 28);
     }
@@ -383,7 +383,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri());
+        let client = HttpRpcClient::new(server.uri());
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::JsonRpcError { code: -32602, .. }));
     }
@@ -397,7 +397,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri());
+        let client =HttpRpcClient ::new(server.uri());
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::InvalidJson { .. }));
     }
@@ -411,7 +411,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+        let client = HttpRpcClient ::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 2,
             base_delay: Duration::from_millis(1),
         });
@@ -428,7 +428,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+        let client = HttpRpcClient ::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 1,
             base_delay: Duration::from_millis(1),
         });
@@ -455,7 +455,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = HttpRpcHttpRpcClient::new(server.uri());
+        let client = HttpRpcClient ::new(server.uri());
         let response = client
             .simulate_transaction(SimulationRequest {
                 transaction: "AAAA".to_string(),

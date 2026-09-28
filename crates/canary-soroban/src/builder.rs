@@ -196,6 +196,17 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_function_name_longer_than_the_xdr_symbol_limit() {
+        // ScSymbol is limited to 32 bytes of UTF-8, so a 33-character name
+        // must fail conversion and surface as `InvalidFunctionName`.
+        let mut spec = spec();
+        spec.function_name = "a".repeat(33);
+        assert_eq!(spec.function_name.len(), 33);
+        let err = build_invoke_transaction_envelope(&spec).unwrap_err();
+        assert!(matches!(err, BuilderError::InvalidFunctionName { .. }));
+    }
+
+    #[test]
     fn supports_scalar_argument_types() {
         let mut spec = spec();
         spec.args = vec![

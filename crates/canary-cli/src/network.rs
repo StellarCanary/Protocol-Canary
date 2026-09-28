@@ -5,6 +5,15 @@ use canary_core::NetworkName;
 pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
 pub const FUTURENET_PASSPHRASE: &str = "Test SDF Future Network ; October 2022";
 pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
+
+/// The default RPC endpoint for the Soroban Testnet network.
+///
+/// This canonical RPC URL is used by `canary-cli` when resolving network contexts
+/// where `--network testnet` is specified without an explicit `--rpc-url`.
+///
+/// # Note
+/// This constant is a compile-time static string. Any downstream HTTP operations
+/// using this endpoint should handle standard network reachability or TLS errors.
 pub const TESTNET_DEFAULT_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 
 pub fn parse_network_name(name: &str) -> NetworkName {

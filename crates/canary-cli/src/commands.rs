@@ -466,6 +466,18 @@ mod tests {
         }
     }
 
+    fn inspect_args(
+        protocol: Option<u32>,
+        fixtures_dir: &str,
+        config: Option<&str>,
+    ) -> InspectArgs {
+        InspectArgs {
+            protocol,
+            fixtures_dir: PathBuf::from(fixtures_dir),
+            config: config.map(PathBuf::from),
+        }
+    }
+
     #[test]
     fn run_version_returns_the_success_exit_code() {
         assert_eq!(run_version(), ExitCode::Pass);
@@ -500,6 +512,45 @@ mod tests {
         // Only reached when no --protocol was given, since an explicit protocol
         // skips configuration loading entirely.
         let err = run_fixtures_inner(fixtures_args(
+            None,
+            "no-such-fixtures-dir",
+            Some("no-such-config.stellar-canary.toml"),
+        ))
+        .expect_err("an explicit --config that does not exist must fail");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn run_inspect_reports_a_plan_for_an_empty_fixture_set() {
+        // Inspect prints the resolved project, configuration and fixture plan
+        // and succeeds even when the fixture directory holds nothing: the plan
+        // is simply empty.
+        let code = run_inspect_inner(inspect_args(Some(28), "no-such-fixtures-dir", None))
+            .expect("an absent fixture directory is not an error");
+        assert_eq!(code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_inspect_rejects_a_zero_protocol() {
+        let err = run_inspect_inner(inspect_args(Some(0), "no-such-fixtures-dir", None))
+            .expect_err("--protocol 0 must not be accepted");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("--protocol must be a positive protocol version number"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn run_inspect_reports_a_missing_explicit_configuration_file() {
+        let err = run_inspect_inner(inspect_args(
             None,
             "no-such-fixtures-dir",
             Some("no-such-config.stellar-canary.toml"),

@@ -11,6 +11,14 @@ use canary_fixtures::LoadedFixture;
 use crate::decoder::{decode, XdrTypeName};
 use crate::encoder::encode;
 
+/// Errors raised while turning a [`LoadedFixture`] into an [`XdrFixture`].
+///
+/// One failure mode today: the fixture body is structurally valid YAML/JSON
+/// but does not describe a usable XDR assertion — e.g. a required field is
+/// missing or has the wrong type. The error names the offending fixture
+/// (`source_path`) and carries a human-readable `reason`, and converts into
+/// `CanaryError::Xdr` so it propagates through the shared error type without
+/// ever failing a run as an unhandled panic.
 #[derive(Debug, thiserror::Error)]
 pub enum XdrError {
     #[error("invalid xdr fixture body in {source_path}: {reason}")]

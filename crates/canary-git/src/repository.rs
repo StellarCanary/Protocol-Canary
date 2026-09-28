@@ -88,15 +88,26 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// A unique scratch directory under [`std::env::temp_dir`].
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process counter: the timestamp alone cannot separate the threads
+    /// the test harness runs in parallel, since clock resolution on some
+    /// hosts is coarser than the interval between two threads' reads, and two
+    /// git tests sharing one directory would overwrite each other's repo.
     fn temp_dir(prefix: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "{prefix}-{}-{}",
+            "{prefix}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();

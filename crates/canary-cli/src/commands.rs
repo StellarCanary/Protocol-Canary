@@ -410,6 +410,38 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     Ok(ExitCode::Pass)
 }
 
+/// Renders a previously stored JSON report to the console.
+///
+/// Reads the report file named by [`ReportArgs::path`] — the JSON written by
+/// `stellar-canary check --json`, as described in
+/// `docs/json-report-contract.md` — re-renders it in [`ReportArgs::format`],
+/// and prints the result to stdout. Unlike [`run_check`], it never touches the
+/// network or re-runs any fixture, so it is safe to call offline, on CI, or
+/// against a report produced by another machine.
+///
+/// Returns the [`ExitCode`] implied by the stored run, matching what
+/// `check --json` would have returned for the same run:
+/// [`ExitCode::ExecutionError`] if any stored result recorded an execution
+/// error, otherwise [`ExitCode::CompatibilityFailure`] when the stored
+/// decision is a failure, and [`ExitCode::Pass`] for a pass or warning.
+///
+/// # Errors
+///
+/// This function returns an [`ExitCode`] rather than a `Result`. A report
+/// file that is missing or cannot be read, and a file that is not valid JSON
+/// in the expected report shape, are both reported on stderr and mapped to
+/// [`ExitCode::ConfigurationError`].
+///
+/// # Examples
+///
+/// ```text
+/// # Render a stored report as Markdown (the default format).
+/// stellar-canary report --path results.json
+///
+/// # Re-render the same report for a terminal or as JSON.
+/// stellar-canary report --path results.json --format terminal
+/// stellar-canary report --path results.json --format json
+/// ```
 pub fn run_report(args: ReportArgs) -> ExitCode {
     match run_report_inner(args) {
         Ok(exit_code) => exit_code,
@@ -466,6 +498,18 @@ mod tests {
         }
     }
 
+    fn inspect_args(
+        protocol: Option<u32>,
+        fixtures_dir: &str,
+        config: Option<&str>,
+    ) -> InspectArgs {
+        InspectArgs {
+            protocol,
+            fixtures_dir: PathBuf::from(fixtures_dir),
+            config: config.map(PathBuf::from),
+        }
+    }
+
     #[test]
     fn run_version_returns_the_success_exit_code() {
         assert_eq!(run_version(), ExitCode::Pass);
@@ -500,6 +544,45 @@ mod tests {
         // Only reached when no --protocol was given, since an explicit protocol
         // skips configuration loading entirely.
         let err = run_fixtures_inner(fixtures_args(
+            None,
+            "no-such-fixtures-dir",
+            Some("no-such-config.stellar-canary.toml"),
+        ))
+        .expect_err("an explicit --config that does not exist must fail");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+    }
+
+    #[test]
+    fn run_inspect_reports_a_plan_for_an_empty_fixture_set() {
+        // Inspect prints the resolved project, configuration and fixture plan
+        // and succeeds even when the fixture directory holds nothing: the plan
+        // is simply empty.
+        let code = run_inspect_inner(inspect_args(Some(28), "no-such-fixtures-dir", None))
+            .expect("an absent fixture directory is not an error");
+        assert_eq!(code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn run_inspect_rejects_a_zero_protocol() {
+        let err = run_inspect_inner(inspect_args(Some(0), "no-such-fixtures-dir", None))
+            .expect_err("--protocol 0 must not be accepted");
+        assert!(
+            matches!(err, CanaryError::Configuration(_)),
+            "unexpected error: {err:?}"
+        );
+        assert!(
+            err.to_string()
+                .contains("--protocol must be a positive protocol version number"),
+            "unexpected error text: {err}"
+        );
+    }
+
+    #[test]
+    fn run_inspect_reports_a_missing_explicit_configuration_file() {
+        let err = run_inspect_inner(inspect_args(
             None,
             "no-such-fixtures-dir",
             Some("no-such-config.stellar-canary.toml"),

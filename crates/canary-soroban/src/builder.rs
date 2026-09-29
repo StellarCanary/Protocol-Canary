@@ -13,20 +13,30 @@ use stellar_xdr::{
     Uint256, VecM, WriteXdr,
 };
 
+/// Errors returned while building an unsigned Soroban invocation envelope.
+///
+/// These errors indicate invalid account, contract, function, or argument
+/// input, or a failure to encode the resulting transaction as XDR. The builder
+/// returns these errors rather than panicking.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderError {
+    /// The source account is not a valid Stellar account strkey.
     #[error("invalid source account strkey {account:?}: {reason}")]
     InvalidSourceAccount { account: String, reason: String },
 
+    /// The contract identifier is not a valid Stellar contract strkey.
     #[error("invalid contract strkey {contract:?}: {reason}")]
     InvalidContractId { contract: String, reason: String },
 
+    /// The function name cannot be represented as a Soroban symbol.
     #[error("invalid function name {name:?}: {reason}")]
     InvalidFunctionName { name: String, reason: String },
 
+    /// An argument cannot be represented in the supported Soroban value format.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// The transaction envelope could not be encoded as base64 XDR.
     #[error("failed to encode transaction envelope: {0}")]
     Encode(String),
 }
@@ -208,6 +218,8 @@ mod tests {
 
     #[test]
     fn supports_scalar_argument_types() {
+        use stellar_xdr::ReadXdr;
+
         let mut spec = spec();
         spec.args = vec![
             ScValInput::Bool(true),
@@ -217,6 +229,30 @@ mod tests {
             ScValInput::I64(-2),
             ScValInput::String("hi".to_string()),
         ];
-        assert!(build_invoke_transaction_envelope(&spec).is_ok());
+        let base64 = build_invoke_transaction_envelope(&spec).expect("builds");
+        let envelope = TransactionEnvelope::from_xdr_base64(&base64, Limits::none())
+            .expect("the built envelope must be valid XDR");
+        let TransactionEnvelope::Tx(envelope) = envelope else {
+            panic!("expected a transaction envelope");
+        };
+        let operation = envelope.tx.operations.first().expect("one operation");
+        let OperationBody::InvokeHostFunction(invoke) = &operation.body else {
+            panic!("expected an invoke host function operation");
+        };
+        let HostFunction::InvokeContract(invoke_args) = &invoke.host_function else {
+            panic!("expected an invoke contract host function");
+        };
+
+        assert_eq!(
+            &invoke_args.args[..],
+            &[
+                ScVal::Bool(true),
+                ScVal::U32(1),
+                ScVal::I32(-1),
+                ScVal::U64(2),
+                ScVal::I64(-2),
+                ScVal::String(ScString("hi".try_into().expect("valid XDR string"))),
+            ]
+        );
     }
 }

@@ -35,6 +35,18 @@ pub struct CliGitRepository {
 }
 
 impl CliGitRepository {
+    /// Creates a [`GitRepository`] that runs `git` inside `root`.
+    ///
+    /// `root` is the working directory for every `git` invocation this handle
+    /// makes; it accepts anything convertible into a [`PathBuf`] (including
+    /// `&str` and `Path` references). The path is not opened or validated
+    /// during construction: a directory that is not a Git repository, or a
+    /// path that does not exist, is accepted here and simply reported as
+    /// "unavailable" by the [`GitRepository`] methods instead — they return
+    /// `Ok(None)` / `Ok(false)` rather than an error, per this crate's rule
+    /// that missing Git metadata must never fail a run.
+    ///
+    /// This function performs no I/O and does not panic.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         CliGitRepository { root: root.into() }
     }

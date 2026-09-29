@@ -1,4 +1,4 @@
-//! Resolving a `--network`/`--rpc-url` pair into a [`NetworkContext`].
+//! Resolving a `--network`/`--rpc-url` pair into a [`canary_core::NetworkContext`].
 
 use canary_core::NetworkName;
 
@@ -7,6 +7,29 @@ pub const FUTURENET_PASSPHRASE: &str = "Test SDF Future Network ; October 2022";
 pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
 pub const TESTNET_DEFAULT_RPC_URL: &str = "https://soroban-testnet.stellar.org";
 
+/// Parses a network name string into a [`NetworkName`] enum variant.
+///
+/// This function performs a case-insensitive match against well-known networks.
+/// It recognizes `"testnet"`, `"mainnet"`, and `"futurenet"`. If the input does
+/// not match any of these known networks, it returns a [`NetworkName::Custom`]
+/// variant containing the lowercased input string.
+///
+/// # Examples
+///
+/// ```
+/// use canary_core::NetworkName;
+/// use canary_cli::network::parse_network_name;
+///
+/// assert_eq!(parse_network_name("Testnet"), NetworkName::Testnet);
+/// assert_eq!(parse_network_name("MAINNET"), NetworkName::Mainnet);
+/// assert_eq!(parse_network_name("futurenet"), NetworkName::Futurenet);
+///
+/// // Unrecognized names are converted to lowercase and wrapped in Custom
+/// assert_eq!(
+///     parse_network_name("My-Local-Network"),
+///     NetworkName::Custom("my-local-network".to_string())
+/// );
+/// ```
 pub fn parse_network_name(name: &str) -> NetworkName {
     match name.to_ascii_lowercase().as_str() {
         "testnet" => NetworkName::Testnet,

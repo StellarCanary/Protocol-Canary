@@ -441,6 +441,15 @@ fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
     Ok(exit_code)
 }
 
+/// Handles the `version` subcommand: prints the CLI name and crate version
+/// (`stellar-canary <CARGO_PKG_VERSION>`) to stdout.
+///
+/// The version string is embedded at compile time via `env!`, so this
+/// never reads the network, the filesystem, or configuration, and it cannot
+/// fail: it always returns [`ExitCode::Pass`], even when the run-level checks
+/// would fail. Callers that need the version programmatically (without the
+/// `stellar-canary ` prefix) should use `env!("CARGO_PKG_VERSION")` directly
+/// rather than parsing this output.
 pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass

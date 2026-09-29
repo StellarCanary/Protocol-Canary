@@ -22,6 +22,17 @@ impl ResultSummary {
         (self.passed, self.total)
     }
 
+    /// Whether this summary contains at least one failure that requires the
+    /// run to fail: any counted [`Status::Fail`] (`failed`) or
+    /// [`Status::Error`] (`errors`). Warnings and skipped results do not
+    /// count, so an all-warning run stays green.
+    ///
+    /// This applies the same `Fail`/`Error` rule as the per-result predicate
+    /// `canary_core::CompatibilityResult` documents for single results — the
+    /// CLI's run-level decision is made from this summary-level check. Keep
+    /// the two rules in sync if either changes.
+    ///
+    /// Pure predicate over the counts: no panics, no I/O.
     pub fn has_required_failure(&self) -> bool {
         self.failed > 0 || self.errors > 0
     }

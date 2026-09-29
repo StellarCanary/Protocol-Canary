@@ -6,6 +6,33 @@ use canary_core::CanaryError;
 
 use crate::manifest::{parse_fixture_file, LoadedFixture};
 
+/// Errors produced while loading and validating a fixture directory.
+///
+/// A `FixtureError` means the fixture input itself is unusable — an
+/// unreadable file or directory, malformed TOML, a duplicate fixture id, or
+/// a reference to a companion file that does not exist — as opposed to a
+/// compatibility failure in the code under test. Every variant carries the
+/// offending [`PathBuf`], so callers can point users at the exact file that
+/// needs fixing.
+///
+/// It converts into [`CanaryError::Fixture`], which the CLI maps to the
+/// dedicated invalid-fixture exit code rather than a generic internal error.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::PathBuf;
+///
+/// use canary_fixtures::FixtureError;
+///
+/// let error = FixtureError::DuplicateId {
+///     id: "p28-xdr-example".to_string(),
+///     first: PathBuf::from("fixtures/a.toml"),
+///     second: PathBuf::from("fixtures/b.toml"),
+/// };
+///
+/// assert!(error.to_string().contains("duplicate fixture id"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum FixtureError {
     #[error("failed to read fixture file {path}: {source}")]

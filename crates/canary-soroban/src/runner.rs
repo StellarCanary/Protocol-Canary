@@ -13,8 +13,27 @@ use canary_rpc::RpcClient;
 use crate::builder::{build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput};
 use crate::simulation::simulate;
 
+/// Errors raised while turning a [`LoadedFixture`] into a [`SorobanFixture`].
+///
+/// One failure mode today: the fixture body is structurally valid TOML but
+/// does not describe a usable Soroban invocation. That covers a missing or
+/// mistyped required field (`source_account`, `contract_id`, `function`,
+/// `sequence_number`), an `[[args]]` entry whose `kind` this crate does not
+/// support or whose `value` does not match that `kind`, and an `[expect]`
+/// table that is absent or declares an unknown expectation.
+///
+/// The error names the offending fixture (`source_path`) and carries a
+/// human-readable `reason`, and converts into `CanaryError::Soroban` so it
+/// propagates through the shared error type without ever failing a run as an
+/// unhandled panic. Returned by [`SorobanFixture::from_loaded`]; constructing
+/// a [`SorobanFixture`] never panics on malformed input.
 #[derive(Debug, thiserror::Error)]
 pub enum SorobanFixtureError {
+    /// The fixture's body could not be parsed into a [`SorobanFixture`].
+    ///
+    /// `source_path` is the path the fixture was loaded from (used to point
+    /// the user at the file to fix) and `reason` explains which field or
+    /// assertion was rejected.
     #[error("invalid soroban fixture body in {source_path}: {reason}")]
     InvalidFixtureBody {
         source_path: std::path::PathBuf,

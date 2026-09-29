@@ -13,20 +13,32 @@ pub use manifest::{read_cargo_manifest, read_package_json, ProjectManifest};
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
 
     pub struct TempDir {
         pub path: PathBuf,
     }
 
+    /// Creates a directory under [`std::env::temp_dir`], removed on drop.
+    ///
+    /// The name combines the process id, a nanosecond timestamp and this
+    /// per-process counter. The timestamp alone is not a uniqueness guarantee
+    /// across the threads the test harness runs in parallel, since clock
+    /// resolution on some hosts is coarser than the interval between two
+    /// threads' reads; a collision would share one directory between two
+    /// tests, and one test's `Drop` would delete the other's fixture mid-run.
     pub fn temp_dir(prefix: &str) -> TempDir {
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "{prefix}-{}-{}",
+            "{prefix}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();

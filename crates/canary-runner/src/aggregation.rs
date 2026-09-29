@@ -90,4 +90,23 @@ mod tests {
         assert!(summarize(&[result(Status::Error)]).has_required_failure());
         assert!(!summarize(&[result(Status::Warning)]).has_required_failure());
     }
+
+    #[test]
+    fn passed_fraction_reports_passed_over_total_for_a_mixed_summary() {
+        let results = vec![
+            result(Status::Pass),
+            result(Status::Pass),
+            result(Status::Fail),
+            result(Status::Warning),
+            result(Status::Error),
+        ];
+        assert_eq!(summarize(&results).passed_fraction(), (2, 5));
+    }
+
+    #[test]
+    fn passed_fraction_of_an_empty_result_set_is_zero_over_zero() {
+        // Reporters render this as "0/0"; a percentage here would have an
+        // undefined denominator, which is why the accessor returns integers.
+        assert_eq!(summarize(&[]).passed_fraction(), (0, 0));
+    }
 }

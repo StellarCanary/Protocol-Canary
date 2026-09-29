@@ -13,11 +13,13 @@ Options:
       --network <NETWORK>            Network to run live checks against [default: testnet]
       --rpc-url <RPC_URL>            RPC endpoint to use for live checks
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
+      --rpc-timeout <RPC_TIMEOUT>    Request timeout for the RPC client in seconds [default: 10]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
       --verbose                      Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
       --quiet                        Shorten terminal-format output to a single status line.
+      --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
   -h, --help                         Print help
 ```
 
@@ -63,6 +65,17 @@ Not every check requires the network:
   is reported as an **execution error**, not skipped — see
   [Exit Codes](../exit-codes.md) and
   [network troubleshooting](../troubleshooting.md#network-troubleshooting).
+- **The endpoint's identity is validated against the run's assumptions.**
+  When `getNetwork` succeeds, its passphrase is compared to `--network`
+  and its protocol version to `--protocol`: a passphrase mismatch aborts
+  as a **configuration error** (exit `2`) before any check runs, since
+  results from the wrong network must not be attributed to the requested
+  one; an observed protocol that differs from the target prints a
+  `warning:` line on stderr (e.g. `warning: the RPC endpoint reports
+  protocol 27, but this run targets protocol 28`) and the run continues —
+  observing a not-yet-upgraded network while rehearsing the next protocol
+  is a legitimate use case, but it must be visible rather than only an
+  `(observed protocol N)` annotation in the report.
 
 Disable a surface in `.stellar-canary.toml` (`[tests] rpc = false` /
 `soroban = false`) to run fully offline.

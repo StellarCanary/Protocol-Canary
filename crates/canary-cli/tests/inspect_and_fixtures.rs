@@ -1,6 +1,6 @@
 mod support;
 
-use support::{run_in, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
 
 #[test]
 fn inspect_reports_unknown_for_an_empty_project() {
@@ -80,6 +80,55 @@ fn fixtures_command_lists_fixture_ids_grouped_by_surface() {
     assert!(text.contains("p28-xdr-1"));
     assert!(text.contains("RPC"));
     assert!(text.contains("p28-rpc-1"));
+}
+
+#[test]
+fn fixtures_protocol_flag_overrides_the_config_file() {
+    let dir = TempProject::new("fixtures-protocol-override");
+    dir.write(".stellar-canary.toml", "version = 1\nprotocol = 27\n");
+    dir.write(
+        "fixtures/xdr/p28-xdr-1.toml",
+        &format!(
+            "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+
+    let output = run_in(&dir.path, &["fixtures", "--protocol", "28"]);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    // The flag, not the config file's protocol = 27, decides which
+    // fixtures are listed.
+    assert!(text.contains("Protocol 28 fixtures"));
+    assert!(text.contains("p28-xdr-1"));
+    assert!(!text.contains("Protocol 27 fixtures"));
+}
+
+/// The documented fallback on `FixturesArgs::protocol` ("the configured
+/// protocol, or 28 if there is no configuration file") was never exercised
+/// end-to-end: every existing invocation here passes `--protocol`
+/// explicitly, and the override test still supplies a config file. This runs
+/// the command with neither, so the built-in default has to answer.
+#[test]
+fn fixtures_falls_back_to_the_default_protocol_with_no_flag_and_no_config() {
+    let dir = TempProject::new("fixtures-default-protocol");
+    // Deliberately no `.stellar-canary.toml`: the chain under test is
+    // flag -> config file -> built-in default.
+    dir.write(
+        "fixtures/xdr/p28-xdr-1.toml",
+        &format!(
+            "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+
+    let output = run_in(&dir.path, &["fixtures"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        text.contains("Protocol 28 fixtures"),
+        "with no --protocol flag and no config file, fixtures must list the \
+         default protocol (28); stdout: {text}"
+    );
+    assert!(text.contains("p28-xdr-1"), "stdout: {text}");
 }
 
 #[test]

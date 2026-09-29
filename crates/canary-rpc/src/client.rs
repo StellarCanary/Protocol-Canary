@@ -41,9 +41,25 @@ pub enum RpcError {
     #[error("unexpected response shape from {method}: {reason}")]
     InvalidResponse { method: String, reason: String },
 
+    /// The endpoint is on a different network than the run requested.
+    ///
+    /// Raised by [`validate_network_info`], never by the transport layer:
+    /// `getNetwork` succeeds against *any* network, so only a comparison
+    /// against the run's expected passphrase can produce this. Callers
+    /// decide what it means for their run (the CLI aborts as a
+    /// configuration error, since results from the wrong network must not
+    /// be attributed to the requested one).
     #[error("the RPC endpoint's network passphrase ({actual:?}) does not match the expected passphrase ({expected:?})")]
     NetworkMismatch { expected: String, actual: String },
 
+    /// The endpoint reports a different protocol version than the run
+    /// targets.
+    ///
+    /// Raised by [`validate_network_info`], never by the transport layer.
+    /// A mismatch here is not necessarily a mistake — rehearsing an
+    /// upcoming protocol against a not-yet-upgraded network is a core use
+    /// case — so callers decide whether to treat it as a warning (the CLI
+    /// does) or a failure.
     #[error(
         "the RPC endpoint reports protocol {observed}, but this run targets protocol {target}"
     )]
@@ -57,6 +73,41 @@ impl From<RpcError> for CanaryError {
     fn from(error: RpcError) -> Self {
         CanaryError::Rpc(error.to_string())
     }
+}
+
+/// Checks a freshly fetched [`NetworkInfo`] against the run's expected
+/// network passphrase and target protocol, constructing
+/// [`RpcError::NetworkMismatch`]/[`RpcError::ProtocolMismatch`] when they
+/// differ.
+///
+/// This is the intended (and only) constructor of those two variants: the
+/// transport-level `getNetwork` call itself only fails on wire/JSON
+/// errors, while these two capture a *semantic* mismatch between what the
+/// endpoint reports and what the run assumed.
+///
+/// - The passphrase comparison is skipped when `expected_passphrase` is
+///   empty: custom networks have no well-known passphrase to compare
+///   against (see `canary-cli`'s `default_passphrase`).
+/// - The passphrase is checked first — confirming *which* network the
+///   endpoint is on before comparing protocol versions.
+pub fn validate_network_info(
+    info: &NetworkInfo,
+    expected_passphrase: &str,
+    target_protocol: u32,
+) -> Result<(), RpcError> {
+    if !expected_passphrase.is_empty() && info.passphrase != expected_passphrase {
+        return Err(RpcError::NetworkMismatch {
+            expected: expected_passphrase.to_string(),
+            actual: info.passphrase.clone(),
+        });
+    }
+    if info.protocol_version != target_protocol {
+        return Err(RpcError::ProtocolMismatch {
+            target: target_protocol,
+            observed: info.protocol_version,
+        });
+    }
+    Ok(())
 }
 
 /// The subset of Stellar RPC this project depends on.
@@ -106,12 +157,81 @@ pub struct HttpRpcClient {
 impl HttpRpcClient {
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(Duration::from_secs(10))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new()),
             endpoint: endpoint.into(),
             retry_policy: RetryPolicy::default(),
         }
     }
 
+    pub fn with_timeout(mut self, timeout: Duration) -> Self {
+        if let Ok(http) = reqwest::Client::builder().timeout(timeout).build() {
+            self.http = http;
+        }
+        self
+    }
+
+    /// Returns this client with its [`RetryPolicy`] replaced by `policy`.
+    ///
+    /// Builder-style: this consumes the client and hands back a new one, so
+    /// it chains onto [`HttpRpcClient::new`] (and alongside
+    /// [`HttpRpcClient::with_timeout`]). The policy is read per request, so
+    /// it governs every method on [`RpcClient`] — `getNetwork`,
+    /// `getLatestLedger`, and `simulateTransaction` alike. If it is never
+    /// called, the client keeps [`RetryPolicy::default`] (3 attempts,
+    /// 200 ms base delay).
+    ///
+    /// # What gets retried
+    ///
+    /// Only [`RpcError::Transport`], [`RpcError::Timeout`], and
+    /// [`RpcError::RateLimited`] are retried. Those are the transient
+    /// failures — a dropped connection, an elapsed
+    /// [`HttpRpcClient::with_timeout`] deadline, or an HTTP 429.
+    /// [`RpcError::InvalidJson`], [`RpcError::JsonRpcError`], and
+    /// [`RpcError::InvalidResponse`] are deterministic: the same request
+    /// would produce the same malformed/errored response, so they are
+    /// returned on the first attempt no matter what the policy says.
+    ///
+    /// # Timing
+    ///
+    /// At most `max_attempts` requests are made in total, and the wait
+    /// between attempt *n* and attempt *n+1* is `base_delay * n` — a linear
+    /// backoff, so there is no delay after the final attempt and the total
+    /// time spent sleeping is `base_delay * n(n-1)/2`. Combined with a
+    /// per-request deadline, the worst-case wall time for one call is
+    /// roughly `max_attempts * timeout` plus that backoff, which is worth
+    /// keeping in mind when both values are configured.
+    ///
+    /// # Failure conditions
+    ///
+    /// This method cannot fail and does not panic — it only stores `policy`.
+    /// The field values are not validated: `max_attempts: 0` is not
+    /// rejected but behaves as "try once, do not retry" (the first attempt
+    /// is always made, so one attempt is the effective minimum), and a
+    /// `base_delay` of zero retries immediately with no pause.
+    ///
+    /// Because this consumes and returns a new client, the policy applies
+    /// only to the returned value and to clones made from it — a client
+    /// cloned before this call keeps the old policy, and any call already
+    /// in flight on such a clone is unaffected. Unlike
+    /// [`HttpRpcClient::with_timeout`], this does not rebuild the
+    /// underlying HTTP client, so no connection pool is discarded.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use canary_rpc::{HttpRpcClient, RetryPolicy};
+    ///
+    /// // Up to five attempts, backing off 100ms, 200ms, 300ms, 400ms.
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(5))
+    ///     .with_retry_policy(RetryPolicy {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(100),
+    ///     });
+    /// ```
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = policy;
         self
@@ -320,6 +440,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maps_missing_result_and_error_keys_to_invalid_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(
+            err,
+            RpcError::InvalidResponse { ref reason, .. } if reason.contains("neither \"result\" nor \"error\"")
+        ));
+    }
+
+    #[tokio::test]
+    async fn maps_deserialization_failure_to_invalid_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": 28
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(
+            err,
+            RpcError::InvalidResponse { ref reason, .. } if reason.contains("missing field `passphrase`")
+        ));
+    }
+
+    #[tokio::test]
     async fn retries_server_errors_up_to_the_configured_attempt_limit() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -334,6 +497,116 @@ mod tests {
         });
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::Transport { .. }));
+    }
+
+    #[tokio::test]
+    async fn custom_max_attempts_one_disables_retries() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(503))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 1,
+            base_delay: Duration::from_millis(1),
+        });
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(err, RpcError::Transport { .. }));
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 1);
+    }
+
+    /// Every other retry test mounts a mock that fails on *every* request and
+    /// asserts the client eventually gives up, so none of them proves the
+    /// point of retrying at all: that a transient failure followed by a good
+    /// response is an overall success. A regression that kept counting
+    /// attempts but discarded the successful response would pass the whole
+    /// existing suite.
+    #[tokio::test]
+    async fn recovers_from_a_transient_failure_and_returns_the_successful_response() {
+        let server = MockServer::start().await;
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        // 503 on the first request, then success — the shape of a real
+        // transient outage.
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(move |_request: &wiremock::Request| {
+                if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(503)
+                } else {
+                    ResponseTemplate::new(200).set_body_json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "passphrase": "Test SDF Network ; September 2015",
+                            "protocolVersion": 28
+                        }
+                    }))
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(1),
+        });
+
+        let info = client
+            .get_network()
+            .await
+            .expect("the second, successful response must be returned as Ok");
+        assert_eq!(info.passphrase, "Test SDF Network ; September 2015");
+        assert_eq!(info.protocol_version, 28);
+
+        // Exactly one retry: the failure was recovered, not exhausted, and
+        // the success was not re-requested either.
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2, "expected the 503 plus one retry");
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_failure_and_returns_the_successful_response() {
+        let server = MockServer::start().await;
+        // First request: a transient 503. `up_to_n_times(1)` stops this mock
+        // from matching afterwards, so the retried request falls through to
+        // the success mock mounted below (same-priority mocks match in
+        // insertion order).
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .named("transient 503")
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28
+                }
+            })))
+            .named("successful retry")
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(1),
+        });
+        let info = client.get_network().await.expect("retry succeeds");
+        assert_eq!(info.protocol_version, 28);
+        assert_eq!(info.passphrase, "Test SDF Network ; September 2015");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2);
     }
 
     #[tokio::test]
@@ -360,5 +633,66 @@ mod tests {
             .await
             .expect("ok");
         assert!(!response.succeeded());
+    }
+
+    fn network_info(passphrase: &str, protocol_version: u32) -> NetworkInfo {
+        NetworkInfo {
+            friendbot_url: None,
+            passphrase: passphrase.to_string(),
+            protocol_version,
+        }
+    }
+
+    #[test]
+    fn validate_network_info_accepts_a_matching_passphrase_and_protocol() {
+        let info = network_info("Test SDF Network ; September 2015", 28);
+        let result = validate_network_info(&info, "Test SDF Network ; September 2015", 28);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_network_info_constructs_network_mismatch_on_a_wrong_passphrase() {
+        let info = network_info("Public Global Stellar Network ; September 2015", 28);
+        let err = validate_network_info(&info, "Test SDF Network ; September 2015", 28)
+            .expect_err("passphrase differs");
+        assert!(matches!(
+            err,
+            RpcError::NetworkMismatch { ref expected, ref actual }
+                if expected == "Test SDF Network ; September 2015"
+                    && actual == "Public Global Stellar Network ; September 2015"
+        ));
+    }
+
+    #[test]
+    fn validate_network_info_constructs_protocol_mismatch_on_a_different_protocol() {
+        let info = network_info("Test SDF Network ; September 2015", 27);
+        let err = validate_network_info(&info, "Test SDF Network ; September 2015", 28)
+            .expect_err("protocol differs");
+        assert!(matches!(
+            err,
+            RpcError::ProtocolMismatch {
+                target: 28,
+                observed: 27
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_network_info_checks_the_passphrase_before_the_protocol() {
+        let info = network_info("Public Global Stellar Network ; September 2015", 27);
+        let err = validate_network_info(&info, "Test SDF Network ; September 2015", 28)
+            .expect_err("both differ");
+        assert!(matches!(err, RpcError::NetworkMismatch { .. }));
+    }
+
+    #[test]
+    fn validate_network_info_skips_the_passphrase_check_for_custom_networks() {
+        // An empty expected passphrase means "no well-known passphrase"
+        // (custom networks): only the protocol is compared.
+        let info = network_info("Standalone Network ; February 2017", 28);
+        assert!(validate_network_info(&info, "", 28).is_ok());
+
+        let err = validate_network_info(&info, "", 27).expect_err("protocol differs");
+        assert!(matches!(err, RpcError::ProtocolMismatch { .. }));
     }
 }

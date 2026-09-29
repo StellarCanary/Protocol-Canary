@@ -138,6 +138,51 @@ mod tests {
     }
 
     #[test]
+    fn load_from_root_discovers_and_parses_an_existing_config_file() {
+        use canary_core::ProjectType;
+
+        let dir = tempdir::TempDir::new("canary-config-found");
+        // The literal on-disk name rather than `CONFIG_FILE_NAME`, so this
+        // pins the discovery contract instead of restating it.
+        std::fs::write(
+            dir.path.join(".stellar-canary.toml"),
+            r#"
+            version = 1
+            protocol = 22
+
+            [project]
+            type = "soroban"
+
+            [tests]
+            xdr = true
+            rpc = false
+            soroban = true
+
+            [policy]
+            warnings_are_failures = true
+            "#,
+        )
+        .unwrap();
+
+        let config = load_from_root(&dir.path)
+            .expect("an existing config file must load, not error")
+            .expect("a config file at the conventional name must be discovered");
+
+        // Values that differ from the schema defaults, so this fails if the
+        // parsed file were silently replaced by `ConfigFile::default()`.
+        assert_eq!(config.version, 1);
+        assert_eq!(config.protocol, 22);
+        assert_eq!(
+            config.project.project_type,
+            ProjectTypeSetting::Explicit(ProjectType::Soroban)
+        );
+        assert!(config.tests.xdr);
+        assert!(!config.tests.rpc);
+        assert!(config.tests.soroban);
+        assert!(config.policy.warnings_are_failures);
+    }
+
+    #[test]
     fn rejects_unsupported_schema_version() {
         let (_dir, path) = write_temp_config("version = 2\nprotocol = 28\n");
         let err = load(&path).unwrap_err();
@@ -185,8 +230,19 @@ mod tests {
 
     /// Minimal temp-dir helper, avoiding a `tempfile` dev-dependency for a
     /// handful of config-loading tests.
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process atomic counter. The timestamp alone is not a uniqueness
+    /// guarantee across the threads the test harness runs in parallel, since
+    /// clock resolution on some hosts is coarser than the interval between two
+    /// threads' reads — a collision made two tests share one directory, and
+    /// one test's `Drop` (`remove_dir_all`) then deleted the other's fixture
+    /// mid-run.
     mod tempdir {
         use std::path::PathBuf;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
 
         pub struct TempDir {
             pub path: PathBuf,
@@ -196,12 +252,13 @@ mod tests {
             pub fn new(prefix: &str) -> Self {
                 let mut path = std::env::temp_dir();
                 let unique = format!(
-                    "{prefix}-{}-{}",
+                    "{prefix}-{}-{}-{}",
                     std::process::id(),
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
-                        .as_nanos()
+                        .as_nanos(),
+                    COUNTER.fetch_add(1, Ordering::Relaxed)
                 );
                 path.push(unique);
                 std::fs::create_dir_all(&path).unwrap();

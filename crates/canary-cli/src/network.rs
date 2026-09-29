@@ -3,6 +3,30 @@
 use canary_core::NetworkName;
 
 pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
+/// The default Stellar network passphrase for Futurenet.
+///
+/// Stellar networks use a unique network passphrase as a cryptographic domain
+/// separator when hashing and signing transactions. This ensures transactions
+/// signed for Futurenet cannot be executed or replayed on Testnet, Mainnet,
+/// or private networks.
+///
+/// Futurenet is the test network provided by the Stellar Development Foundation (SDF)
+/// for previewing and testing experimental features and upcoming protocol releases,
+/// such as Soroban smart contracts.
+///
+/// Used by [`default_passphrase`] when the network is [`NetworkName::Futurenet`].
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::network::{default_passphrase, FUTURENET_PASSPHRASE};
+/// use canary_core::NetworkName;
+///
+/// assert_eq!(
+///     default_passphrase(&NetworkName::Futurenet),
+///     Some(FUTURENET_PASSPHRASE)
+/// );
+/// ```
 pub const FUTURENET_PASSPHRASE: &str = "Test SDF Future Network ; October 2022";
 pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
 pub const TESTNET_DEFAULT_RPC_URL: &str = "https://soroban-testnet.stellar.org";

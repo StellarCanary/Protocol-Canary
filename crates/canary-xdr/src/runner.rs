@@ -11,6 +11,14 @@ use canary_fixtures::LoadedFixture;
 use crate::decoder::{decode, XdrTypeName};
 use crate::encoder::encode;
 
+/// Errors raised while turning a [`LoadedFixture`] into an [`XdrFixture`].
+///
+/// One failure mode today: the fixture body is structurally valid YAML/JSON
+/// but does not describe a usable XDR assertion — e.g. a required field is
+/// missing or has the wrong type. The error names the offending fixture
+/// (`source_path`) and carries a human-readable `reason`, and converts into
+/// `CanaryError::Xdr` so it propagates through the shared error type without
+/// ever failing a run as an unhandled panic.
 #[derive(Debug, thiserror::Error)]
 pub enum XdrError {
     #[error("invalid xdr fixture body in {source_path}: {reason}")]
@@ -256,7 +264,7 @@ mod tests {
         CacheStore, GitContext, NetworkContext, NetworkName, ProjectContext, ProjectType,
         ProtocolVersion, RunOptions,
     };
-    use stellar_xdr::{Limits, StellarValue, WriteXdr};
+    use stellar_xdr::{ContractExecutable, Hash, Limits, ScVal, StellarValue, WriteXdr};
 
     fn valid_stellar_value_base64() -> String {
         StellarValue::default()
@@ -305,6 +313,34 @@ mod tests {
         let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-1", &body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Pass);
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_on_valid_contract_executable() {
+        let base64 = ContractExecutable::Wasm(Hash([7; 32]))
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"ContractExecutable\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-contract-exec", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::ContractExecutable);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded ContractExecutable successfully");
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_on_valid_scval() {
+        let base64 = ScVal::U32(42).to_xdr_base64(Limits::none()).unwrap();
+        let body =
+            format!("type = \"ScVal\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n");
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-scval", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::ScVal);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded ScVal successfully");
     }
 
     #[test]
@@ -368,6 +404,32 @@ mod tests {
     }
 
     #[test]
+    fn encode_equals_fixture_with_malformed_expected_base64_fails_with_mismatch() {
+        // `expected_base64` is compared byte-for-byte as a plain string, and the
+        // fixture loader does not validate that it is syntactically valid base64.
+        // A typo'd `expected_base64` therefore currently parses fine and is
+        // reported as an ordinary encode mismatch (`Status::Fail`), not as an
+        // `InvalidFixtureBody` parse error. This test locks in that current
+        // behavior; whether it should become a parse-time error is a separate
+        // design decision.
+        let base64 = valid_stellar_value_base64();
+        let body = format!(
+            "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"{base64}\"\nexpected_base64 = \"not valid base64!!!\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+
+        assert_eq!(result.status, canary_core::Status::Fail);
+        assert_eq!(
+            result.summary,
+            "StellarValue did not encode to the expected bytes"
+        );
+        let details = result.details.expect("details should be present");
+        assert!(details.contains("expected: not valid base64!!!"));
+        assert!(details.contains(&format!("actual:   {base64}")));
+    }
+
+    #[test]
     fn rejects_a_fixture_body_missing_the_type_field() {
         let body = "kind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-8", body)).unwrap_err();
@@ -379,6 +441,27 @@ mod tests {
         let body = "type = \"StellarValue\"\nkind = \"not-a-kind\"\nvalue_base64 = \"AAAA\"\n";
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-9", body)).unwrap_err();
         assert!(matches!(err, XdrError::InvalidFixtureBody { .. }));
+    }
+
+    /// `LedgerEntry` is a real XDR type name — just not one of the ones
+    /// this tool supports. The rejection must surface through fixture
+    /// parsing with `XdrTypeName::from_str`'s supported-types list intact,
+    /// so a fixture author can self-correct from the error alone.
+    #[test]
+    fn rejects_a_well_formed_but_unsupported_xdr_type_name_and_lists_the_supported_ones() {
+        let body = "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
+        let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", body)).unwrap_err();
+        match err {
+            XdrError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("LedgerEntry"), "reason: {reason}");
+                for supported in ["StellarValue", "ContractExecutable", "ScVal"] {
+                    assert!(
+                        reason.contains(supported),
+                        "reason must list supported type {supported:?}: {reason}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

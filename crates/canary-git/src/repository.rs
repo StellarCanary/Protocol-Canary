@@ -35,6 +35,18 @@ pub struct CliGitRepository {
 }
 
 impl CliGitRepository {
+    /// Creates a [`GitRepository`] that runs `git` inside `root`.
+    ///
+    /// `root` is the working directory for every `git` invocation this handle
+    /// makes; it accepts anything convertible into a [`PathBuf`] (including
+    /// `&str` and `Path` references). The path is not opened or validated
+    /// during construction: a directory that is not a Git repository, or a
+    /// path that does not exist, is accepted here and simply reported as
+    /// "unavailable" by the [`GitRepository`] methods instead — they return
+    /// `Ok(None)` / `Ok(false)` rather than an error, per this crate's rule
+    /// that missing Git metadata must never fail a run.
+    ///
+    /// This function performs no I/O and does not panic.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         CliGitRepository { root: root.into() }
     }
@@ -88,15 +100,26 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// A unique scratch directory under [`std::env::temp_dir`].
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process counter: the timestamp alone cannot separate the threads
+    /// the test harness runs in parallel, since clock resolution on some
+    /// hosts is coarser than the interval between two threads' reads, and two
+    /// git tests sharing one directory would overwrite each other's repo.
     fn temp_dir(prefix: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "{prefix}-{}-{}",
+            "{prefix}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();
@@ -139,6 +162,35 @@ mod tests {
         assert!(commit.is_some());
         assert_eq!(commit.unwrap().len(), 40);
         assert_eq!(repo.current_branch().unwrap().as_deref(), Some("main"));
+        assert!(!repo.is_dirty().unwrap());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_detached_head_reports_no_branch_but_still_reports_its_commit() {
+        let dir = temp_dir("canary-git-detached-head");
+        run(&dir, &["init", "--quiet", "--initial-branch=main"]);
+        std::fs::write(dir.join("file.txt"), "content").unwrap();
+        run(&dir, &["add", "file.txt"]);
+        run(&dir, &["commit", "--quiet", "-m", "initial commit"]);
+
+        let branch_commit = CliGitRepository::new(&dir)
+            .current_commit()
+            .unwrap()
+            .expect("a repository with one commit has a HEAD");
+
+        run(&dir, &["checkout", "--quiet", "--detach", &branch_commit]);
+
+        let repo = CliGitRepository::new(&dir);
+        // The detached-HEAD case `current_branch` documents: `symbolic-ref`
+        // fails, so there is no branch name, but this is still a real
+        // repository and must not be reported as an error.
+        assert_eq!(repo.current_branch().unwrap(), None);
+        assert_eq!(
+            repo.current_commit().unwrap().as_deref(),
+            Some(&*branch_commit)
+        );
         assert!(!repo.is_dirty().unwrap());
 
         let _ = std::fs::remove_dir_all(&dir);

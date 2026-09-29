@@ -9,6 +9,10 @@ use canary_core::ProjectType;
 /// Bump this, and add explicit migration/rejection logic, before changing
 /// the shape of [`ConfigFile`] in a way that would silently misread an
 /// older file.
+///
+/// The current rejection logic lives in `crate::loader::validate`, which
+/// returns [`ConfigError::UnsupportedVersion`](crate::loader::ConfigError::UnsupportedVersion)
+/// for any other version. A version bump needs to extend that check.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
 /// The default target protocol used when a project does not pin one.
@@ -158,11 +162,25 @@ mod tests {
             ProjectTypeSetting::Explicit(ProjectType::RpcConsumer),
             ProjectTypeSetting::Explicit(ProjectType::StellarSdk),
             ProjectTypeSetting::Explicit(ProjectType::GenericStellar),
+            ProjectTypeSetting::Explicit(ProjectType::Unknown),
         ] {
             let json = serde_json::to_string(&setting).unwrap();
             let parsed: ProjectTypeSetting = serde_json::from_str(&json).unwrap();
             assert_eq!(setting, parsed);
         }
+    }
+
+    #[test]
+    fn explicit_unknown_project_type_uses_its_own_wire_string() {
+        // The round trip above cannot catch `Unknown` and `Auto` being
+        // cross-wired to the same string, since both mappings would agree.
+        let json =
+            serde_json::to_string(&ProjectTypeSetting::Explicit(ProjectType::Unknown)).unwrap();
+        assert_eq!(json, "\"unknown\"");
+        assert_eq!(
+            serde_json::from_str::<ProjectTypeSetting>("\"unknown\"").unwrap(),
+            ProjectTypeSetting::Explicit(ProjectType::Unknown)
+        );
     }
 
     #[test]

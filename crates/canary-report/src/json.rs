@@ -180,6 +180,8 @@ impl From<&ReportInput> for JsonReport {
 pub enum JsonReportError {
     #[error("failed to parse JSON report: {0}")]
     Parse(#[from] serde_json::Error),
+    #[error("unsupported schema version (found {found}, expected {expected})")]
+    UnsupportedSchemaVersion { found: u32, expected: u32 },
     #[error("unrecognized surface {0:?} in JSON report")]
     UnknownSurface(String),
     #[error("unrecognized status {0:?} in JSON report")]
@@ -309,6 +311,12 @@ impl JsonReporter {
     /// anything.
     pub fn parse(json_text: &str) -> Result<ReportInput, JsonReportError> {
         let report: JsonReport = serde_json::from_str(json_text)?;
+        if report.schema_version != SCHEMA_VERSION {
+            return Err(JsonReportError::UnsupportedSchemaVersion {
+                found: report.schema_version,
+                expected: SCHEMA_VERSION,
+            });
+        }
         report.try_into()
     }
 }
@@ -379,6 +387,35 @@ mod tests {
         assert_eq!(value["counts"]["skipped"], 1);
     }
 
+    /// The `skipped` field is annotated
+    /// `#[serde(skip_serializing_if = "Vec::is_empty")]`: an empty list must
+    /// make the key *absent*, not present-and-empty. The shape test above
+    /// always supplies a skipped fixture, so the omission branch had no
+    /// coverage, and a consumer that distinguishes "nothing skipped" from
+    /// "the reporter did not report it" depends on which of the two it is.
+    #[test]
+    fn omits_the_skipped_field_when_no_fixture_was_skipped() {
+        let mut clean = input();
+        clean.skipped.clear();
+
+        let json_text = JsonReporter::render(&clean);
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+
+        assert!(
+            value.get("skipped").is_none(),
+            "`skipped` must be omitted entirely when empty, got: {json_text}"
+        );
+        // The counts block still reports the (zero) tally, so the absence of
+        // the key is not a missing section.
+        assert_eq!(value["counts"]["skipped"], 0);
+        assert_eq!(value["counts"]["total"], 1);
+
+        // Absent must stay loadable: `skipped` carries `default` precisely so
+        // an omitted key parses back to an empty list rather than failing.
+        let parsed = JsonReporter::parse(&json_text).expect("a key-omitted report must parse");
+        assert!(parsed.skipped.is_empty());
+    }
+
     #[test]
     fn counts_reflect_a_mix_of_outcomes() {
         let mut mixed = input();
@@ -431,6 +468,16 @@ mod tests {
     }
 
     #[test]
+    fn omits_the_skipped_field_entirely_when_nothing_was_skipped() {
+        let mut input = input();
+        input.skipped.clear();
+        let json_text = JsonReporter::render(&input);
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert!(value.get("skipped").is_none());
+        assert_eq!(value["counts"]["skipped"], 0);
+    }
+
+    #[test]
     fn output_is_deterministic_for_the_same_input() {
         let a = JsonReporter::render(&input());
         let b = JsonReporter::render(&input());
@@ -465,5 +512,41 @@ mod tests {
     fn rejects_malformed_json() {
         let err = JsonReporter::parse("not json").unwrap_err();
         assert!(matches!(err, JsonReportError::Parse(_)));
+    }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_surface() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["surface"] = "wire".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownSurface(surface) if surface == "wire"));
+    }
+
+    #[test]
+    fn rejects_a_result_with_an_unrecognized_status() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["results"][0]["status"] = "inconclusive".into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        assert!(matches!(err, JsonReportError::UnknownStatus(status) if status == "inconclusive"));
+    }
+
+    #[test]
+    fn rejects_a_report_with_an_unsupported_schema_version() {
+        let mut json = serde_json::to_value(JsonReport::from(&input())).unwrap();
+        json["schemaVersion"] = 999.into();
+        let json_text = serde_json::to_string(&json).unwrap();
+
+        let err = JsonReporter::parse(&json_text).unwrap_err();
+        match err {
+            JsonReportError::UnsupportedSchemaVersion { found, expected } => {
+                assert_eq!(found, 999);
+                assert_eq!(expected, SCHEMA_VERSION);
+            }
+            _ => panic!("Expected UnsupportedSchemaVersion error, got {:?}", err),
+        }
     }
 }

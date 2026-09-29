@@ -121,3 +121,94 @@ pub fn surface_heading(surface: Surface) -> &'static str {
         Surface::Soroban => "Soroban",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use canary_core::{ProjectType, Status, Surface};
+
+    use super::*;
+
+    fn result(status: Status) -> CompatibilityResult {
+        CompatibilityResult {
+            test_id: "t1".into(),
+            protocol: ProtocolVersion(24),
+            surface: Surface::Xdr,
+            status,
+            summary: "mock".into(),
+            details: None,
+            duration_ms: 0,
+            fixture_id: None,
+        }
+    }
+
+    fn input(decision: PolicyDecision, results: Vec<CompatibilityResult>) -> ReportInput {
+        ReportInput {
+            tool_version: "0.0.0-test".into(),
+            target_protocol: ProtocolVersion(24),
+            project: ProjectSummary {
+                name: "mock-project".into(),
+                project_type: ProjectType::Unknown,
+            },
+            network: None,
+            results,
+            skipped: Vec::new(),
+            decision,
+            git: GitContext::default(),
+            verbose: false,
+        }
+    }
+
+    #[test]
+    fn overall_status_reports_error_even_when_decision_is_pass() {
+        let report = input(
+            PolicyDecision::Pass,
+            vec![result(Status::Pass), result(Status::Error)],
+        );
+        assert!(report.has_any_error());
+        assert_eq!(report.overall_status(), ReportStatus::Error);
+    }
+
+    #[test]
+    fn overall_status_falls_back_to_decision_without_errors() {
+        let cases = [
+            (PolicyDecision::Pass, ReportStatus::Pass),
+            (PolicyDecision::Warning, ReportStatus::Warning),
+            (PolicyDecision::Fail, ReportStatus::Fail),
+        ];
+        for (decision, expected) in cases {
+            let report = input(decision, vec![result(Status::Pass), result(Status::Fail)]);
+            assert!(!report.has_any_error());
+            assert_eq!(report.overall_status(), expected);
+        }
+    }
+
+    #[test]
+    fn overall_status_with_no_results_uses_decision() {
+        let report = input(PolicyDecision::Pass, Vec::new());
+        assert_eq!(report.overall_status(), ReportStatus::Pass);
+    }
+
+    #[test]
+    fn report_status_as_str_maps_to_lowercase_forms() {
+        assert_eq!(ReportStatus::Pass.as_str(), "pass");
+        assert_eq!(ReportStatus::Warning.as_str(), "warning");
+        assert_eq!(ReportStatus::Fail.as_str(), "fail");
+        assert_eq!(ReportStatus::Error.as_str(), "error");
+    }
+
+    #[test]
+    fn results_for_filters_by_surface() {
+        let mut rpc_failure = result(Status::Fail);
+        rpc_failure.surface = Surface::Rpc;
+        let report = input(
+            PolicyDecision::Fail,
+            vec![result(Status::Pass), rpc_failure],
+        );
+
+        let xdr: Vec<_> = report.results_for(Surface::Xdr).collect();
+        let rpc: Vec<_> = report.results_for(Surface::Rpc).collect();
+        assert_eq!(xdr.len(), 1);
+        assert_eq!(rpc.len(), 1);
+        assert_eq!(rpc[0].surface, Surface::Rpc);
+    }
+}

@@ -25,12 +25,19 @@ const KNOWN_WASM_OUTPUT_DIRS: &[&str] = &[
 /// `Unknown` is a valid, non-error outcome: it means the project has no
 /// recognizable Stellar surface and needs explicit configuration.
 pub fn detect(root: &Path) -> ProjectContext {
-    let manifest = read_cargo_manifest(root);
+    let mut manifests = Vec::new();
+    if let Some(m) = read_cargo_manifest(root) {
+        manifests.push(m);
+    }
+    if let Some(m) = crate::manifest::read_package_json(root) {
+        manifests.push(m);
+    }
+
     let has_stellar_toml = root.join("stellar.toml").is_file();
     let has_wasm_artifact = find_wasm_artifact(root);
 
     let signals = DetectionSignals {
-        manifest,
+        manifests,
         has_stellar_toml,
         has_wasm_artifact,
     };
@@ -171,6 +178,51 @@ mod tests {
 
         let ctx = detect(&dir.path);
         assert!(ctx
+            .capabilities
+            .contains(&canary_core::Capability::WasmArtifact));
+    }
+
+    #[test]
+    fn a_wasm_file_outside_known_output_dirs_is_found_by_the_fallback_scan() {
+        let dir = crate::test_support::temp_dir("detect-wasm-fallback");
+        std::fs::write(dir.path.join("contract.wasm"), b"\0asm").unwrap();
+
+        let ctx = detect(&dir.path);
+        assert!(ctx
+            .capabilities
+            .contains(&canary_core::Capability::WasmArtifact));
+    }
+
+    #[test]
+    fn wasm_files_inside_skipped_directories_are_not_detected() {
+        let dir = crate::test_support::temp_dir("detect-wasm-skip");
+        for skipped in [".git", "node_modules"] {
+            std::fs::create_dir_all(dir.path.join(skipped)).unwrap();
+            std::fs::write(dir.path.join(skipped).join("contract.wasm"), b"\0asm").unwrap();
+        }
+
+        let ctx = detect(&dir.path);
+        assert!(!ctx
+            .capabilities
+            .contains(&canary_core::Capability::WasmArtifact));
+    }
+
+    #[test]
+    fn a_wasm_file_deeper_than_the_scan_depth_limit_is_not_detected() {
+        // shallow_scan_for_wasm starts with a remaining depth of 2, so a
+        // .wasm file up to two directories below the root is still found...
+        let shallow = crate::test_support::temp_dir("detect-wasm-shallow");
+        std::fs::create_dir_all(shallow.path.join("a/b")).unwrap();
+        std::fs::write(shallow.path.join("a/b/contract.wasm"), b"\0asm").unwrap();
+        assert!(detect(&shallow.path)
+            .capabilities
+            .contains(&canary_core::Capability::WasmArtifact));
+
+        // ...but three directories below it is beyond the limit.
+        let deep = crate::test_support::temp_dir("detect-wasm-deep");
+        std::fs::create_dir_all(deep.path.join("a/b/c")).unwrap();
+        std::fs::write(deep.path.join("a/b/c/contract.wasm"), b"\0asm").unwrap();
+        assert!(!detect(&deep.path)
             .capabilities
             .contains(&canary_core::Capability::WasmArtifact));
     }

@@ -13,8 +13,27 @@ use canary_rpc::RpcClient;
 use crate::builder::{build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput};
 use crate::simulation::simulate;
 
+/// Errors raised while turning a [`LoadedFixture`] into a [`SorobanFixture`].
+///
+/// One failure mode today: the fixture body is structurally valid TOML but
+/// does not describe a usable Soroban invocation. That covers a missing or
+/// mistyped required field (`source_account`, `contract_id`, `function`,
+/// `sequence_number`), an `[[args]]` entry whose `kind` this crate does not
+/// support or whose `value` does not match that `kind`, and an `[expect]`
+/// table that is absent or declares an unknown expectation.
+///
+/// The error names the offending fixture (`source_path`) and carries a
+/// human-readable `reason`, and converts into `CanaryError::Soroban` so it
+/// propagates through the shared error type without ever failing a run as an
+/// unhandled panic. Returned by [`SorobanFixture::from_loaded`]; constructing
+/// a [`SorobanFixture`] never panics on malformed input.
 #[derive(Debug, thiserror::Error)]
 pub enum SorobanFixtureError {
+    /// The fixture's body could not be parsed into a [`SorobanFixture`].
+    ///
+    /// `source_path` is the path the fixture was loaded from (used to point
+    /// the user at the file to fix) and `reason` explains which field or
+    /// assertion was rejected.
     #[error("invalid soroban fixture body in {source_path}: {reason}")]
     InvalidFixtureBody {
         source_path: std::path::PathBuf,
@@ -482,6 +501,20 @@ mod tests {
         let runner = DefaultSorobanRunner::new(HttpRpcClient::new(server.uri()));
         let result = runner.run(&fixture, &context()).await.unwrap();
         assert_eq!(result.status, Status::Fail);
+    }
+
+    #[tokio::test]
+    async fn a_transport_failure_produces_an_error_status_not_a_fail() {
+        // Port 0 on loopback has no listener, so the simulateTransaction
+        // POST fails at the transport level before any JSON-RPC exchange.
+        let runner = DefaultSorobanRunner::new(HttpRpcClient::new("http://127.0.0.1:0"));
+        let fixture =
+            SorobanFixture::from_loaded(&fixture("p28-soroban-6", "simulation-success", ""))
+                .unwrap();
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Error);
+        assert_eq!(result.summary, "failed to call simulateTransaction");
+        assert!(result.details.is_some());
     }
 
     #[test]

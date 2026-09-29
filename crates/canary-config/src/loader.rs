@@ -10,6 +10,11 @@ use crate::schema::{ConfigFile, SUPPORTED_CONFIG_VERSION};
 pub const CONFIG_FILE_NAME: &str = ".stellar-canary.toml";
 
 #[derive(Debug, thiserror::Error)]
+/// Errors returned while reading, parsing, or validating a Canary configuration.
+///
+/// Each variant retains the configuration path involved in the failure where
+/// applicable, so callers can report actionable diagnostics to the contributor
+/// who owns that project configuration.
 pub enum ConfigError {
     #[error("failed to read configuration file {path}: {source}")]
     Read {

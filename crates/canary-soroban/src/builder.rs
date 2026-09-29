@@ -13,20 +13,30 @@ use stellar_xdr::{
     Uint256, VecM, WriteXdr,
 };
 
+/// Errors returned while building an unsigned Soroban invocation envelope.
+///
+/// These errors indicate invalid account, contract, function, or argument
+/// input, or a failure to encode the resulting transaction as XDR. The builder
+/// returns these errors rather than panicking.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderError {
+    /// The source account is not a valid Stellar account strkey.
     #[error("invalid source account strkey {account:?}: {reason}")]
     InvalidSourceAccount { account: String, reason: String },
 
+    /// The contract identifier is not a valid Stellar contract strkey.
     #[error("invalid contract strkey {contract:?}: {reason}")]
     InvalidContractId { contract: String, reason: String },
 
+    /// The function name cannot be represented as a Soroban symbol.
     #[error("invalid function name {name:?}: {reason}")]
     InvalidFunctionName { name: String, reason: String },
 
+    /// An argument cannot be represented in the supported Soroban value format.
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// The transaction envelope could not be encoded as base64 XDR.
     #[error("failed to encode transaction envelope: {0}")]
     Encode(String),
 }

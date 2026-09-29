@@ -249,6 +249,10 @@ mod tests {
         }
 
         impl TempDir {
+            /// Creates a uniquely named temporary directory for configuration tests.
+            ///
+            /// The directory is removed automatically when the returned guard is
+            /// dropped.
             pub fn new(prefix: &str) -> Self {
                 let mut path = std::env::temp_dir();
                 let unique = format!(

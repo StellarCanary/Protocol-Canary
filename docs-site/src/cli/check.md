@@ -17,6 +17,7 @@ Options:
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
+      --output <PATH>                Write the rendered report to this path, in addition to stdout.
       --verbose                      Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
       --quiet                        Shorten terminal-format output to a single status line.
       --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
@@ -51,6 +52,34 @@ zero fixtures (a trivial `0/0` pass), not an error. See [Fixtures](../fixtures-g
 The report is printed to stdout **regardless of exit code**, including on
 a compatibility failure — a caller does not need to inspect stderr to get
 the report.
+
+## Writing the report to a file
+
+`--output <PATH>` writes the rendered report to `PATH` **in addition to**
+printing it to stdout. Stdout behavior is unchanged, so an existing shell
+redirection (`stellar-canary check --json > result.json`) still works, and
+a caller that cannot capture stdout — for example one wrapped by a tool
+that does not pass stdout through cleanly — has a direct way to get the
+report into a file.
+
+The file receives exactly the bytes stdout receives, in the format
+selected by `--format`/`--json`, and including the trailing newline
+`println!` adds. That also means `--quiet` writes its single `Status:`
+line rather than a full report. The file is created if `PATH` does not
+exist and truncated if it does, and it is written before anything is
+printed, so an unusable path fails before a report reaches stdout.
+
+```bash
+stellar-canary check --json --output result.json
+stellar-canary report result.json --format markdown
+```
+
+The exit code for the run itself is unchanged by `--output`: it never
+turns a `0` into a `1` or the other way around. The one failure mode the
+flag adds is `PATH` itself — a directory that does not exist, or one the
+process cannot write — which is reported as a **configuration error**
+(exit code `2`) and prints nothing to stdout, since the report could not
+be produced where it was asked for. See [Exit Codes](../exit-codes.md).
 
 ## Network behavior
 

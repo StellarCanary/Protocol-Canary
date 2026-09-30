@@ -71,6 +71,10 @@ pub struct CheckArgs {
     #[arg(long)]
     pub json: bool,
 
+    /// Write the rendered report to this path, in addition to stdout.
+    #[arg(long, value_name = "PATH")]
+    pub output: Option<PathBuf>,
+
     /// Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
     #[arg(long)]
     pub verbose: bool,
@@ -153,6 +157,26 @@ mod tests {
         let cli = Cli::parse_from(["stellar-canary", "check", "--max-concurrency", "10"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.max_concurrency, 10);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn test_output_flag_defaults_to_none() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.output, None);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn test_output_flag_takes_a_path() {
+        let cli = Cli::parse_from(["stellar-canary", "check", "--output", "result.json"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.output, Some(PathBuf::from("result.json")));
         } else {
             panic!("Expected Check command");
         }

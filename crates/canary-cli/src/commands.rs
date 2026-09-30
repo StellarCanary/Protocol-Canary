@@ -1,5 +1,7 @@
 //! Command implementations.
 
+use std::path::Path;
+
 use canary_core::{
     CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode, NetworkContext,
     Policy, PolicyEvaluator, ProtocolVersion, RunOptions,
@@ -196,8 +198,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     } else {
         args.format
     };
-    if format == OutputFormat::Terminal && args.quiet {
-        println!(
+    let rendered = if format == OutputFormat::Terminal && args.quiet {
+        format!(
             "Status: {}",
             match report_input.overall_status() {
                 canary_report::ReportStatus::Pass => "PASS",
@@ -205,17 +207,41 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
                 canary_report::ReportStatus::Fail => "NOT READY",
                 canary_report::ReportStatus::Error => "ERROR",
             }
-        );
+        )
     } else {
-        let rendered = match format {
+        match format {
             OutputFormat::Terminal => TerminalReporter::render(&report_input),
             OutputFormat::Json => JsonReporter::render(&report_input),
             OutputFormat::Markdown => MarkdownReporter::render(&report_input),
-        };
-        println!("{rendered}");
+        }
+    };
+
+    // `--output` writes the report *as well as* printing it, so shell
+    // redirection keeps working for existing callers. The file is written
+    // before anything reaches stdout: a path that cannot be written fails
+    // loudly rather than after a report has already been printed.
+    if let Some(path) = &args.output {
+        write_report_file(path, &rendered)?;
     }
+    println!("{rendered}");
 
     Ok(exit_code)
+}
+
+/// Writes the rendered report to `path` with exactly the bytes
+/// `println!` puts on stdout — trailing newline included — so `--output`
+/// and shell redirection produce identical files.
+///
+/// An unwritable path is a configuration error (the same exit code as any
+/// other unusable caller-supplied path, e.g. a missing `--config` file),
+/// not a compatibility result.
+fn write_report_file(path: &Path, rendered: &str) -> Result<(), CanaryError> {
+    std::fs::write(path, format!("{rendered}\n")).map_err(|err| {
+        CanaryError::Configuration(format!(
+            "failed to write report to {}: {err}",
+            path.display()
+        ))
+    })
 }
 
 pub fn run_inspect(args: InspectArgs) -> ExitCode {

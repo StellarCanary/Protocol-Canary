@@ -23,6 +23,22 @@ fn surface_cell(results: &[&canary_core::CompatibilityResult]) -> &'static str {
 pub struct MarkdownReporter;
 
 impl MarkdownReporter {
+    /// Renders the given [`ReportInput`] into GitHub-friendly Markdown.
+    ///
+    /// The generated report includes:
+    /// - Header with the target protocol version.
+    /// - Summary table broken down by test surface (XDR, RPC, Soroban).
+    /// - Overall status determination (**PASS**, **WARNING**, **FAIL**, or **ERROR**).
+    /// - Detailed section for test failures with summary and details (if present).
+    /// - Count of skipped fixtures (if any).
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Reference to the [`ReportInput`] containing test outcomes and policy decision.
+    ///
+    /// # Returns
+    ///
+    /// A formatted Markdown [`String`], ready to be rendered in a GitHub job summary or terminal log.
     pub fn render(input: &ReportInput) -> String {
         let mut out = String::new();
 

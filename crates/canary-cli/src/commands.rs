@@ -410,6 +410,38 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     Ok(ExitCode::Pass)
 }
 
+/// Renders a previously stored JSON report to the console.
+///
+/// Reads the report file named by [`ReportArgs::path`] — the JSON written by
+/// `stellar-canary check --json`, as described in
+/// `docs/json-report-contract.md` — re-renders it in [`ReportArgs::format`],
+/// and prints the result to stdout. Unlike [`run_check`], it never touches the
+/// network or re-runs any fixture, so it is safe to call offline, on CI, or
+/// against a report produced by another machine.
+///
+/// Returns the [`ExitCode`] implied by the stored run, matching what
+/// `check --json` would have returned for the same run:
+/// [`ExitCode::ExecutionError`] if any stored result recorded an execution
+/// error, otherwise [`ExitCode::CompatibilityFailure`] when the stored
+/// decision is a failure, and [`ExitCode::Pass`] for a pass or warning.
+///
+/// # Errors
+///
+/// This function returns an [`ExitCode`] rather than a `Result`. A report
+/// file that is missing or cannot be read, and a file that is not valid JSON
+/// in the expected report shape, are both reported on stderr and mapped to
+/// [`ExitCode::ConfigurationError`].
+///
+/// # Examples
+///
+/// ```text
+/// # Render a stored report as Markdown (the default format).
+/// stellar-canary report --path results.json
+///
+/// # Re-render the same report for a terminal or as JSON.
+/// stellar-canary report --path results.json --format terminal
+/// stellar-canary report --path results.json --format json
+/// ```
 pub fn run_report(args: ReportArgs) -> ExitCode {
     match run_report_inner(args) {
         Ok(exit_code) => exit_code,

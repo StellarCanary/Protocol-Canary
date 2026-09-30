@@ -218,6 +218,65 @@ impl HttpRpcClient {
         self
     }
 
+    /// Returns this client with its [`RetryPolicy`] replaced by `policy`.
+    ///
+    /// Builder-style: this consumes the client and hands back a new one, so
+    /// it chains onto [`HttpRpcClient::new`] (and alongside
+    /// [`HttpRpcClient::with_timeout`]). The policy is read per request, so
+    /// it governs every method on [`RpcClient`] — `getNetwork`,
+    /// `getLatestLedger`, and `simulateTransaction` alike. If it is never
+    /// called, the client keeps [`RetryPolicy::default`] (3 attempts,
+    /// 200 ms base delay).
+    ///
+    /// # What gets retried
+    ///
+    /// Only [`RpcError::Transport`], [`RpcError::Timeout`], and
+    /// [`RpcError::RateLimited`] are retried. Those are the transient
+    /// failures — a dropped connection, an elapsed
+    /// [`HttpRpcClient::with_timeout`] deadline, or an HTTP 429.
+    /// [`RpcError::InvalidJson`], [`RpcError::JsonRpcError`], and
+    /// [`RpcError::InvalidResponse`] are deterministic: the same request
+    /// would produce the same malformed/errored response, so they are
+    /// returned on the first attempt no matter what the policy says.
+    ///
+    /// # Timing
+    ///
+    /// At most `max_attempts` requests are made in total, and the wait
+    /// between attempt *n* and attempt *n+1* is `base_delay * n` — a linear
+    /// backoff, so there is no delay after the final attempt and the total
+    /// time spent sleeping is `base_delay * n(n-1)/2`. Combined with a
+    /// per-request deadline, the worst-case wall time for one call is
+    /// roughly `max_attempts * timeout` plus that backoff, which is worth
+    /// keeping in mind when both values are configured.
+    ///
+    /// # Failure conditions
+    ///
+    /// This method cannot fail and does not panic — it only stores `policy`.
+    /// The field values are not validated: `max_attempts: 0` is not
+    /// rejected but behaves as "try once, do not retry" (the first attempt
+    /// is always made, so one attempt is the effective minimum), and a
+    /// `base_delay` of zero retries immediately with no pause.
+    ///
+    /// Because this consumes and returns a new client, the policy applies
+    /// only to the returned value and to clones made from it — a client
+    /// cloned before this call keeps the old policy, and any call already
+    /// in flight on such a clone is unaffected. Unlike
+    /// [`HttpRpcClient::with_timeout`], this does not rebuild the
+    /// underlying HTTP client, so no connection pool is discarded.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use canary_rpc::{HttpRpcClient, RetryPolicy};
+    ///
+    /// // Up to five attempts, backing off 100ms, 200ms, 300ms, 400ms.
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(5))
+    ///     .with_retry_policy(RetryPolicy {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(100),
+    ///     });
+    /// ```
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = policy;
         self

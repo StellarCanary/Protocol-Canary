@@ -349,6 +349,47 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
     Ok(ExitCode::Pass)
 }
 
+/// Lists available compatibility fixtures for a protocol version.
+///
+/// Discovers and validates fixtures in [`FixturesArgs::fixtures_dir`], filters
+/// them by the target protocol version, and prints matching fixture IDs grouped
+/// by surface (XDR assertions, RPC responses, and Soroban invocations) to
+/// stdout.
+///
+/// The target protocol is determined from [`FixturesArgs::protocol`], falling
+/// back to the configured protocol in [`FixturesArgs::config`] (or
+/// `.stellar-canary.toml`), and defaulting to version 28 if no configuration
+/// exists. If the fixture directory does not exist or contains no fixtures for
+/// the requested protocol, the command reports `(no fixtures found in <path>)`
+/// and returns [`ExitCode::Pass`] without failing the run.
+///
+/// Unlike [`run_check`], this command is entirely offline: it does not contact
+/// any RPC endpoint or execute tests.
+///
+/// # Errors
+///
+/// This function returns an [`ExitCode`] rather than a `Result`. Any error
+/// encountered while reading configuration or loading fixtures is printed to
+/// stderr with an `error:` prefix and mapped to an appropriate exit code:
+/// - [`ExitCode::ConfigurationError`] if `--protocol 0` is supplied, an
+///   explicit configuration file cannot be read, or configuration is malformed.
+/// - [`ExitCode::InvalidFixture`] if a fixture file is unreadable, contains
+///   malformed TOML, has duplicate IDs, or references missing companion files.
+/// - [`ExitCode::InternalError`] if the current working directory cannot be
+///   read.
+///
+/// # Examples
+///
+/// ```text
+/// # List fixtures for the default or configured protocol.
+/// stellar-canary fixtures
+///
+/// # List fixtures targeting an explicit protocol.
+/// stellar-canary fixtures --protocol 28
+///
+/// # Inspect fixtures in a custom directory.
+/// stellar-canary fixtures --fixtures-dir ./custom-fixtures --protocol 28
+/// ```
 pub fn run_fixtures(args: FixturesArgs) -> ExitCode {
     match run_fixtures_inner(args) {
         Ok(exit_code) => exit_code,

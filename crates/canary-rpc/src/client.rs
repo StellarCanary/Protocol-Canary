@@ -20,17 +20,96 @@ use canary_core::CanaryError;
 
 use crate::models::{LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse};
 
+/// Errors returned by the Stellar RPC client.
+///
+/// Every fallible operation in this crate — the [`RpcClient`] trait
+/// (implemented by [`HttpRpcClient`]) and [`validate_network_info`] — reports
+/// failure as this type. Callers never have to expect a panic from a bad
+/// endpoint, an unreachable host, or a malformed response: all of those come
+/// back as one of the variants below.
+///
+/// The variants fall into three groups:
+///
+/// - **Transport-level** ([`RpcError::Transport`], [`RpcError::Timeout`],
+///   [`RpcError::RateLimited`]): the request could not be completed.
+///   [`HttpRpcClient`] retries these according to the configured
+///   [`RetryPolicy`] and only surfaces them once the attempts are exhausted,
+///   at which point `attempts` holds how many attempts were made.
+/// - **Protocol-level** ([`RpcError::InvalidJson`],
+///   [`RpcError::JsonRpcError`], [`RpcError::InvalidResponse`]): the
+///   endpoint answered, but the answer is unusable — not JSON, a JSON-RPC
+///   `error` object, or a `result` that does not deserialize into the
+///   expected type. These are deterministic, so retrying them would never
+///   help and they are returned on the first attempt.
+/// - **Semantic** ([`RpcError::NetworkMismatch`],
+///   [`RpcError::ProtocolMismatch`]): the endpoint answered correctly but
+///   reports a different network passphrase or protocol version than the run
+///   targets. Only [`validate_network_info`] constructs these; see its docs
+///   for how callers are expected to interpret a mismatch.
+///
+/// The [`std::fmt::Display`] implementation (via `thiserror`) always names
+/// the RPC method involved, so the rendered message is safe to log or surface
+/// directly. `RpcError` also converts into
+/// [`CanaryError`] via `?` for propagation through
+/// the rest of the workspace.
+///
+/// # Examples
+///
+/// Branch on the variant when the caller needs to react differently, and fall
+/// back on the rendered message otherwise:
+///
+/// ```
+/// use canary_rpc::RpcError;
+///
+/// let err = RpcError::JsonRpcError {
+///     method: "simulateTransaction".to_string(),
+///     code: -32602,
+///     message: "invalid params".to_string(),
+/// };
+///
+/// // Deterministic protocol errors are reported verbatim...
+/// assert!(err.to_string().contains("code -32602"));
+///
+/// // ...while transport-level ones are the only ones worth retrying.
+/// let transient = RpcError::RateLimited {
+///     method: "getLatestLedger".to_string(),
+///     attempts: 3,
+/// };
+/// assert!(transient.to_string().contains("3 attempt(s)"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    /// The HTTP request itself failed: connection refused or reset, DNS or
+    /// TLS failure, or the endpoint answering with a 5xx status.
+    ///
+    /// Transient by nature, so [`HttpRpcClient`] retries it under the
+    /// configured [`RetryPolicy`]. `message` carries the underlying transport
+    /// detail (or the status code) for diagnosis.
     #[error("network transport error calling {method}: {message}")]
     Transport { method: String, message: String },
 
+    /// The request exceeded the client's timeout (see
+    /// [`HttpRpcClient::with_timeout`]).
+    ///
+    /// Transient, so it is retried under [`RetryPolicy`]; `attempts` records
+    /// how many attempts were made before giving up.
     #[error("timed out calling {method} after {attempts} attempt(s)")]
     Timeout { method: String, attempts: u32 },
 
+    /// The endpoint returned a body that is not valid JSON — typically an
+    /// HTML error page from a proxy or a truncated response.
+    ///
+    /// Never retried: `message` holds the serde parse error.
     #[error("invalid JSON response from {method}: {message}")]
     InvalidJson { method: String, message: String },
 
+    /// The endpoint processed the request and returned a JSON-RPC `error`
+    /// object, i.e. a protocol-level rejection such as `invalid params`
+    /// (`-32602`).
+    ///
+    /// `code` and `message` are copied from that object; fields missing from
+    /// the error object fall back to `0` and `"unknown error"`. Never
+    /// retried.
     #[error("RPC {method} returned a JSON-RPC error (code {code}): {message}")]
     JsonRpcError {
         method: String,
@@ -38,6 +117,11 @@ pub enum RpcError {
         message: String,
     },
 
+    /// The response parsed as JSON but is not what the method should return:
+    /// either it has neither a `result` nor an `error` key, or its `result`
+    /// failed to deserialize into the expected type.
+    ///
+    /// `reason` carries the structural or serde explanation. Never retried.
     #[error("unexpected response shape from {method}: {reason}")]
     InvalidResponse { method: String, reason: String },
 
@@ -65,6 +149,10 @@ pub enum RpcError {
     )]
     ProtocolMismatch { target: u32, observed: u32 },
 
+    /// The endpoint rejected the request with HTTP 429 (Too Many Requests).
+    ///
+    /// Transient, so it is retried under [`RetryPolicy`]; `attempts` records
+    /// how many attempts were made before giving up.
     #[error("RPC endpoint rate-limited {method} after {attempts} attempt(s)")]
     RateLimited { method: String, attempts: u32 },
 }

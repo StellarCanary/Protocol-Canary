@@ -1,4 +1,13 @@
 //! Summarizing a set of [`CompatibilityResult`]s.
+//!
+//! This module is public API intended for **external consumers of
+//! `canary-runner`** — for example a CI integration or dashboard that runs
+//! the scheduler itself and wants aggregate counts without depending on
+//! the `canary-cli` binary. The CLI's own reporters deliberately do not
+//! use it: `canary-report` computes its JSON counts independently so that
+//! it never depends on this crate (see the comment on `JsonCounts` in
+//! `canary-report/src/json.rs`). The two count structures are kept in sync
+//! by hand.
 
 use canary_core::{CompatibilityResult, Status};
 
@@ -6,6 +15,16 @@ use canary_core::{CompatibilityResult, Status};
 ///
 /// Skipped fixtures are never included here: they are neither pass nor
 /// fail and are tracked separately by the planner.
+///
+/// # Examples
+///
+/// ```
+/// use canary_runner::summarize;
+///
+/// let summary = summarize(&[]);
+/// assert_eq!(summary.passed_fraction(), (0, 0));
+/// assert!(!summary.has_required_failure());
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ResultSummary {
     pub total: usize,
@@ -27,6 +46,43 @@ impl ResultSummary {
     }
 }
 
+/// Aggregates `results` into a [`ResultSummary`], counting each status
+/// independently. `Status::Skipped` entries are ignored: a skip is neither
+/// a pass nor a failure.
+///
+/// # Examples
+///
+/// ```
+/// use canary_core::{CompatibilityResult, ProtocolVersion, Status, Surface};
+/// use canary_runner::summarize;
+///
+/// let results = vec![
+///     CompatibilityResult {
+///         test_id: "p28-xdr-1".into(),
+///         protocol: ProtocolVersion(28),
+///         surface: Surface::Xdr,
+///         status: Status::Pass,
+///         summary: "decoded".into(),
+///         details: None,
+///         duration_ms: 1,
+///         fixture_id: Some("p28-xdr-1".into()),
+///     },
+///     CompatibilityResult {
+///         test_id: "p28-rpc-1".into(),
+///         protocol: ProtocolVersion(28),
+///         surface: Surface::Rpc,
+///         status: Status::Fail,
+///         summary: "mismatch".into(),
+///         details: None,
+///         duration_ms: 1,
+///         fixture_id: Some("p28-rpc-1".into()),
+///     },
+/// ];
+///
+/// let summary = summarize(&results);
+/// assert_eq!(summary.passed_fraction(), (1, 2));
+/// assert!(summary.has_required_failure());
+/// ```
 pub fn summarize(results: &[CompatibilityResult]) -> ResultSummary {
     let mut summary = ResultSummary {
         total: results.len(),

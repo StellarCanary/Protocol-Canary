@@ -264,7 +264,7 @@ mod tests {
         CacheStore, GitContext, NetworkContext, NetworkName, ProjectContext, ProjectType,
         ProtocolVersion, RunOptions,
     };
-    use stellar_xdr::{Limits, StellarValue, WriteXdr};
+    use stellar_xdr::{ContractExecutable, Hash, Limits, ScVal, StellarValue, WriteXdr};
 
     fn valid_stellar_value_base64() -> String {
         StellarValue::default()
@@ -313,6 +313,34 @@ mod tests {
         let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-1", &body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Pass);
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_on_valid_contract_executable() {
+        let base64 = ContractExecutable::Wasm(Hash([7; 32]))
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"ContractExecutable\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-contract-exec", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::ContractExecutable);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded ContractExecutable successfully");
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_on_valid_scval() {
+        let base64 = ScVal::U32(42).to_xdr_base64(Limits::none()).unwrap();
+        let body =
+            format!("type = \"ScVal\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n");
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-scval", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::ScVal);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded ScVal successfully");
     }
 
     #[test]

@@ -62,6 +62,15 @@ impl ReportInput {
         self.results.iter().filter(move |r| r.surface == surface)
     }
 
+    /// Returns `true` if any of the results in this report encountered an execution error.
+    ///
+    /// An [`Error`](canary_core::Status::Error) status indicates that a test fixture failed
+    /// to execute correctly (e.g., due to a panic, a missing file, or a timeout). This is
+    /// distinct from a normal test failure, which is represented by a `Fail` status.
+    ///
+    /// **Important:** When this method returns `true`, the overall report status is
+    /// unconditionally escalated to [`ReportStatus::Error`], overriding whatever
+    /// [`PolicyDecision`] the planner originally issued.
     pub fn has_any_error(&self) -> bool {
         self.results
             .iter()

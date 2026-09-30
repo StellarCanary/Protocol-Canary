@@ -231,6 +231,33 @@ pub struct DefaultSorobanRunner<C: RpcClient> {
 }
 
 impl<C: RpcClient> DefaultSorobanRunner<C> {
+    /// Creates a new [`DefaultSorobanRunner`] that uses `client` to call
+    /// `simulateTransaction` on the Stellar RPC.
+    ///
+    /// The runner stores `client` and reuses it for every [`SorobanFixture`]
+    /// it is asked to [`run`](SorobanRunner::run). No network I/O happens at
+    /// construction time.
+    ///
+    /// # Parameters
+    ///
+    /// - `client` — any value that implements [`RpcClient`]. In production
+    ///   this will normally be [`canary_rpc::HttpRpcClient`]; in tests it can
+    ///   be a mock or the wiremock-backed [`canary_rpc::HttpRpcClient`] pointing at a
+    ///   local server.
+    ///
+    /// # Panics
+    ///
+    /// This constructor never panics.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use canary_rpc::HttpRpcClient;
+    /// use canary_soroban::runner::DefaultSorobanRunner;
+    ///
+    /// let client = HttpRpcClient::new("https://soroban-testnet.stellar.org");
+    /// let runner = DefaultSorobanRunner::new(client);
+    /// ```
     pub fn new(client: C) -> Self {
         DefaultSorobanRunner { client }
     }

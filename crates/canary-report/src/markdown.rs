@@ -184,4 +184,29 @@ mod tests {
         let text = MarkdownReporter::render(&input);
         assert!(text.contains("Skipped 1 fixture(s)."));
     }
+
+    /// The mirror of the test above: `render` guards the line with
+    /// `if !input.skipped.is_empty()`, and every other test in this module
+    /// happens to use an empty skipped list — so the omission was only ever
+    /// an accidental side effect, never asserted. A regression that printed
+    /// "Skipped 0 fixture(s)." on every clean run would have passed the
+    /// whole suite.
+    #[test]
+    fn omits_the_skipped_fixture_line_when_nothing_was_skipped() {
+        let input = base_input(
+            vec![result("p28-xdr-1", Surface::Xdr, Status::Pass)],
+            PolicyDecision::Pass,
+        );
+        assert!(input.skipped.is_empty());
+
+        let text = MarkdownReporter::render(&input);
+        assert!(
+            !text.contains("Skipped"),
+            "a run with no skipped fixtures must not mention them at all; \
+             rendered report:\n{text}"
+        );
+        // Sanity: the report itself still rendered.
+        assert!(text.starts_with("## Stellar Protocol Canary"));
+        assert!(text.contains("**Result: PASS**"));
+    }
 }

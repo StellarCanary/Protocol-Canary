@@ -218,6 +218,49 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     Ok(exit_code)
 }
 
+/// Prints offline project diagnostics and the planned fixture run.
+///
+/// Inspects the project in the current working directory, printing detected
+/// project capabilities, active configuration settings, and an offline
+/// compatibility plan for the target protocol to stdout:
+/// - Project root and resolved project type (highlighting configuration overrides).
+/// - Detected capabilities (Stellar SDK/XDR dependencies, Soroban contracts,
+///   RPC client usage, and WASM artifacts).
+/// - Configured and target protocol versions.
+/// - Status of compatibility surfaces (XDR, RPC, Soroban).
+/// - Planned fixtures loaded from [`InspectArgs::fixtures_dir`], showing which
+///   fixtures would run on each surface and which would be skipped (with reasons).
+///
+/// Like [`run_report`], this command operates entirely offline: it performs no
+/// network requests and does not execute any test fixtures. An absent fixture
+/// directory is tolerated and simply yields an empty plan rather than failing.
+///
+/// Returns [`ExitCode::Pass`] when inspection completes successfully.
+///
+/// # Errors
+///
+/// This function returns an [`ExitCode`] rather than a `Result`. Any error
+/// encountered during inspection is printed to stderr with an `error:` prefix
+/// and mapped to an appropriate exit code:
+/// - [`ExitCode::ConfigurationError`] if `--protocol 0` is supplied, an
+///   explicit configuration file cannot be read, or configuration is malformed.
+/// - [`ExitCode::InvalidFixture`] if a fixture file is unreadable, contains
+///   malformed TOML, has duplicate IDs, or references missing companion files.
+/// - [`ExitCode::InternalError`] if the current working directory cannot be
+///   read.
+///
+/// # Examples
+///
+/// ```text
+/// # Inspect the current project using default configuration.
+/// stellar-canary inspect
+///
+/// # Inspect against an explicit target protocol version.
+/// stellar-canary inspect --protocol 28
+///
+/// # Inspect with an explicit configuration file and custom fixture directory.
+/// stellar-canary inspect --config .custom-canary.toml --fixtures-dir ./fixtures
+/// ```
 pub fn run_inspect(args: InspectArgs) -> ExitCode {
     match run_inspect_inner(args) {
         Ok(exit_code) => exit_code,

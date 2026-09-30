@@ -255,4 +255,32 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn converts_a_symbol_argument_to_the_xdr_symbol_variant() {
+        use stellar_xdr::ReadXdr;
+
+        let mut spec = spec();
+        spec.args = vec![ScValInput::Symbol("transfer".to_string())];
+        let base64 = build_invoke_transaction_envelope(&spec).expect("builds");
+        let envelope = TransactionEnvelope::from_xdr_base64(&base64, Limits::none())
+            .expect("the built envelope must be valid XDR");
+        let TransactionEnvelope::Tx(envelope) = envelope else {
+            panic!("expected a transaction envelope");
+        };
+        let operation = envelope.tx.operations.first().expect("one operation");
+        let OperationBody::InvokeHostFunction(invoke) = &operation.body else {
+            panic!("expected an invoke host function operation");
+        };
+        let HostFunction::InvokeContract(invoke_args) = &invoke.host_function else {
+            panic!("expected an invoke contract host function");
+        };
+
+        assert_eq!(
+            &invoke_args.args[..],
+            &[ScVal::Symbol(ScSymbol(
+                "transfer".try_into().expect("valid XDR symbol")
+            ))]
+        );
+    }
 }

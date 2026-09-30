@@ -1,4 +1,4 @@
-//! Executing a [`CompatibilityPlan`](crate::scheduler::CompatibilityPlan).
+//! Executing a [`CompatibilityPlan`].
 //!
 //! XDR fixtures are offline and run synchronously, in order. RPC and
 //! Soroban fixtures are network-bound and run concurrently within their

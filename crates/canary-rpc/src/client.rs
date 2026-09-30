@@ -166,6 +166,51 @@ impl HttpRpcClient {
         }
     }
 
+    /// Returns this client with its per-request HTTP timeout replaced by
+    /// `timeout`.
+    ///
+    /// Builder-style: this consumes the client and hands back a new one, so
+    /// it chains onto [`HttpRpcClient::new`] (and alongside
+    /// [`HttpRpcClient::with_retry_policy`]). The timeout is a whole-request
+    /// deadline applied by the underlying `reqwest` client, so it covers
+    /// connecting, sending, and reading the response, and it bounds every
+    /// method on [`RpcClient`] — `getNetwork`, `getLatestLedger`, and
+    /// `simulateTransaction` alike. The default set by
+    /// [`HttpRpcClient::new`] is 10 seconds; `canary-runner` overrides it
+    /// with the run's `--rpc-timeout` option.
+    ///
+    /// A timeout is not a failure of the compatibility assertion itself.
+    /// When the deadline elapses, `reqwest` reports a timeout error, which
+    /// this crate maps to [`RpcError::Timeout`]. That is a retryable error,
+    /// so a call may still be retried up to
+    /// [`RetryPolicy::max_attempts`] times (with a linear
+    /// `base_delay * attempt` backoff) before the run sees
+    /// [`RpcError::Timeout`] — each attempt gets the full `timeout`, so the
+    /// worst case for one call is `timeout * max_attempts` plus backoff.
+    /// Callers should therefore treat `Timeout` as "this run could not
+    /// execute", not as evidence that the endpoint is incompatible.
+    ///
+    /// This method does not panic and does not report failure: it rebuilds
+    /// the underlying `reqwest` client, and if that build fails for any
+    /// reason the previously configured client is kept and `timeout` is
+    /// silently ignored — the call then returns a client that still uses
+    /// whatever deadline it already had. Note that rebuilding the client
+    /// also discards the previous connection pool, so prefer one call with
+    /// the final value over repeated calls in a loop.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use canary_rpc::{HttpRpcClient, RetryPolicy};
+    ///
+    /// // Two seconds per request, up to five attempts.
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(2))
+    ///     .with_retry_policy(RetryPolicy {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(200),
+    ///     });
+    /// ```
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         if let Ok(http) = reqwest::Client::builder().timeout(timeout).build() {
             self.http = http;

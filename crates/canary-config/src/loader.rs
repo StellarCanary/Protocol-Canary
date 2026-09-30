@@ -230,8 +230,19 @@ mod tests {
 
     /// Minimal temp-dir helper, avoiding a `tempfile` dev-dependency for a
     /// handful of config-loading tests.
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process atomic counter. The timestamp alone is not a uniqueness
+    /// guarantee across the threads the test harness runs in parallel, since
+    /// clock resolution on some hosts is coarser than the interval between two
+    /// threads' reads — a collision made two tests share one directory, and
+    /// one test's `Drop` (`remove_dir_all`) then deleted the other's fixture
+    /// mid-run.
     mod tempdir {
         use std::path::PathBuf;
+        use std::sync::atomic::{AtomicU64, Ordering};
+
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
 
         pub struct TempDir {
             pub path: PathBuf,
@@ -241,12 +252,13 @@ mod tests {
             pub fn new(prefix: &str) -> Self {
                 let mut path = std::env::temp_dir();
                 let unique = format!(
-                    "{prefix}-{}-{}",
+                    "{prefix}-{}-{}-{}",
                     std::process::id(),
                     std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
                         .unwrap()
-                        .as_nanos()
+                        .as_nanos(),
+                    COUNTER.fetch_add(1, Ordering::Relaxed)
                 );
                 path.push(unique);
                 std::fs::create_dir_all(&path).unwrap();

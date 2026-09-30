@@ -316,6 +316,15 @@ mod tests {
     }
 
     #[test]
+    fn statuses_display_as_their_reporter_names() {
+        assert_eq!(Status::Pass.to_string(), "pass");
+        assert_eq!(Status::Warning.to_string(), "warning");
+        assert_eq!(Status::Fail.to_string(), "fail");
+        assert_eq!(Status::Skipped.to_string(), "skipped");
+        assert_eq!(Status::Error.to_string(), "error");
+    }
+
+    #[test]
     fn fixture_store_filters_by_surface_and_protocol() {
         let store = FixtureStore::new(vec![
             FixtureMetadata {

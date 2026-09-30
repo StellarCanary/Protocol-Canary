@@ -392,6 +392,35 @@ mod tests {
         assert_eq!(value["counts"]["skipped"], 1);
     }
 
+    /// The `skipped` field is annotated
+    /// `#[serde(skip_serializing_if = "Vec::is_empty")]`: an empty list must
+    /// make the key *absent*, not present-and-empty. The shape test above
+    /// always supplies a skipped fixture, so the omission branch had no
+    /// coverage, and a consumer that distinguishes "nothing skipped" from
+    /// "the reporter did not report it" depends on which of the two it is.
+    #[test]
+    fn omits_the_skipped_field_when_no_fixture_was_skipped() {
+        let mut clean = input();
+        clean.skipped.clear();
+
+        let json_text = JsonReporter::render(&clean);
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+
+        assert!(
+            value.get("skipped").is_none(),
+            "`skipped` must be omitted entirely when empty, got: {json_text}"
+        );
+        // The counts block still reports the (zero) tally, so the absence of
+        // the key is not a missing section.
+        assert_eq!(value["counts"]["skipped"], 0);
+        assert_eq!(value["counts"]["total"], 1);
+
+        // Absent must stay loadable: `skipped` carries `default` precisely so
+        // an omitted key parses back to an empty list rather than failing.
+        let parsed = JsonReporter::parse(&json_text).expect("a key-omitted report must parse");
+        assert!(parsed.skipped.is_empty());
+    }
+
     #[test]
     fn counts_reflect_a_mix_of_outcomes() {
         let mut mixed = input();
@@ -441,6 +470,16 @@ mod tests {
         let json_text = JsonReporter::render(&input);
         let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
         assert!(value.get("network").is_none());
+    }
+
+    #[test]
+    fn omits_the_skipped_field_entirely_when_nothing_was_skipped() {
+        let mut input = input();
+        input.skipped.clear();
+        let json_text = JsonReporter::render(&input);
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert!(value.get("skipped").is_none());
+        assert_eq!(value["counts"]["skipped"], 0);
     }
 
     #[test]

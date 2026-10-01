@@ -14,6 +14,18 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
+    /// Returns `true` if the manifest declares a dependency with exactly
+    /// this name.
+    ///
+    /// The comparison is a plain, case-sensitive whole-string match against
+    /// [`ProjectManifest::dependency_names`]: the name must match in full,
+    /// including any scope or registry prefix (e.g. `@stellar/stellar-sdk`,
+    /// `soroban-sdk`); partial or fuzzy matches do not count. Names carry
+    /// no version information, so this answers "is this dependency declared
+    /// at all", not "is a compatible version declared".
+    ///
+    /// This never fails: an empty manifest simply returns `false`, and no
+    /// error or panic condition exists.
     pub fn has_dependency(&self, name: &str) -> bool {
         self.dependency_names.iter().any(|d| d == name)
     }

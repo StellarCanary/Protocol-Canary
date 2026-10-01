@@ -51,6 +51,14 @@ fn report_defaults_to_markdown_when_no_format_flag_is_given() {
         text.starts_with("## Stellar Protocol Canary"),
         "report must default to Markdown output, got: {text}"
     );
+    // The Markdown table delimiter is another Markdown-only marker: the
+    // Terminal and JSON reporters never emit a `|---|` ruler, so this
+    // asserts the shape of the output, not just a single coincidental
+    // substring.
+    assert!(
+        text.contains("|---|---|"),
+        "default output must be Markdown-shaped, got: {text}"
+    );
     assert!(text.contains("**Result: PASS**"));
 }
 

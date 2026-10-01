@@ -10,6 +10,11 @@ use crate::schema::{ConfigFile, SUPPORTED_CONFIG_VERSION};
 pub const CONFIG_FILE_NAME: &str = ".stellar-canary.toml";
 
 #[derive(Debug, thiserror::Error)]
+/// Errors returned while reading, parsing, or validating a Canary configuration.
+///
+/// Each variant retains the configuration path involved in the failure where
+/// applicable, so callers can report actionable diagnostics to the contributor
+/// who owns that project configuration.
 pub enum ConfigError {
     #[error("failed to read configuration file {path}: {source}")]
     Read {
@@ -244,15 +249,36 @@ mod tests {
 
         static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+        /// A scratch directory that is deleted, along with everything inside
+        /// it, when the value is dropped.
+        ///
+        /// Create one with [`TempDir::new`] and pass [`path`](TempDir::path)
+        /// to the code under test. Deletion errors are ignored, so a directory
+        /// can survive on disk if the process aborts or is killed; bind the
+        /// value to a named variable for the whole test, because dropping it
+        /// (for example, through `let _ = ...`) deletes the directory
+        /// immediately.
         pub struct TempDir {
             pub path: PathBuf,
         }
 
         impl TempDir {
-            /// Creates a uniquely named temporary directory for configuration tests.
+            /// Creates a fresh directory under [`std::env::temp_dir`] and
+            /// returns a [`TempDir`] that removes it on drop, so callers do
+            /// not clean up.
             ///
-            /// The directory is removed automatically when the returned guard is
-            /// dropped.
+            /// The directory name combines `prefix` with the process id, a
+            /// nanosecond timestamp and a per-process counter, so two tests
+            /// running in parallel cannot share one directory (see the module
+            /// docs for why the timestamp alone is not a uniqueness
+            /// guarantee). Pass a prefix that names the test that owns the
+            /// directory, so a leftover one is traceable.
+            ///
+            /// # Panics
+            ///
+            /// Panics if the system clock is set before the Unix epoch, or if
+            /// the directory cannot be created — for example, because of a
+            /// permissions error or an exhausted filesystem.
             pub fn new(prefix: &str) -> Self {
                 let mut path = std::env::temp_dir();
                 let unique = format!(

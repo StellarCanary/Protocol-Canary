@@ -14,10 +14,51 @@ pub struct ProjectManifest {
 }
 
 impl ProjectManifest {
+    /// Returns `true` if the manifest declares a dependency with exactly
+    /// this name.
+    ///
+    /// The comparison is a plain, case-sensitive whole-string match against
+    /// [`ProjectManifest::dependency_names`]: the name must match in full,
+    /// including any scope or registry prefix (e.g. `@stellar/stellar-sdk`,
+    /// `soroban-sdk`); partial or fuzzy matches do not count. Names carry
+    /// no version information, so this answers "is this dependency declared
+    /// at all", not "is a compatible version declared".
+    ///
+    /// This never fails: an empty manifest simply returns `false`, and no
+    /// error or panic condition exists.
     pub fn has_dependency(&self, name: &str) -> bool {
         self.dependency_names.iter().any(|d| d == name)
     }
 
+    /// Returns `true` if the manifest declares at least one of `names`.
+    ///
+    /// A convenience wrapper over [`ProjectManifest::has_dependency`] for
+    /// probing a group of alternative dependency names that all signal the same
+    /// capability, as [`crate::capabilities::detect_capabilities`] does for the
+    /// Soroban, Stellar SDK, and RPC client dependency sets. Matching stops at
+    /// the first hit, so the order of `names` does not affect the result.
+    ///
+    /// An empty `names` slice matches nothing and returns `false`. Names are
+    /// compared exactly, with no case folding, version, or scope normalization,
+    /// so npm-scoped packages must be passed in full (for example
+    /// `"@stellar/stellar-sdk"`). This method does not panic.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_project::ProjectManifest;
+    ///
+    /// let manifest = ProjectManifest {
+    ///     dependency_names: vec!["stellar-rpc-client".to_string()],
+    /// };
+    ///
+    /// // One match among several is enough.
+    /// assert!(manifest.has_any_dependency(&["stellar-sdk", "stellar-rpc-client"]));
+    ///
+    /// // No match, and an empty candidate list, are both `false`.
+    /// assert!(!manifest.has_any_dependency(&["soroban-sdk"]));
+    /// assert!(!manifest.has_any_dependency(&[]));
+    /// ```
     pub fn has_any_dependency(&self, names: &[&str]) -> bool {
         names.iter().any(|n| self.has_dependency(n))
     }

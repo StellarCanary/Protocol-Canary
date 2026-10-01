@@ -16,8 +16,55 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Errors that can occur when reading Git repository metadata.
+///
+/// This error type is returned by [`GitRepository`] methods (such as
+/// [`current_commit`](GitRepository::current_commit),
+/// [`current_branch`](GitRepository::current_branch), and
+/// [`is_dirty`](GitRepository::is_dirty)) when an executed `git` command
+/// produces output that cannot be processed.
+///
+/// # Failure Conditions
+///
+/// Per the crate's design rule that non-Git environments or routine Git states
+/// must never fail a run, standard edge cases do *not* produce a `GitError`:
+/// - If the `git` binary is not installed or cannot be spawned,
+/// - If the directory is not a Git repository,
+/// - If `HEAD` is detached when checking the branch name, or
+/// - If any `git` command exits with a non-zero exit status,
+///
+/// [`CliGitRepository`] treats the metadata as unavailable and returns
+/// `Ok(None)` or `Ok(false)` instead of an error.
+///
+/// `GitError` is strictly reserved for the condition where a `git` process
+/// executed and exited successfully, but its standard output could not be
+/// decoded as valid UTF-8.
+///
+/// # Caller Handling
+///
+/// When a function returns `GitError`, callers know that the repository
+/// operation ran successfully but emitted uninterpretable output. Callers that
+/// populate higher-level metadata, such as
+/// [`collect_git_context`](crate::collect_git_context), degrade `GitError` to
+/// `None` rather than failing the run or panicking. Callers that wish to inspect
+/// or format the failure can match on [`GitError::InvalidUtf8`] or rely on its
+/// [`Display`](std::fmt::Display) / [`std::error::Error`] implementation.
+///
+/// # Examples
+///
+/// ```
+/// use canary_git::GitError;
+///
+/// let invalid_bytes = vec![0xff, 0xfe];
+/// let utf8_err = String::from_utf8(invalid_bytes).unwrap_err();
+/// let git_err = GitError::from(utf8_err);
+///
+/// assert!(matches!(git_err, GitError::InvalidUtf8(_)));
+/// assert!(git_err.to_string().contains("not valid UTF-8"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
+    /// Standard output from a successful `git` command was not valid UTF-8.
     #[error("git produced output that was not valid UTF-8: {0}")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
 }

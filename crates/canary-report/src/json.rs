@@ -303,6 +303,11 @@ impl TryFrom<JsonReport> for ReportInput {
 pub struct JsonReporter;
 
 impl JsonReporter {
+    /// Serializes a report input into the stable, versioned JSON wire format.
+    ///
+    /// Serialization failures are returned as a JSON error object because
+    /// report generation is expected to remain printable even when a future
+    /// schema change introduces an unsupported value.
     pub fn render(input: &ReportInput) -> String {
         let report = JsonReport::from(input);
         serde_json::to_string_pretty(&report)

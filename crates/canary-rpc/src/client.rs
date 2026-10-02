@@ -243,6 +243,27 @@ pub struct HttpRpcClient {
 }
 
 impl HttpRpcClient {
+    /// Creates a client that sends JSON-RPC requests to `endpoint`, for
+    /// example `https://soroban-testnet.stellar.org`.
+    ///
+    /// The endpoint is stored verbatim: it is not resolved or validated
+    /// here, so a malformed or unreachable URL does not fail until the
+    /// first request, which reports it as a [`RpcError::Transport`]. The
+    /// client starts with a 10-second request timeout and the default
+    /// `RetryPolicy`; chain [`Self::with_timeout`] or
+    /// [`Self::with_retry_policy`] to override either one before making
+    /// a call.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use canary_rpc::HttpRpcClient;
+    ///
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org");
+    /// ```
+    ///
+    /// This never panics: if the underlying HTTP client cannot be built
+    /// with the default timeout, a default client is used instead.
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
             http: reqwest::Client::builder()

@@ -40,6 +40,8 @@ struct JsonReport {
     skipped: Vec<JsonSkip>,
     #[serde(default)]
     git: JsonGit,
+    #[serde(default)]
+    verbose: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -175,18 +177,41 @@ impl From<&ReportInput> for JsonReport {
                 branch: input.git.branch.clone(),
                 is_dirty: input.git.is_dirty,
             },
+            verbose: input.verbose,
         }
     }
 }
 
+/// Why a rendered JSON report could not be read back into a
+/// [`ReportInput`], as returned by [`JsonReporter::parse`].
+///
+/// The variants separate input this version cannot even decode
+/// ([`JsonReportError::Parse`]) from input that is well-formed but was
+/// produced by a different version of the tool
+/// ([`JsonReportError::UnsupportedSchemaVersion`]) or carries an enum
+/// spelling introduced after this version was built
+/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]).
 #[derive(Debug, thiserror::Error)]
 pub enum JsonReportError {
+    /// The text is not valid JSON, or it does not match the report
+    /// schema: a field is missing, has the wrong type, or is otherwise
+    /// rejected by the deserializer.
     #[error("failed to parse JSON report: {0}")]
     Parse(#[from] serde_json::Error),
+
+    /// The report was written against a schema version other than
+    /// [`SCHEMA_VERSION`]: `found` is the version in the document,
+    /// `expected` is the one this build understands.
     #[error("unsupported schema version (found {found}, expected {expected})")]
     UnsupportedSchemaVersion { found: u32, expected: u32 },
+
+    /// A result or skipped entry names a surface this version does not
+    /// know; the offending spelling is carried for the error message.
     #[error("unrecognized surface {0:?} in JSON report")]
     UnknownSurface(String),
+
+    /// A result entry names a status this version does not know; the
+    /// offending spelling is carried for the error message.
     #[error("unrecognized status {0:?} in JSON report")]
     UnknownStatus(String),
 }
@@ -295,7 +320,7 @@ impl TryFrom<JsonReport> for ReportInput {
                 branch: report.git.branch,
                 is_dirty: report.git.is_dirty,
             },
-            verbose: false,
+            verbose: report.verbose,
         })
     }
 }
@@ -516,6 +541,18 @@ mod tests {
         let json_text = JsonReporter::render(&original);
         let parsed = JsonReporter::parse(&json_text).expect("parses");
         assert_eq!(parsed.overall_status(), crate::ReportStatus::Error);
+    }
+
+    #[test]
+    fn parsing_preserves_verbose_flag() {
+        let mut original = input();
+        original.verbose = true;
+        let json_text = JsonReporter::render(&original);
+        let parsed = JsonReporter::parse(&json_text).expect("parses");
+        assert!(parsed.verbose);
+
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert_eq!(value["verbose"], true);
     }
 
     #[test]

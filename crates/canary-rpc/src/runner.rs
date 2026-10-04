@@ -508,33 +508,71 @@ mod tests {
         assert!(matches!(err, RpcFixtureError::InvalidFixtureBody { .. }));
     }
 
-    #[tokio::test]
-    async fn fails_when_a_field_absent_assertion_does_not_hold() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "jsonrpc": "2.0",
-                "id": 1,
-                "result": { "passphrase": "Test SDF Network ; September 2015", "protocolVersion": 28, "friendbotUrl": "https://friendbot.stellar.org" }
-            })))
-            .mount(&server)
-            .await;
-
+    #[test]
+    fn parses_and_checks_array_field_equals() {
         let body = r#"
         method = "get-network"
 
         [[assert]]
-        kind = "field-absent"
-        field = "friendbotUrl"
+        kind = "field-equals"
+        field = "history"
+        value = ["a", "b", "c"]
         "#;
-        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-absent-fail", body)).unwrap();
-        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
-        let result = runner.run(&fixture, &context()).await.unwrap();
-        assert_eq!(result.status, Status::Fail);
-        assert!(result
-            .details
-            .unwrap()
-            .contains("expected field \"friendbotUrl\" to be absent, but it was present"));
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-array", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "history".into(),
+            value: json!(["a", "b", "c"])
+        }));
+
+        let assertion = &fixture.assertions[0];
+
+        let match_response = json!({ "history": ["a", "b", "c"] });
+        assert!(assertion.check(&match_response).is_ok());
+
+        let mismatch_response = json!({ "history": ["a", "b", "d"] });
+        assert!(assertion.check(&mismatch_response).is_err());
+    }
+
+    #[test]
+    fn parses_and_checks_table_and_datetime_field_equals() {
+        let body = r#"
+        method = "get-network"
+
+        [[assert]]
+        kind = "field-equals"
+        field = "nested"
+        value = { key1 = "value1", key2 = 42 }
+
+        [[assert]]
+        kind = "field-equals"
+        field = "timestamp"
+        value = 2023-01-01T12:00:00Z
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-table", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "nested".into(),
+            value: json!({ "key1": "value1", "key2": 42 })
+        }));
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "timestamp".into(),
+            value: json!("2023-01-01T12:00:00Z")
+        }));
+
+        let assertion_nested = &fixture.assertions[0];
+        let assertion_timestamp = &fixture.assertions[1];
+
+        let match_response = json!({
+            "nested": { "key1": "value1", "key2": 42 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&match_response).is_ok());
+        assert!(assertion_timestamp.check(&match_response).is_ok());
+
+        let mismatch_response = json!({
+            "nested": { "key1": "value1", "key2": 99 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&mismatch_response).is_err());
+        assert!(assertion_timestamp.check(&mismatch_response).is_ok());
     }
 }

@@ -88,7 +88,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         //   core upgrade-rehearsal use case, but it must be visible
         //   rather than only an annotation in the report.
         let client = HttpRpcClient::new(rpc_url.clone());
-        let observed_protocol = match client.get_network().await {
+        let (observed_protocol, network_error) = match client.get_network().await {
             Ok(info) => {
                 if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
                     match err {
@@ -101,9 +101,9 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
                         other => return Err(other.into()),
                     }
                 }
-                Some(ProtocolVersion(info.protocol_version))
+                (Some(ProtocolVersion(info.protocol_version)), None)
             }
-            Err(_) => None,
+            Err(e) => (None, Some(e.to_string())),
         };
 
         let context = NetworkContext {

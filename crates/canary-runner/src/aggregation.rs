@@ -27,6 +27,62 @@ impl ResultSummary {
     }
 }
 
+/// Aggregates a slice of test results into a [`ResultSummary`].
+///
+/// Counts the occurrences of each [`Status`] across the provided `results`,
+/// recording the counts of [`Pass`](Status::Pass), [`Fail`](Status::Fail),
+/// [`Warning`](Status::Warning), and [`Error`](Status::Error) outcomes.
+///
+/// The returned [`ResultSummary::total`] is initialized to `results.len()`.
+/// If the slice contains any [`Status::Skipped`] results, they are included
+/// in `total` but do not increment any of the four status-specific counters,
+/// as skipped fixtures are normally filtered and tracked during planning
+/// rather than execution.
+///
+/// If `results` is empty, this returns a default [`ResultSummary`] where all
+/// counts are zero.
+///
+/// This function performs a single linear pass over `results`, does not allocate,
+/// and never panics.
+///
+/// # Examples
+///
+/// ```
+/// use canary_core::{CompatibilityResult, ProtocolVersion, Status, Surface};
+/// use canary_runner::{summarize, ResultSummary};
+///
+/// let results = vec![
+///     CompatibilityResult {
+///         test_id: "xdr-01".into(),
+///         protocol: ProtocolVersion(28),
+///         surface: Surface::Xdr,
+///         status: Status::Pass,
+///         summary: "decoded successfully".into(),
+///         details: None,
+///         duration_ms: 5,
+///         fixture_id: None,
+///     },
+///     CompatibilityResult {
+///         test_id: "rpc-01".into(),
+///         protocol: ProtocolVersion(28),
+///         surface: Surface::Rpc,
+///         status: Status::Fail,
+///         summary: "assertion failed".into(),
+///         details: None,
+///         duration_ms: 12,
+///         fixture_id: None,
+///     },
+/// ];
+///
+/// let summary = summarize(&results);
+/// assert_eq!(summary.total, 2);
+/// assert_eq!(summary.passed, 1);
+/// assert_eq!(summary.failed, 1);
+/// assert_eq!(summary.warnings, 0);
+/// assert_eq!(summary.errors, 0);
+/// assert_eq!(summary.passed_fraction(), (1, 2));
+/// assert!(summary.has_required_failure());
+/// ```
 pub fn summarize(results: &[CompatibilityResult]) -> ResultSummary {
     let mut summary = ResultSummary {
         total: results.len(),

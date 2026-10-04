@@ -20,17 +20,96 @@ use canary_core::CanaryError;
 
 use crate::models::{LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse};
 
+/// Errors returned by the Stellar RPC client.
+///
+/// Every fallible operation in this crate — the [`RpcClient`] trait
+/// (implemented by [`HttpRpcClient`]) and [`validate_network_info`] — reports
+/// failure as this type. Callers never have to expect a panic from a bad
+/// endpoint, an unreachable host, or a malformed response: all of those come
+/// back as one of the variants below.
+///
+/// The variants fall into three groups:
+///
+/// - **Transport-level** ([`RpcError::Transport`], [`RpcError::Timeout`],
+///   [`RpcError::RateLimited`]): the request could not be completed.
+///   [`HttpRpcClient`] retries these according to the configured
+///   [`RetryPolicy`] and only surfaces them once the attempts are exhausted,
+///   at which point `attempts` holds how many attempts were made.
+/// - **Protocol-level** ([`RpcError::InvalidJson`],
+///   [`RpcError::JsonRpcError`], [`RpcError::InvalidResponse`]): the
+///   endpoint answered, but the answer is unusable — not JSON, a JSON-RPC
+///   `error` object, or a `result` that does not deserialize into the
+///   expected type. These are deterministic, so retrying them would never
+///   help and they are returned on the first attempt.
+/// - **Semantic** ([`RpcError::NetworkMismatch`],
+///   [`RpcError::ProtocolMismatch`]): the endpoint answered correctly but
+///   reports a different network passphrase or protocol version than the run
+///   targets. Only [`validate_network_info`] constructs these; see its docs
+///   for how callers are expected to interpret a mismatch.
+///
+/// The [`std::fmt::Display`] implementation (via `thiserror`) always names
+/// the RPC method involved, so the rendered message is safe to log or surface
+/// directly. `RpcError` also converts into
+/// [`CanaryError`] via `?` for propagation through
+/// the rest of the workspace.
+///
+/// # Examples
+///
+/// Branch on the variant when the caller needs to react differently, and fall
+/// back on the rendered message otherwise:
+///
+/// ```
+/// use canary_rpc::RpcError;
+///
+/// let err = RpcError::JsonRpcError {
+///     method: "simulateTransaction".to_string(),
+///     code: -32602,
+///     message: "invalid params".to_string(),
+/// };
+///
+/// // Deterministic protocol errors are reported verbatim...
+/// assert!(err.to_string().contains("code -32602"));
+///
+/// // ...while transport-level ones are the only ones worth retrying.
+/// let transient = RpcError::RateLimited {
+///     method: "getLatestLedger".to_string(),
+///     attempts: 3,
+/// };
+/// assert!(transient.to_string().contains("3 attempt(s)"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum RpcError {
+    /// The HTTP request itself failed: connection refused or reset, DNS or
+    /// TLS failure, or the endpoint answering with a 5xx status.
+    ///
+    /// Transient by nature, so [`HttpRpcClient`] retries it under the
+    /// configured [`RetryPolicy`]. `message` carries the underlying transport
+    /// detail (or the status code) for diagnosis.
     #[error("network transport error calling {method}: {message}")]
     Transport { method: String, message: String },
 
+    /// The request exceeded the client's timeout (see
+    /// [`HttpRpcClient::with_timeout`]).
+    ///
+    /// Transient, so it is retried under [`RetryPolicy`]; `attempts` records
+    /// how many attempts were made before giving up.
     #[error("timed out calling {method} after {attempts} attempt(s)")]
     Timeout { method: String, attempts: u32 },
 
+    /// The endpoint returned a body that is not valid JSON — typically an
+    /// HTML error page from a proxy or a truncated response.
+    ///
+    /// Never retried: `message` holds the serde parse error.
     #[error("invalid JSON response from {method}: {message}")]
     InvalidJson { method: String, message: String },
 
+    /// The endpoint processed the request and returned a JSON-RPC `error`
+    /// object, i.e. a protocol-level rejection such as `invalid params`
+    /// (`-32602`).
+    ///
+    /// `code` and `message` are copied from that object; fields missing from
+    /// the error object fall back to `0` and `"unknown error"`. Never
+    /// retried.
     #[error("RPC {method} returned a JSON-RPC error (code {code}): {message}")]
     JsonRpcError {
         method: String,
@@ -38,6 +117,11 @@ pub enum RpcError {
         message: String,
     },
 
+    /// The response parsed as JSON but is not what the method should return:
+    /// either it has neither a `result` nor an `error` key, or its `result`
+    /// failed to deserialize into the expected type.
+    ///
+    /// `reason` carries the structural or serde explanation. Never retried.
     #[error("unexpected response shape from {method}: {reason}")]
     InvalidResponse { method: String, reason: String },
 
@@ -65,6 +149,10 @@ pub enum RpcError {
     )]
     ProtocolMismatch { target: u32, observed: u32 },
 
+    /// The endpoint rejected the request with HTTP 429 (Too Many Requests).
+    ///
+    /// Transient, so it is retried under [`RetryPolicy`]; `attempts` records
+    /// how many attempts were made before giving up.
     #[error("RPC endpoint rate-limited {method} after {attempts} attempt(s)")]
     RateLimited { method: String, attempts: u32 },
 }
@@ -155,6 +243,27 @@ pub struct HttpRpcClient {
 }
 
 impl HttpRpcClient {
+    /// Creates a client that sends JSON-RPC requests to `endpoint`, for
+    /// example `https://soroban-testnet.stellar.org`.
+    ///
+    /// The endpoint is stored verbatim: it is not resolved or validated
+    /// here, so a malformed or unreachable URL does not fail until the
+    /// first request, which reports it as a [`RpcError::Transport`]. The
+    /// client starts with a 10-second request timeout and the default
+    /// `RetryPolicy`; chain [`Self::with_timeout`] or
+    /// [`Self::with_retry_policy`] to override either one before making
+    /// a call.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use canary_rpc::HttpRpcClient;
+    ///
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org");
+    /// ```
+    ///
+    /// This never panics: if the underlying HTTP client cannot be built
+    /// with the default timeout, a default client is used instead.
     pub fn new(endpoint: impl Into<String>) -> Self {
         HttpRpcClient {
             http: reqwest::Client::builder()
@@ -166,6 +275,51 @@ impl HttpRpcClient {
         }
     }
 
+    /// Returns this client with its per-request HTTP timeout replaced by
+    /// `timeout`.
+    ///
+    /// Builder-style: this consumes the client and hands back a new one, so
+    /// it chains onto [`HttpRpcClient::new`] (and alongside
+    /// [`HttpRpcClient::with_retry_policy`]). The timeout is a whole-request
+    /// deadline applied by the underlying `reqwest` client, so it covers
+    /// connecting, sending, and reading the response, and it bounds every
+    /// method on [`RpcClient`] — `getNetwork`, `getLatestLedger`, and
+    /// `simulateTransaction` alike. The default set by
+    /// [`HttpRpcClient::new`] is 10 seconds; `canary-runner` overrides it
+    /// with the run's `--rpc-timeout` option.
+    ///
+    /// A timeout is not a failure of the compatibility assertion itself.
+    /// When the deadline elapses, `reqwest` reports a timeout error, which
+    /// this crate maps to [`RpcError::Timeout`]. That is a retryable error,
+    /// so a call may still be retried up to
+    /// [`RetryPolicy::max_attempts`] times (with a linear
+    /// `base_delay * attempt` backoff) before the run sees
+    /// [`RpcError::Timeout`] — each attempt gets the full `timeout`, so the
+    /// worst case for one call is `timeout * max_attempts` plus backoff.
+    /// Callers should therefore treat `Timeout` as "this run could not
+    /// execute", not as evidence that the endpoint is incompatible.
+    ///
+    /// This method does not panic and does not report failure: it rebuilds
+    /// the underlying `reqwest` client, and if that build fails for any
+    /// reason the previously configured client is kept and `timeout` is
+    /// silently ignored — the call then returns a client that still uses
+    /// whatever deadline it already had. Note that rebuilding the client
+    /// also discards the previous connection pool, so prefer one call with
+    /// the final value over repeated calls in a loop.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use canary_rpc::{HttpRpcClient, RetryPolicy};
+    ///
+    /// // Two seconds per request, up to five attempts.
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(2))
+    ///     .with_retry_policy(RetryPolicy {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(200),
+    ///     });
+    /// ```
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         if let Ok(http) = reqwest::Client::builder().timeout(timeout).build() {
             self.http = http;
@@ -173,6 +327,65 @@ impl HttpRpcClient {
         self
     }
 
+    /// Returns this client with its [`RetryPolicy`] replaced by `policy`.
+    ///
+    /// Builder-style: this consumes the client and hands back a new one, so
+    /// it chains onto [`HttpRpcClient::new`] (and alongside
+    /// [`HttpRpcClient::with_timeout`]). The policy is read per request, so
+    /// it governs every method on [`RpcClient`] — `getNetwork`,
+    /// `getLatestLedger`, and `simulateTransaction` alike. If it is never
+    /// called, the client keeps [`RetryPolicy::default`] (3 attempts,
+    /// 200 ms base delay).
+    ///
+    /// # What gets retried
+    ///
+    /// Only [`RpcError::Transport`], [`RpcError::Timeout`], and
+    /// [`RpcError::RateLimited`] are retried. Those are the transient
+    /// failures — a dropped connection, an elapsed
+    /// [`HttpRpcClient::with_timeout`] deadline, or an HTTP 429.
+    /// [`RpcError::InvalidJson`], [`RpcError::JsonRpcError`], and
+    /// [`RpcError::InvalidResponse`] are deterministic: the same request
+    /// would produce the same malformed/errored response, so they are
+    /// returned on the first attempt no matter what the policy says.
+    ///
+    /// # Timing
+    ///
+    /// At most `max_attempts` requests are made in total, and the wait
+    /// between attempt *n* and attempt *n+1* is `base_delay * n` — a linear
+    /// backoff, so there is no delay after the final attempt and the total
+    /// time spent sleeping is `base_delay * n(n-1)/2`. Combined with a
+    /// per-request deadline, the worst-case wall time for one call is
+    /// roughly `max_attempts * timeout` plus that backoff, which is worth
+    /// keeping in mind when both values are configured.
+    ///
+    /// # Failure conditions
+    ///
+    /// This method cannot fail and does not panic — it only stores `policy`.
+    /// The field values are not validated: `max_attempts: 0` is not
+    /// rejected but behaves as "try once, do not retry" (the first attempt
+    /// is always made, so one attempt is the effective minimum), and a
+    /// `base_delay` of zero retries immediately with no pause.
+    ///
+    /// Because this consumes and returns a new client, the policy applies
+    /// only to the returned value and to clones made from it — a client
+    /// cloned before this call keeps the old policy, and any call already
+    /// in flight on such a clone is unaffected. Unlike
+    /// [`HttpRpcClient::with_timeout`], this does not rebuild the
+    /// underlying HTTP client, so no connection pool is discarded.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    ///
+    /// use canary_rpc::{HttpRpcClient, RetryPolicy};
+    ///
+    /// // Up to five attempts, backing off 100ms, 200ms, 300ms, 400ms.
+    /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
+    ///     .with_timeout(Duration::from_secs(5))
+    ///     .with_retry_policy(RetryPolicy {
+    ///         max_attempts: 5,
+    ///         base_delay: Duration::from_millis(100),
+    ///     });
+    /// ```
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
         self.retry_policy = policy;
         self
@@ -381,6 +594,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn maps_missing_result_and_error_keys_to_invalid_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(
+            err,
+            RpcError::InvalidResponse { ref reason, .. } if reason.contains("neither \"result\" nor \"error\"")
+        ));
+    }
+
+    #[tokio::test]
+    async fn maps_deserialization_failure_to_invalid_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": 28
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(
+            err,
+            RpcError::InvalidResponse { ref reason, .. } if reason.contains("missing field `passphrase`")
+        ));
+    }
+
+    #[tokio::test]
     async fn retries_server_errors_up_to_the_configured_attempt_limit() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -415,6 +671,96 @@ mod tests {
 
         let requests = server.received_requests().await.expect("requests");
         assert_eq!(requests.len(), 1);
+    }
+
+    /// Every other retry test mounts a mock that fails on *every* request and
+    /// asserts the client eventually gives up, so none of them proves the
+    /// point of retrying at all: that a transient failure followed by a good
+    /// response is an overall success. A regression that kept counting
+    /// attempts but discarded the successful response would pass the whole
+    /// existing suite.
+    #[tokio::test]
+    async fn recovers_from_a_transient_failure_and_returns_the_successful_response() {
+        let server = MockServer::start().await;
+        let attempts = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
+        // 503 on the first request, then success — the shape of a real
+        // transient outage.
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(move |_request: &wiremock::Request| {
+                if attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0 {
+                    ResponseTemplate::new(503)
+                } else {
+                    ResponseTemplate::new(200).set_body_json(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "passphrase": "Test SDF Network ; September 2015",
+                            "protocolVersion": 28
+                        }
+                    }))
+                }
+            })
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(1),
+        });
+
+        let info = client
+            .get_network()
+            .await
+            .expect("the second, successful response must be returned as Ok");
+        assert_eq!(info.passphrase, "Test SDF Network ; September 2015");
+        assert_eq!(info.protocol_version, 28);
+
+        // Exactly one retry: the failure was recovered, not exhausted, and
+        // the success was not re-requested either.
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2, "expected the 503 plus one retry");
+    }
+
+    #[tokio::test]
+    async fn retries_a_transient_failure_and_returns_the_successful_response() {
+        let server = MockServer::start().await;
+        // First request: a transient 503. `up_to_n_times(1)` stops this mock
+        // from matching afterwards, so the retried request falls through to
+        // the success mock mounted below (same-priority mocks match in
+        // insertion order).
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .named("transient 503")
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28
+                }
+            })))
+            .named("successful retry")
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
+            max_attempts: 3,
+            base_delay: Duration::from_millis(1),
+        });
+        let info = client.get_network().await.expect("retry succeeds");
+        assert_eq!(info.protocol_version, 28);
+        assert_eq!(info.passphrase, "Test SDF Network ; September 2015");
+
+        let requests = server.received_requests().await.expect("requests");
+        assert_eq!(requests.len(), 2);
     }
 
     #[tokio::test]

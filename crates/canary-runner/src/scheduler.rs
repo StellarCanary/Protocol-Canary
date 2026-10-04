@@ -44,6 +44,10 @@ pub struct CompatibilityPlan {
 }
 
 impl CompatibilityPlan {
+    /// Returns the total number of fixtures scheduled to run across all enabled surfaces.
+    ///
+    /// This is the sum of the scheduled XDR, RPC, and Soroban fixtures. It does not
+    /// include fixtures that were skipped.
     pub fn applicable_count(&self) -> usize {
         self.xdr.len() + self.rpc.len() + self.soroban.len()
     }

@@ -13,11 +13,13 @@ Options:
       --network <NETWORK>            Network to run live checks against [default: testnet]
       --rpc-url <RPC_URL>            RPC endpoint to use for live checks
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
+      --rpc-timeout <RPC_TIMEOUT>    Request timeout for the RPC client in seconds [default: 10]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
       --verbose                      Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
       --quiet                        Shorten terminal-format output to a single status line.
+      --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
   -h, --help                         Print help
 ```
 

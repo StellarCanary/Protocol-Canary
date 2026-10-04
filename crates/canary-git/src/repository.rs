@@ -16,8 +16,55 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+/// Errors that can occur when reading Git repository metadata.
+///
+/// This error type is returned by [`GitRepository`] methods (such as
+/// [`current_commit`](GitRepository::current_commit),
+/// [`current_branch`](GitRepository::current_branch), and
+/// [`is_dirty`](GitRepository::is_dirty)) when an executed `git` command
+/// produces output that cannot be processed.
+///
+/// # Failure Conditions
+///
+/// Per the crate's design rule that non-Git environments or routine Git states
+/// must never fail a run, standard edge cases do *not* produce a `GitError`:
+/// - If the `git` binary is not installed or cannot be spawned,
+/// - If the directory is not a Git repository,
+/// - If `HEAD` is detached when checking the branch name, or
+/// - If any `git` command exits with a non-zero exit status,
+///
+/// [`CliGitRepository`] treats the metadata as unavailable and returns
+/// `Ok(None)` or `Ok(false)` instead of an error.
+///
+/// `GitError` is strictly reserved for the condition where a `git` process
+/// executed and exited successfully, but its standard output could not be
+/// decoded as valid UTF-8.
+///
+/// # Caller Handling
+///
+/// When a function returns `GitError`, callers know that the repository
+/// operation ran successfully but emitted uninterpretable output. Callers that
+/// populate higher-level metadata, such as
+/// [`collect_git_context`](crate::collect_git_context), degrade `GitError` to
+/// `None` rather than failing the run or panicking. Callers that wish to inspect
+/// or format the failure can match on [`GitError::InvalidUtf8`] or rely on its
+/// [`Display`](std::fmt::Display) / [`std::error::Error`] implementation.
+///
+/// # Examples
+///
+/// ```
+/// use canary_git::GitError;
+///
+/// let invalid_bytes = vec![0xff, 0xfe];
+/// let utf8_err = String::from_utf8(invalid_bytes).unwrap_err();
+/// let git_err = GitError::from(utf8_err);
+///
+/// assert!(matches!(git_err, GitError::InvalidUtf8(_)));
+/// assert!(git_err.to_string().contains("not valid UTF-8"));
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum GitError {
+    /// Standard output from a successful `git` command was not valid UTF-8.
     #[error("git produced output that was not valid UTF-8: {0}")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
 }
@@ -35,6 +82,18 @@ pub struct CliGitRepository {
 }
 
 impl CliGitRepository {
+    /// Creates a [`GitRepository`] that runs `git` inside `root`.
+    ///
+    /// `root` is the working directory for every `git` invocation this handle
+    /// makes; it accepts anything convertible into a [`PathBuf`] (including
+    /// `&str` and `Path` references). The path is not opened or validated
+    /// during construction: a directory that is not a Git repository, or a
+    /// path that does not exist, is accepted here and simply reported as
+    /// "unavailable" by the [`GitRepository`] methods instead — they return
+    /// `Ok(None)` / `Ok(false)` rather than an error, per this crate's rule
+    /// that missing Git metadata must never fail a run.
+    ///
+    /// This function performs no I/O and does not panic.
     pub fn new(root: impl Into<PathBuf>) -> Self {
         CliGitRepository { root: root.into() }
     }
@@ -88,15 +147,26 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    /// A unique scratch directory under [`std::env::temp_dir`].
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process counter: the timestamp alone cannot separate the threads
+    /// the test harness runs in parallel, since clock resolution on some
+    /// hosts is coarser than the interval between two threads' reads, and two
+    /// git tests sharing one directory would overwrite each other's repo.
     fn temp_dir(prefix: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "{prefix}-{}-{}",
+            "{prefix}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();

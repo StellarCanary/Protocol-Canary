@@ -26,7 +26,7 @@ async fn a_failing_get_network_call_surfaces_the_error() {
 
     let dir = TempProject::new("check-network-fail");
     dir.write(".stellar-canary.toml", RPC_CONFIG);
-    
+
     // We only need an empty fixture to make it try to run RPC
     dir.write(
         "fixtures/p28-rpc-1.toml",
@@ -39,19 +39,17 @@ async fn a_failing_get_network_call_surfaces_the_error() {
 
     let output = run_in(
         &dir.path,
-        &[
-            "check",
-            "--network",
-            "testnet",
-            "--rpc-url",
-            &server_uri,
-        ],
+        &["check", "--network", "testnet", "--rpc-url", &server_uri],
     );
 
     let text = support::stdout(&output);
     assert!(text.contains("protocol not observed"));
-    assert!(text.contains("Internal Server Error") || text.contains("500"), "Output was: {}", text);
-    
+    assert!(
+        text.contains("Internal Server Error") || text.contains("500"),
+        "Output was: {}",
+        text
+    );
+
     let json_output = run_in(
         &dir.path,
         &[
@@ -60,13 +58,19 @@ async fn a_failing_get_network_call_surfaces_the_error() {
             "testnet",
             "--rpc-url",
             &server_uri,
-            "--json"
+            "--json",
         ],
     );
 
     let json_text = support::stdout(&json_output);
     let value: serde_json::Value = serde_json::from_str(&json_text).expect("valid json");
-    
-    let error_text = value["network"]["error"].as_str().expect("Network error field should be present and a string");
-    assert!(error_text.contains("Internal Server Error") || error_text.contains("500"), "JSON error was: {}", error_text);
+
+    let error_text = value["network"]["error"]
+        .as_str()
+        .expect("Network error field should be present and a string");
+    assert!(
+        error_text.contains("Internal Server Error") || error_text.contains("500"),
+        "JSON error was: {}",
+        error_text
+    );
 }

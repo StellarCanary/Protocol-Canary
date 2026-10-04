@@ -54,7 +54,11 @@ impl TerminalReporter {
                 }
                 None => {
                     if let Some(err) = &network.error {
-                        let _ = writeln!(out, "Network: {} (protocol not observed: {err})", network.name);
+                        let _ = writeln!(
+                            out,
+                            "Network: {} (protocol not observed: {err})",
+                            network.name
+                        );
                     } else {
                         let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
                     }

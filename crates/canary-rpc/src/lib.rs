@@ -5,7 +5,7 @@ pub mod client;
 pub mod models;
 pub mod runner;
 
-pub use client::{HttpRpcClient, RetryPolicy, RpcClient, RpcError};
+pub use client::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};
 pub use models::{LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse};
 pub use runner::{
     observe_latest_ledger, observe_network, DefaultRpcRunner, FieldAssertion, JsonType, RpcFixture,

@@ -44,6 +44,10 @@ pub struct CompatibilityPlan {
 }
 
 impl CompatibilityPlan {
+    /// Returns the total number of fixtures scheduled to run across all enabled surfaces.
+    ///
+    /// This is the sum of the scheduled XDR, RPC, and Soroban fixtures. It does not
+    /// include fixtures that were skipped.
     pub fn applicable_count(&self) -> usize {
         self.xdr.len() + self.rpc.len() + self.soroban.len()
     }
@@ -155,6 +159,35 @@ mod tests {
         let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
         assert_eq!(plan.xdr.len(), 1);
         assert!(plan.skipped.is_empty());
+    }
+
+    #[test]
+    fn schedules_a_matching_rpc_fixture() {
+        let fixtures = vec![loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n")];
+        let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
+        assert_eq!(plan.rpc.len(), 1);
+        assert_eq!(plan.rpc[0].metadata.id, "p28-rpc-1");
+        assert!(plan.xdr.is_empty());
+        assert!(plan.soroban.is_empty());
+        assert!(plan.skipped.is_empty());
+        assert_eq!(plan.applicable_count(), 1);
+    }
+
+    #[test]
+    fn schedules_a_matching_soroban_fixture() {
+        let body = format!(
+            "source_account = \"{}\"\ncontract_id = \"{}\"\nfunction = \"hello\"\nsequence_number = 1\n\n[expect]\nkind = \"simulation-success\"\n",
+            stellar_strkey::ed25519::PublicKey([0u8; 32]),
+            stellar_strkey::Contract([0u8; 32]),
+        );
+        let fixtures = vec![loaded("p28-soroban-1", 28, "soroban", &body)];
+        let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
+        assert_eq!(plan.soroban.len(), 1);
+        assert_eq!(plan.soroban[0].metadata.id, "p28-soroban-1");
+        assert!(plan.xdr.is_empty());
+        assert!(plan.rpc.is_empty());
+        assert!(plan.skipped.is_empty());
+        assert_eq!(plan.applicable_count(), 1);
     }
 
     #[test]

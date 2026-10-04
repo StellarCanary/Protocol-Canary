@@ -4,6 +4,19 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- `canary-core` no longer exports the unused `CompatibilityTest` trait and
+  `CompatibilityPlanner` marker type; the `planner` module is removed and
+  `engine` now exports only `ExecutionContext`. Surface runners implement
+  their own execution traits, and fixture planning lives in
+  `canary-runner`'s scheduler (`build_plan`).
+- `RpcError::NetworkMismatch` and `RpcError::ProtocolMismatch` are now
+  actively raised: `canary_rpc::validate_network_info` constructs them
+  from a `getNetwork` response, and `check` compares the observed network
+  identity against `--network`/`--protocol`. A passphrase mismatch aborts
+  as a configuration error (exit 2); an observed-protocol mismatch prints
+  a `warning:` line on stderr and the run continues (the report's
+  `(observed protocol N)` annotation is unchanged).
+
 ## [0.1.1]
 
 - `canary-xdr` now also supports the `"ContractExecutable"` XDR type name

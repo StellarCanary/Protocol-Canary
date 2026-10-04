@@ -5,30 +5,35 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-
 permissions:
   contents: read
 
 jobs:
   test:
-    name: fmt, check, test, clippy
-    runs-on: ubuntu-latest
+    name: fmt, check, test, clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Install Rust toolchain
         run: rustup show
 
       - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
@@ -41,3 +46,21 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Security audit
+        uses: rustsec/audit-check@v2.0.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+

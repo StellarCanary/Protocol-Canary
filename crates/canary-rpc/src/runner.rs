@@ -368,9 +368,12 @@ fn evaluate(fixture: &RpcFixture, response: &JsonValue) -> (Status, String, Opti
     }
 }
 
-/// Fetches network identity from `client` and reports how it compares to
-/// `target_protocol`, without treating a mismatch as a hard failure to
-/// execute: the caller decides what a mismatch means for its run.
+/// Fetches network identity from `client`, without treating any
+/// comparison against the run's expectations as a hard failure to
+/// execute: the caller decides what a mismatch means for its run. To
+/// compare the result against an expected passphrase and target protocol
+/// (constructing [`RpcError::NetworkMismatch`]/[`RpcError::ProtocolMismatch`]),
+/// pass it to [`crate::validate_network_info`].
 pub async fn observe_network(client: &impl RpcClient) -> Result<NetworkInfo, RpcError> {
     client.get_network().await
 }
@@ -506,68 +509,70 @@ mod tests {
     }
 
     #[test]
-    fn field_type_assertion_is_parsed_successfully() {
+    fn parses_and_checks_array_field_equals() {
         let body = r#"
         method = "get-network"
 
         [[assert]]
-        kind = "field-type"
-        field = "protocolVersion"
-        expected_type = "number"
+        kind = "field-equals"
+        field = "history"
+        value = ["a", "b", "c"]
         "#;
-        let fixture = RpcFixture::from_loaded(&fixture("field-type-parse", body)).unwrap();
-        assert_eq!(fixture.assertions.len(), 1);
-        if let FieldAssertion::TypeIs { field, expected } = &fixture.assertions[0] {
-            assert_eq!(field, "protocolVersion");
-            assert_eq!(*expected, JsonType::Number);
-        } else {
-            panic!("Parsed wrong assertion type");
-        }
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-array", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "history".into(),
+            value: json!(["a", "b", "c"])
+        }));
+
+        let assertion = &fixture.assertions[0];
+
+        let match_response = json!({ "history": ["a", "b", "c"] });
+        assert!(assertion.check(&match_response).is_ok());
+
+        let mismatch_response = json!({ "history": ["a", "b", "d"] });
+        assert!(assertion.check(&mismatch_response).is_err());
     }
 
     #[test]
-    fn field_type_assertion_passes_when_type_matches() {
-        let assertion = FieldAssertion::TypeIs {
-            field: "protocolVersion".to_string(),
-            expected: JsonType::Number,
-        };
-        let response = json!({ "protocolVersion": 28 });
-        assert_eq!(assertion.check(&response), Ok(()));
-        
-        let assertion_str = FieldAssertion::TypeIs {
-            field: "passphrase".to_string(),
-            expected: JsonType::String,
-        };
-        let response_str = json!({ "passphrase": "test" });
-        assert_eq!(assertion_str.check(&response_str), Ok(()));
-    }
+    fn parses_and_checks_table_and_datetime_field_equals() {
+        let body = r#"
+        method = "get-network"
 
-    #[test]
-    fn field_type_assertion_fails_when_type_mismatches() {
-        let assertion = FieldAssertion::TypeIs {
-            field: "protocolVersion".to_string(),
-            expected: JsonType::String,
-        };
-        // It's a number, but expected string
-        let response = json!({ "protocolVersion": 28 });
-        let result = assertion.check(&response);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("protocolVersion"));
-        assert!(err_msg.contains("String"));
-    }
+        [[assert]]
+        kind = "field-equals"
+        field = "nested"
+        value = { key1 = "value1", key2 = 42 }
 
-    #[test]
-    fn field_type_assertion_fails_when_field_is_missing() {
-        let assertion = FieldAssertion::TypeIs {
-            field: "protocolVersion".to_string(),
-            expected: JsonType::Number,
-        };
-        let response = json!({});
-        let result = assertion.check(&response);
-        assert!(result.is_err());
-        let err_msg = result.unwrap_err();
-        assert!(err_msg.contains("protocolVersion"));
-        assert!(err_msg.contains("missing"));
+        [[assert]]
+        kind = "field-equals"
+        field = "timestamp"
+        value = 2023-01-01T12:00:00Z
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-table", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "nested".into(),
+            value: json!({ "key1": "value1", "key2": 42 })
+        }));
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "timestamp".into(),
+            value: json!("2023-01-01T12:00:00Z")
+        }));
+
+        let assertion_nested = &fixture.assertions[0];
+        let assertion_timestamp = &fixture.assertions[1];
+
+        let match_response = json!({
+            "nested": { "key1": "value1", "key2": 42 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&match_response).is_ok());
+        assert!(assertion_timestamp.check(&match_response).is_ok());
+
+        let mismatch_response = json!({
+            "nested": { "key1": "value1", "key2": 99 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&mismatch_response).is_err());
+        assert!(assertion_timestamp.check(&mismatch_response).is_ok());
     }
 }

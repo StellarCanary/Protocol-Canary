@@ -41,7 +41,7 @@ impl fmt::Display for Surface {
     }
 }
 
-/// The outcome of running a single [`crate::engine::CompatibilityTest`].
+/// The outcome of running a single compatibility test.
 ///
 /// `Fail` means the compatibility assertion ran and failed; `Error` means
 /// the test could not be executed correctly (e.g. a network timeout). Do
@@ -85,6 +85,30 @@ pub struct CompatibilityResult {
 }
 
 impl CompatibilityResult {
+    /// Whether this single result should fail a run: `true` for
+    /// [`Status::Fail`] and [`Status::Error`], `false` otherwise.
+    ///
+    /// This is public API for external consumers of `canary-core` that
+    /// inspect individual results. The CLI does not call it: its run-level
+    /// decision uses `canary_runner::ResultSummary::has_required_failure`,
+    /// which applies the same `Fail`/`Error` rule to summary counts. Keep
+    /// the two in sync if either rule changes.
+    ///
+    /// ```
+    /// use canary_core::{CompatibilityResult, ProtocolVersion, Status, Surface};
+    ///
+    /// let result = CompatibilityResult {
+    ///     test_id: "t1".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     status: Status::Error,
+    ///     summary: "rpc timeout".into(),
+    ///     details: None,
+    ///     duration_ms: 1,
+    ///     fixture_id: None,
+    /// };
+    /// assert!(result.is_required_failure());
+    /// ```
     pub fn is_required_failure(&self) -> bool {
         matches!(self.status, Status::Fail | Status::Error)
     }
@@ -116,8 +140,8 @@ impl fmt::Display for ProjectType {
 
 /// A declared or detected capability of the project under test.
 ///
-/// Used by the [planner](crate::planner::CompatibilityPlanner) to decide
-/// whether a fixture that requires a capability is applicable.
+/// Used by the runner's fixture planner (see `canary-runner`'s scheduler) to
+/// decide whether a fixture that requires a capability is applicable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
@@ -192,6 +216,7 @@ pub struct RunOptions {
     pub verbose: bool,
     pub quiet: bool,
     pub max_concurrency: u32,
+    pub rpc_timeout: u64,
 }
 
 impl Default for RunOptions {
@@ -200,6 +225,7 @@ impl Default for RunOptions {
             verbose: false,
             quiet: false,
             max_concurrency: 4,
+            rpc_timeout: 10,
         }
     }
 }
@@ -287,6 +313,15 @@ mod tests {
     #[test]
     fn protocol_versions_order_numerically() {
         assert!(ProtocolVersion(27) < ProtocolVersion(28));
+    }
+
+    #[test]
+    fn statuses_display_as_their_reporter_names() {
+        assert_eq!(Status::Pass.to_string(), "pass");
+        assert_eq!(Status::Warning.to_string(), "warning");
+        assert_eq!(Status::Fail.to_string(), "fail");
+        assert_eq!(Status::Skipped.to_string(), "skipped");
+        assert_eq!(Status::Error.to_string(), "error");
     }
 
     #[test]

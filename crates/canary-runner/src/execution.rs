@@ -1,4 +1,4 @@
-//! Executing a [`CompatibilityPlan`](crate::scheduler::CompatibilityPlan).
+//! Executing a [`CompatibilityPlan`].
 //!
 //! XDR fixtures are offline and run synchronously, in order. RPC and
 //! Soroban fixtures are network-bound and run concurrently within their
@@ -24,7 +24,8 @@ pub async fn execute(
     rpc_endpoint: &str,
 ) -> Vec<CompatibilityResult> {
     let concurrency = context.options.max_concurrency.max(1) as usize;
-    let client = HttpRpcClient::new(rpc_endpoint.to_string());
+    let client = HttpRpcClient::new(rpc_endpoint.to_string())
+        .with_timeout(std::time::Duration::from_secs(context.options.rpc_timeout));
 
     let mut results = run_xdr(&plan.xdr, context);
     results.extend(run_rpc(&plan.rpc, context, client.clone(), concurrency).await);
@@ -199,6 +200,47 @@ mod tests {
         }
     }
 
+    /// [`context()`] backed by a cache directory nothing has written to.
+    ///
+    /// `CacheKey::to_file_stem` hashes `network.rpc_url`, and every test here
+    /// leaves that as the literal `"unused"` — so the shared temp cache keeps
+    /// handing back entries written by earlier runs of this suite. A cache hit
+    /// returns the stored result *without contacting the mock server*, which
+    /// is precisely the concurrent execution the out-of-order tests below
+    /// exist to observe, so they have to start from an empty cache.
+    fn uncached_context() -> ExecutionContext {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+        let mut context = context();
+        // pid + nanos + counter: the timestamp alone cannot separate the
+        // threads the harness runs in parallel.
+        let unique = format!(
+            "canary-runner-uncached-{}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed),
+        );
+        context.cache = CacheStore::new(std::env::temp_dir().join(unique));
+        context
+    }
+
+    fn rpc_fixture(id: &str, method: &str) -> RpcFixture {
+        RpcFixture::from_loaded(
+            &parse_fixture_str(
+                &format!(
+                    "id = \"{id}\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"{method}\"\n"
+                ),
+                std::path::Path::new("r.toml"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn xdr_fixtures_run_synchronously_in_order() {
         let f1 = XdrFixture::from_loaded(
@@ -263,5 +305,169 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert_eq!(results[0].test_id, "x");
         assert_eq!(results[1].test_id, "r");
+    }
+
+    fn soroban_fixture(id: &str, sequence_number: i64) -> SorobanFixture {
+        use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract};
+        let source_account = StrkeyPublicKey([0u8; 32]).to_string();
+        let contract_id = StrkeyContract([0u8; 32]).to_string();
+        SorobanFixture::from_loaded(
+            &parse_fixture_str(
+                &format!(
+                    "id = \"{id}\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"cap-85\"\ndescription = \"test\"\nsource_account = \"{source_account}\"\ncontract_id = \"{contract_id}\"\nfunction = \"hello\"\nsequence_number = {sequence_number}\n\n[[args]]\nkind = \"symbol\"\nvalue = \"world\"\n\n[expect]\nkind = \"simulation-success\"\n"
+                ),
+                std::path::Path::new("s.toml"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn soroban_results_are_grouped_after_rpc_results() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "latestLedger": 1000, "transactionData": "AAAA" }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut plan = CompatibilityPlan::default();
+        plan.rpc.push(
+            RpcFixture::from_loaded(
+                &parse_fixture_str(
+                    "id = \"r\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"get-network\"\n",
+                    std::path::Path::new("r.toml"),
+                )
+                .unwrap(),
+            )
+            .unwrap(),
+        );
+        plan.soroban.push(soroban_fixture("s1", 1));
+        plan.soroban.push(soroban_fixture("s2", 2));
+
+        let results = execute(&plan, &context(), &server.uri()).await;
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].test_id, "r");
+        assert_eq!(results[0].surface, Surface::Rpc);
+        assert_eq!(results[1].test_id, "s1");
+        assert_eq!(results[1].surface, Surface::Soroban);
+        assert_eq!(results[2].test_id, "s2");
+        assert_eq!(results[2].surface, Surface::Soroban);
+        assert_eq!(results[2].status, Status::Pass);
+    }
+
+    #[tokio::test]
+    async fn soroban_results_keep_fixture_order_when_responses_finish_out_of_order() {
+        let server = MockServer::start().await;
+
+        let first = soroban_fixture("s1", 1);
+        let second = soroban_fixture("s2", 2);
+        // The two fixtures differ only in sequence number, so their
+        // simulation request bodies are unique and the envelope itself is
+        // a reliable request matcher.
+        let first_envelope =
+            canary_soroban::build_invoke_transaction_envelope(&first.invocation).unwrap();
+        let second_envelope =
+            canary_soroban::build_invoke_transaction_envelope(&second.invocation).unwrap();
+
+        // The first fixture's response is delayed so the second fixture's
+        // finishes first, completing out of fixture order.
+        Mock::given(wiremock::matchers::body_string_contains(first_envelope))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": { "latestLedger": 1000, "transactionData": "AAAA" }
+                    }))
+                    .set_delay(std::time::Duration::from_millis(500)),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(wiremock::matchers::body_string_contains(second_envelope))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "latestLedger": 1000, "transactionData": "AAAA" }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut plan = CompatibilityPlan::default();
+        plan.soroban.push(first);
+        plan.soroban.push(second);
+
+        // A cache hit returns the stored result without contacting the mock,
+        // so with the shared cache directory these fixtures would be served
+        // from a previous run's entries and never complete out of order.
+        let context = uncached_context();
+        let results = execute(&plan, &context, &server.uri()).await;
+        let _ = context.cache.clear();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].test_id, "s1");
+        assert_eq!(results[1].test_id, "s2");
+        assert_eq!(results[0].status, Status::Pass);
+        assert_eq!(results[1].status, Status::Pass);
+    }
+
+    /// Issue #282: `run_rpc` uses the same collect-into-`(index, result)`
+    /// pairs then `sort_by_key` pattern as `run_soroban`, but had no
+    /// equivalent test, so RPC's determinism guarantee under concurrent
+    /// completion was unverified.
+    ///
+    /// The two fixtures call different RPC methods, so the JSON-RPC `method`
+    /// name in the request body identifies each one: the first fixture's
+    /// response is delayed and the second's returns immediately, making
+    /// completion order the reverse of fixture order.
+    #[tokio::test]
+    async fn rpc_results_keep_fixture_order_when_responses_finish_out_of_order() {
+        let server = MockServer::start().await;
+
+        Mock::given(wiremock::matchers::body_string_contains("getNetwork"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": {
+                            "passphrase": "Test SDF Network ; September 2015",
+                            "protocolVersion": 28
+                        }
+                    }))
+                    .set_delay(std::time::Duration::from_millis(500)),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(wiremock::matchers::body_string_contains("getLatestLedger"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "id": "AAAA", "protocolVersion": 28, "sequence": 1000 }
+            })))
+            .mount(&server)
+            .await;
+
+        let mut plan = CompatibilityPlan::default();
+        plan.rpc.push(rpc_fixture("r1", "get-network"));
+        plan.rpc.push(rpc_fixture("r2", "get-latest-ledger"));
+
+        let context = uncached_context();
+        let results = execute(&plan, &context, &server.uri()).await;
+        let _ = context.cache.clear();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(
+            results[0].test_id, "r1",
+            "the fixture whose response arrived last must still be reported first"
+        );
+        assert_eq!(results[1].test_id, "r2");
+        assert_eq!(results[0].status, Status::Pass);
+        assert_eq!(results[1].status, Status::Pass);
     }
 }

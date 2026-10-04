@@ -35,6 +35,12 @@ file's own `surface` and `protocol` fields matter. Non-`.toml` files
 sorted-by-path order, which is what makes `stellar-canary fixtures` and
 `stellar-canary check` output deterministic.
 
+To see which fixtures a directory actually contains before running them,
+use `stellar-canary fixtures --fixtures-dir <path> --protocol <N>` — it
+loads the directory exactly the way `check` does and lists everything it
+picked up, grouped by surface, without executing a single assertion. See
+[`fixtures`](./cli/fixtures.md) for the full command reference.
+
 The real `protocol-28` pack looks like this:
 
 ```text
@@ -129,6 +135,9 @@ as a project incompatibility.
 stellar-canary fixtures --fixtures-dir <path> --protocol <N>   # confirm it's picked up
 stellar-canary check --fixtures-dir <path> --protocol <N>      # actually run it
 ```
+
+The `fixtures` command is the preview half of that pair — see
+[`fixtures`](./cli/fixtures.md) for its options and output format.
 
 ## Adding a fixture or a protocol pack
 

@@ -23,6 +23,22 @@ fn surface_cell(results: &[&canary_core::CompatibilityResult]) -> &'static str {
 pub struct MarkdownReporter;
 
 impl MarkdownReporter {
+    /// Renders the given [`ReportInput`] into GitHub-friendly Markdown.
+    ///
+    /// The generated report includes:
+    /// - Header with the target protocol version.
+    /// - Summary table broken down by test surface (XDR, RPC, Soroban).
+    /// - Overall status determination (**PASS**, **WARNING**, **FAIL**, or **ERROR**).
+    /// - Detailed section for test failures with summary and details (if present).
+    /// - Count of skipped fixtures (if any).
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - Reference to the [`ReportInput`] containing test outcomes and policy decision.
+    ///
+    /// # Returns
+    ///
+    /// A formatted Markdown [`String`], ready to be rendered in a GitHub job summary or terminal log.
     pub fn render(input: &ReportInput) -> String {
         let mut out = String::new();
 
@@ -75,6 +91,11 @@ impl MarkdownReporter {
         if !input.skipped.is_empty() {
             let _ = writeln!(out);
             let _ = writeln!(out, "Skipped {} fixture(s).", input.skipped.len());
+            if input.verbose {
+                for skip in &input.skipped {
+                    let _ = writeln!(out, "- **{}**: {}", skip.fixture_id, skip.reason);
+                }
+            }
         }
 
         out
@@ -153,6 +174,17 @@ mod tests {
     }
 
     #[test]
+    fn a_failure_with_multiline_details_renders_as_nested_bullets() {
+        let mut failing = result("p28-xdr-2", Surface::Xdr, Status::Fail);
+        failing.details =
+            Some("error summary\nbyte offset: 12\nexpected something else".to_string());
+        let input = base_input(vec![failing], PolicyDecision::Fail);
+        let text = MarkdownReporter::render(&input);
+        let expected = "- **p28-xdr-2**: p28-xdr-2 summary\n  - error summary\n  - byte offset: 12\n  - expected something else\n";
+        assert!(text.contains(expected));
+    }
+
+    #[test]
     fn an_execution_error_renders_as_error_result() {
         let input = base_input(
             vec![result("p28-rpc-1", Surface::Rpc, Status::Error)],
@@ -172,5 +204,46 @@ mod tests {
         });
         let text = MarkdownReporter::render(&input);
         assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(!text.contains("requires a capability"));
+    }
+
+    #[test]
+    fn mentions_skipped_fixture_reasons_when_verbose() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.verbose = true;
+        input.skipped.push(SkipSummary {
+            fixture_id: "p28-soroban-1".into(),
+            surface: Surface::Soroban,
+            reason: "requires a capability not declared by this project".into(),
+        });
+        let text = MarkdownReporter::render(&input);
+        assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(text
+            .contains("- **p28-soroban-1**: requires a capability not declared by this project"));
+    }
+
+    /// The mirror of the test above: `render` guards the line with
+    /// `if !input.skipped.is_empty()`, and every other test in this module
+    /// happens to use an empty skipped list — so the omission was only ever
+    /// an accidental side effect, never asserted. A regression that printed
+    /// "Skipped 0 fixture(s)." on every clean run would have passed the
+    /// whole suite.
+    #[test]
+    fn omits_the_skipped_fixture_line_when_nothing_was_skipped() {
+        let input = base_input(
+            vec![result("p28-xdr-1", Surface::Xdr, Status::Pass)],
+            PolicyDecision::Pass,
+        );
+        assert!(input.skipped.is_empty());
+
+        let text = MarkdownReporter::render(&input);
+        assert!(
+            !text.contains("Skipped"),
+            "a run with no skipped fixtures must not mention them at all; \
+             rendered report:\n{text}"
+        );
+        // Sanity: the report itself still rendered.
+        assert!(text.starts_with("## Stellar Protocol Canary"));
+        assert!(text.contains("**Result: PASS**"));
     }
 }

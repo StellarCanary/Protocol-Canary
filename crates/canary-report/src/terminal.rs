@@ -31,6 +31,26 @@ fn decision_label(input: &ReportInput) -> &'static str {
 pub struct TerminalReporter;
 
 impl TerminalReporter {
+    /// Renders a given [`ReportInput`] into a human-readable terminal-friendly string.
+    ///
+    /// The generated report includes project and protocol metadata, detailed test results
+    /// grouped by surface, a summary of skipped fixtures, and an overall compatibility decision.
+    /// Any failures or errors are listed at the end with their associated details.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The structured [`ReportInput`] containing all results and metadata to report.
+    ///
+    /// # Returns
+    ///
+    /// A formatted `String` ready to be printed to `stdout` or `stderr`.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// let text = TerminalReporter::render(&report_input);
+    /// println!("{}", text);
+    /// ```
     pub fn render(input: &ReportInput) -> String {
         let mut out = String::new();
 
@@ -53,7 +73,15 @@ impl TerminalReporter {
                     );
                 }
                 None => {
-                    let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
+                    if let Some(err) = &network.error {
+                        let _ = writeln!(
+                            out,
+                            "Network: {} (protocol not observed: {err})",
+                            network.name
+                        );
+                    } else {
+                        let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
+                    }
                 }
             }
         }

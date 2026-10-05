@@ -53,6 +53,23 @@ pub enum DecodedValue {
 }
 
 impl DecodedValue {
+    /// The [`XdrTypeName`] of the concrete variant this value holds.
+    ///
+    /// `DecodedValue` is a tagged enum: whichever variant was produced by
+    /// [`decode`] (`StellarValue`, `ContractExecutable`, or `ScVal`), this
+    /// reports the matching [`XdrTypeName`] without inspecting the payload.
+    /// The input is simply the decoded value itself (`&self`).
+    ///
+    /// This is infallible: it cannot fail and never panics, because every
+    /// variant maps to exactly one type name.
+    ///
+    /// ```
+    /// use canary_xdr::{decode, XdrTypeName};
+    ///
+    /// // `AAAAAQ==` is the XDR encoding of `ScVal::Void`.
+    /// let value = decode(XdrTypeName::ScVal, "AAAAAQ==").unwrap();
+    /// assert_eq!(value.type_name(), XdrTypeName::ScVal);
+    /// ```
     pub fn type_name(&self) -> XdrTypeName {
         match self {
             DecodedValue::StellarValue(_) => XdrTypeName::StellarValue,

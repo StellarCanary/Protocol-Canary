@@ -466,17 +466,24 @@ mod tests {
 
     #[test]
     fn roundtrip_fixture_fails_on_garbage_input() {
-        let body = "type = \"StellarValue\"\nkind = \"roundtrip\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
-        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-roundtrip-garbage", body)).unwrap();
+        let body =
+            "type = \"StellarValue\"\nkind = \"roundtrip\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-roundtrip-garbage", body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Fail);
-        assert_eq!(result.summary, "failed to decode StellarValue for roundtrip");
+        assert_eq!(
+            result.summary,
+            "failed to decode StellarValue for roundtrip"
+        );
     }
 
     #[test]
     fn encode_equals_fixture_fails_on_garbage_input() {
         let body = "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"!!!not-xdr!!!\"\nexpected_base64 = \"AAAA\"\n";
-        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-encode-equals-garbage", body)).unwrap();
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-encode-equals-garbage", body))
+                .unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Fail);
         assert_eq!(result.summary, "failed to decode StellarValue input");

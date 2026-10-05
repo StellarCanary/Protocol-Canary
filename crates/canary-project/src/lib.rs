@@ -17,6 +17,10 @@ pub(crate) mod test_support {
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
 
+    /// Owns a test fixture directory and removes it when dropped.
+    ///
+    /// Instances are created by [`temp_dir`] and expose the directory path
+    /// used by the calling test to create filesystem fixtures.
     pub struct TempDir {
         pub path: PathBuf,
     }

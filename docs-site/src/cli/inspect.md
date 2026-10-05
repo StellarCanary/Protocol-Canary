@@ -9,8 +9,10 @@ Print offline project diagnostics
 Usage: stellar-canary inspect [OPTIONS]
 
 Options:
-      --config <CONFIG>  Path to a configuration file (default: .stellar-canary.toml in the project root)
-  -h, --help             Print help
+      --protocol <PROTOCOL>          Target protocol version (overrides configuration)
+      --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files to inspect [default: fixtures]
+      --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
+  -h, --help                         Print help
 ```
 
 ## What it inspects
@@ -19,6 +21,11 @@ The same project-detection logic `check` uses internally, surfaced on its
 own: the project root, its detected type, which Stellar-related
 dependencies/artifacts were detected, the configured target protocol, and
 which surfaces (`xdr`/`rpc`/`soroban`) are currently enabled.
+
+With `--fixtures-dir` and `--protocol`, `inspect` drives the same
+compatibility-planner preview described in the README: it lists fixtures that
+would run and fixtures skipped for a protocol mismatch, disabled surface, or
+missing project capability, without contacting Stellar RPC or Soroban endpoints.
 
 ## Example
 

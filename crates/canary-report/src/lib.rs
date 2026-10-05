@@ -40,6 +40,7 @@ pub struct ProjectSummary {
 pub struct NetworkSummary {
     pub name: NetworkName,
     pub observed_protocol: Option<ProtocolVersion>,
+    pub error: Option<String>,
 }
 
 /// Everything a reporter needs to render a finished run. This is the only

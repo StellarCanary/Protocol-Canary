@@ -28,6 +28,9 @@ pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
 /// );
 /// ```
 pub const FUTURENET_PASSPHRASE: &str = "Test SDF Future Network ; October 2022";
+/// The canonical passphrase for the Stellar public network ("Public Global Stellar Network : November 2015").
+/// It is used for transaction signing on Mainnet.
+/// It represents network identification data only and does not configure RPC endpoints.
 pub const MAINNET_PASSPHRASE: &str = "Public Global Stellar Network ; September 2015";
 /// The default RPC endpoint for Stellar Testnet.
 ///

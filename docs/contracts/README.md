@@ -69,6 +69,9 @@ default that implementers must not rely on until it is recorded here.
 | D-11 | Which hosts may a fixture-pack download redirect to? | CF-06 | Unresolved (see review item S2) |
 | D-12 | Is a lockfile `tool.version` mismatch a warning or a failure? | CF-03 | Warning in version 1 (see review item S3) |
 
+The proposed directions, their security sensitivity and the evidence still needed
+are collected in [`decisions.md`](decisions.md).
+
 ## Review of the remaining proposed defaults (2026-10-09)
 
 This pass looked for contradictions between the contracts, between the contracts

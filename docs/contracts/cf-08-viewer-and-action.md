@@ -82,7 +82,10 @@ license and a pinned checksum.
   `results`: a visible warning, display the derived counts, keep the report's
   `status` as stated.
 - The page persists nothing by default (no localStorage, cookies, IndexedDB).
-  A theme preference may be stored in `localStorage` only; reports never are.
+  A theme preference may be stored in `localStorage` only; reports never are. A
+  GitHub Pages project site shares the origin `stellarcanary.github.io` with the
+  organization's other Pages sites, so the storage key must be prefixed and the
+  decision D-08b must accept that shared origin.
 
 ### 2.3 Policy interpretation
 

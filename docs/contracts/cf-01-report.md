@@ -77,7 +77,7 @@ implementing change lands; until then they are a plan.
 | `results[].source` | `"live"` or `"cache"` | Whether this result was executed in this run or replayed from the local result cache. Absent means *not recorded* (a report from `0.1.1` or earlier), never live. A value a consumer does not know is read as not recorded. The engine never writes `"unknown"`. Implemented by RH-02 as an optional field under the additive rule. | CF-01 |
 | `skipped[].code` | string, lowercase kebab | Stable machine identifier for the skip reason. `reason` stays free text. Initial codes: `protocol-mismatch`, `surface-disabled`, `missing-capability`. | CF-01 |
 | `fixturePack` | object | `{ "digest": "sha256:<hex>", "registryVersion": 1, "source": "directory" or "release", "revision": string or null }` | CF-02 |
-| `lock` | object | `{ "path": "<relative>", "status": "absent" or "verified" }` | CF-03 |
+| `lock` | object | `{ "path": "<relative>", "status": "absent" or "verified", "warnings": [string] }`. `warnings` carries, for example, an engine-version mismatch (D-12), because stderr is not shown to Action users on a passing run. | CF-03 |
 | `results[].verification` | object | Copy of the fixture's verification record. Never synthesized. | CF-04 |
 | `run` | object | `{ "toolBuildCommit": string or null }` | CF-01 |
 

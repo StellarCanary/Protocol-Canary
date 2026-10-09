@@ -95,7 +95,9 @@ fail when a registry value differs from the TOML value.
 JSON encoding: UTF-8, LF line endings, two-space indent, one trailing newline,
 object keys in the order shown above, no duplicate keys. Arrays are sorted as in
 section 4. The registry is committed or generated in a way that makes it
-byte-reproducible (D-03).
+byte-reproducible (D-03). A committed generated file is a conflict hot spot when many
+fixture pull requests land together, so there is one registry per protocol pack and
+the freshness check prints the regeneration command.
 
 The registry excludes git commits, timestamps, absolute paths and host
 information. A pack's git revision is provenance and is recorded elsewhere

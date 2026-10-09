@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use canary_core::{
     CompatibilityResult, GitContext, NetworkName, PolicyDecision, ProjectType, ProtocolVersion,
-    Status, Surface,
+    ResultSource, Status, Surface,
 };
 
 use crate::{NetworkSummary, ProjectSummary, ReportInput, SkipSummary};
@@ -74,6 +74,11 @@ struct JsonResult {
     duration_ms: u64,
     #[serde(rename = "fixtureId", skip_serializing_if = "Option::is_none", default)]
     fixture_id: Option<String>,
+    /// `"live"` or `"cache"`. Absent in reports written before the field
+    /// existed (and when the source is not recorded), which is not a claim
+    /// that the result was live.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -161,6 +166,10 @@ impl From<&ReportInput> for JsonReport {
                     details: r.details.clone(),
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id.clone(),
+                    source: match r.source {
+                        ResultSource::Unknown => None,
+                        known => Some(known.as_str().to_string()),
+                    },
                 })
                 .collect(),
             skipped: input
@@ -236,6 +245,16 @@ fn parse_status(value: &str) -> Result<Status, JsonReportError> {
     }
 }
 
+/// An unrecognized spelling is kept as "not recorded" rather than rejected:
+/// `source` is an open string field, so a later version may add values.
+fn parse_source(value: Option<&str>) -> ResultSource {
+    match value {
+        Some("live") => ResultSource::Live,
+        Some("cache") => ResultSource::Cache,
+        _ => ResultSource::Unknown,
+    }
+}
+
 fn parse_network_name(value: &str) -> NetworkName {
     match value {
         "testnet" => NetworkName::Testnet,
@@ -272,6 +291,7 @@ impl TryFrom<JsonReport> for ReportInput {
                     details: r.details,
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id,
+                    source: parse_source(r.source.as_deref()),
                 })
             })
             .collect::<Result<Vec<_>, JsonReportError>>()?;
@@ -386,6 +406,7 @@ mod tests {
                 details: None,
                 duration_ms: 3,
                 fixture_id: Some("p28-xdr-1".into()),
+                source: canary_core::ResultSource::Live,
             }],
             skipped: vec![SkipSummary {
                 fixture_id: "p28-soroban-1".into(),
@@ -463,6 +484,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-rpc-1".into()),
+            source: canary_core::ResultSource::Live,
         });
         mixed.results.push(CompatibilityResult {
             test_id: "p28-soroban-1".into(),
@@ -473,6 +495,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-soroban-1".into()),
+            source: canary_core::ResultSource::Live,
         });
 
         let json_text = JsonReporter::render(&mixed);
@@ -595,5 +618,51 @@ mod tests {
             }
             _ => panic!("Expected UnsupportedSchemaVersion error, got {:?}", err),
         }
+    }
+
+    #[test]
+    fn a_live_and_a_cached_result_render_their_source() {
+        let mut report = input();
+        report.results.push(CompatibilityResult {
+            test_id: "p28-xdr-2".into(),
+            fixture_id: Some("p28-xdr-2".into()),
+            source: ResultSource::Cache,
+            ..report.results[0].clone()
+        });
+        let value: serde_json::Value =
+            serde_json::from_str(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(value["results"][0]["source"], "live");
+        assert_eq!(value["results"][1]["source"], "cache");
+    }
+
+    #[test]
+    fn the_source_survives_a_render_and_parse_round_trip() {
+        let mut report = input();
+        report.results[0].source = ResultSource::Cache;
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Cache);
+        assert_eq!(parsed.cached_count(), 1);
+    }
+
+    #[test]
+    fn a_report_without_source_is_accepted_and_not_assumed_live() {
+        // Every report written by 0.1.1 looks like this.
+        let mut report = input();
+        report.results[0].source = ResultSource::Unknown;
+        let text = JsonReporter::render(&report);
+        assert!(!text.contains("\"source\""), "unknown is omitted: {text}");
+
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Unknown);
+        assert_eq!(parsed.cached_count(), 0);
+    }
+
+    #[test]
+    fn an_unrecognized_source_value_is_tolerated_as_not_recorded() {
+        let text = JsonReporter::render(&input())
+            .replace("\"source\": \"live\"", "\"source\": \"from-the-future\"");
+        assert!(text.contains("from-the-future"));
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Unknown);
     }
 }

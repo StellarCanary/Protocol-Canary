@@ -70,6 +70,41 @@ impl fmt::Display for Status {
     }
 }
 
+/// Where a [`CompatibilityResult`] came from.
+///
+/// A cached result is a recording of an earlier run, not an observation made
+/// now. Reports carry this so a reader can tell the two apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultSource {
+    /// The fixture was executed during this run.
+    Live,
+    /// The result was replayed from the local result cache.
+    Cache,
+    /// Not recorded: the result was read from a report written by a version
+    /// that did not record its source. This is not a claim that it was live.
+    #[default]
+    Unknown,
+}
+
+impl ResultSource {
+    /// The lowercase name used in the JSON report: `live`, `cache` or
+    /// `unknown`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultSource::Live => "live",
+            ResultSource::Cache => "cache",
+            ResultSource::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for ResultSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The normalized result of a single compatibility test, produced by every
 /// surface runner and consumed by every reporter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,6 +117,11 @@ pub struct CompatibilityResult {
     pub details: Option<String>,
     pub duration_ms: u64,
     pub fixture_id: Option<String>,
+    /// Whether this result was executed now or replayed from the cache.
+    /// Runners set [`ResultSource::Live`]; the result cache sets
+    /// [`ResultSource::Cache`] when it serves an entry.
+    #[serde(default)]
+    pub source: ResultSource,
 }
 
 impl CompatibilityResult {
@@ -106,6 +146,7 @@ impl CompatibilityResult {
     ///     details: None,
     ///     duration_ms: 1,
     ///     fixture_id: None,
+    ///     source: canary_core::ResultSource::Live,
     /// };
     /// assert!(result.is_required_failure());
     /// ```
@@ -374,6 +415,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-xdr-cap83-001".into()),
+            source: crate::model::ResultSource::Live,
         };
         let error = CompatibilityResult {
             status: Status::Error,

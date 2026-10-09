@@ -299,6 +299,7 @@ impl<C: RpcClient + Sync> SorobanRunner for DefaultSorobanRunner<C> {
             details,
             duration_ms,
             fixture_id: Some(fixture.metadata.id.clone()),
+            source: canary_core::ResultSource::Live,
         })
     }
 }

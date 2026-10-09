@@ -41,7 +41,7 @@ fn run_xdr(fixtures: &[XdrFixture], context: &ExecutionContext) -> Vec<Compatibi
         .iter()
         .map(|fixture| {
             let cache_key = cache_key(context, &fixture.metadata);
-            if let Some(cached) = context.cache.get(&cache_key) {
+            if let Some(cached) = context.cache.get(&cache_key, Surface::Xdr) {
                 return cached;
             }
 
@@ -54,7 +54,7 @@ fn run_xdr(fixtures: &[XdrFixture], context: &ExecutionContext) -> Vec<Compatibi
                 )
             });
 
-            let _ = context.cache.put(&cache_key, &result);
+            let _ = context.cache.put(&cache_key, Surface::Xdr, &result);
             result
         })
         .collect()
@@ -73,7 +73,7 @@ async fn run_rpc(
             let runner = &runner;
             async move {
                 let cache_key = cache_key(context, &fixture.metadata);
-                if let Some(cached) = context.cache.get(&cache_key) {
+                if let Some(cached) = context.cache.get(&cache_key, Surface::Rpc) {
                     return (index, cached);
                 }
 
@@ -85,7 +85,7 @@ async fn run_rpc(
                         &e.to_string(),
                     )
                 });
-                let _ = context.cache.put(&cache_key, &result);
+                let _ = context.cache.put(&cache_key, Surface::Rpc, &result);
                 (index, result)
             }
         })
@@ -110,7 +110,7 @@ async fn run_soroban(
             let runner = &runner;
             async move {
                 let cache_key = cache_key(context, &fixture.metadata);
-                if let Some(cached) = context.cache.get(&cache_key) {
+                if let Some(cached) = context.cache.get(&cache_key, Surface::Soroban) {
                     return (index, cached);
                 }
 
@@ -122,7 +122,7 @@ async fn run_soroban(
                         &e.to_string(),
                     )
                 });
-                let _ = context.cache.put(&cache_key, &result);
+                let _ = context.cache.put(&cache_key, Surface::Soroban, &result);
                 (index, result)
             }
         })
@@ -149,6 +149,7 @@ fn error_result(
         details: Some(message.to_string()),
         duration_ms: 0,
         fixture_id: Some(fixture_id.to_string()),
+        source: canary_core::ResultSource::Live,
     }
 }
 
@@ -522,7 +523,7 @@ mod tests {
         assert!(
             context
                 .cache
-                .get(&cache_key(&context, &passing.metadata))
+                .get(&cache_key(&context, &passing.metadata), Surface::Xdr)
                 .is_some(),
             "the passing result was stored"
         );
@@ -549,7 +550,7 @@ mod tests {
 
         let mut planted = run_xdr(std::slice::from_ref(&fixture), &context).remove(0);
         planted.summary = "planted marker".into();
-        context.cache.put(&key, &planted).unwrap();
+        context.cache.put(&key, Surface::Xdr, &planted).unwrap();
 
         let result = run_xdr(std::slice::from_ref(&fixture), &context).remove(0);
         assert_eq!(result.summary, "planted marker");

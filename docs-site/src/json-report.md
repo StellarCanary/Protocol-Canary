@@ -23,7 +23,7 @@ change would.
   "status": "pass",
   "counts": { "total": 5, "passed": 5, "failed": 0, "warnings": 0, "errors": 0, "skipped": 0 },
   "results": [
-    { "testId": "p28-xdr-cap83-empty-tx-set", "protocol": 28, "surface": "xdr", "status": "pass", "summary": "StellarValue round-tripped byte-for-byte", "durationMs": 0, "fixtureId": "p28-xdr-cap83-empty-tx-set" }
+    { "testId": "p28-xdr-cap83-empty-tx-set", "protocol": 28, "surface": "xdr", "status": "pass", "summary": "StellarValue round-tripped byte-for-byte", "durationMs": 0, "fixtureId": "p28-xdr-cap83-empty-tx-set", "source": "live" }
   ],
   "git": { "commit": "ffa072cb14c682bfa5ebf158ab9bbe6058962aef", "branch": "main", "isDirty": false }
 }
@@ -49,6 +49,7 @@ change would.
 | `counts.passed` / `.failed` / `.warnings` / `.errors` | integer | yes | Count of each status among `results`. |
 | `counts.skipped` | integer | yes | `skipped.length`. |
 | `results` | array | yes | One entry per fixture that actually ran. Empty is valid (no fixtures found) and is a pass. |
+| `results[].source` | string \| absent | `"live"` or `"cache"` | `"live"`: executed during this run. `"cache"`: replayed from the local result cache (an earlier run, not an observation made now). Absent in reports written by `0.1.1` and earlier, which means *not recorded*, not "live". |
 | `results[].testId` / `.fixtureId` | string | yes (`fixtureId` may be `null`) | Currently always equal to each other and to the fixture's `id`. |
 | `results[].protocol` | integer | yes | The fixture's own declared protocol. |
 | `results[].surface` | string | yes | `xdr`, `rpc`, or `soroban` (lowercase). |

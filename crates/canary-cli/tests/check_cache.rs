@@ -97,6 +97,6 @@ fn cache_entries(dir: &TempProject) -> Vec<String> {
     std::fs::read_dir(dir.path.join(".stellar-canary-cache"))
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .filter(|name| name.starts_with("v2-") && name.ends_with(".json"))
+        .filter(|name| name.starts_with('v') && name.ends_with(".json"))
         .collect()
 }

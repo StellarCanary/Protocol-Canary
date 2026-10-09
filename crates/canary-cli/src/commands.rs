@@ -3,8 +3,8 @@
 use std::path::Path;
 
 use canary_core::{
-    CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode, NetworkContext,
-    Policy, PolicyEvaluator, ProtocolVersion, RunOptions,
+    CachePolicy, CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode,
+    NetworkContext, Policy, PolicyEvaluator, ProtocolVersion, RunOptions,
 };
 use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
@@ -154,7 +154,10 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         network: network_context,
         fixtures: fixture_store,
         git: git.clone(),
-        cache: CacheStore::new(root.join(CACHE_DIR_NAME)),
+        cache: CacheStore::new(root.join(CACHE_DIR_NAME)).with_policy(CachePolicy {
+            enabled: !args.no_cache,
+            live_max_age: args.live_cache_ttl.map(std::time::Duration::from_secs),
+        }),
         options: RunOptions {
             verbose: args.verbose,
             quiet: args.quiet,
@@ -768,6 +771,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: None,
+            source: canary_core::ResultSource::Live,
         }
     }
 

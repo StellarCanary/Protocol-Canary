@@ -21,6 +21,8 @@ Options:
       --verbose                      Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
       --quiet                        Shorten terminal-format output to a single status line.
       --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
+      --no-cache                     Do not read or write the local result cache. Every fixture runs fresh.
+      --live-cache-ttl <SECONDS>     Allow RPC and Soroban results from the local cache to be replayed for up to this many seconds. Off by default.
   -h, --help                         Print help
 ```
 
@@ -183,3 +185,20 @@ Exit code `1`. Note that the terminal reporter's headline for a failing
 run reads `Status: NOT READY` — the machine-readable `status` field in
 `--json` output is `"fail"`; see [JSON Report](../json-report.md) for the
 exact string values a script should key off of instead of terminal text.
+
+## Result cache
+
+`check` keeps a small file-backed cache in `.stellar-canary-cache` in the
+project root (add it to `.gitignore`).
+
+- **XDR results** are cached. They depend only on the fixture bytes, so an
+  entry stays valid until the fixture, a payload it references, the protocol
+  or the tool version changes. Any of those changes is a cache miss.
+- **RPC and Soroban results are not cached by default.** A recorded answer
+  from a network says nothing about what the network does now. Pass
+  `--live-cache-ttl <SECONDS>` to accept a replay no older than that, for
+  example to stay under a provider's rate limit.
+- `--no-cache` skips the cache entirely, for reading and for writing.
+- A replayed result is marked `"source": "cache"` in the JSON report, and the
+  terminal and Markdown reports say how many results were replayed.
+- A damaged, unreadable or old-layout entry is ignored and the fixture runs.

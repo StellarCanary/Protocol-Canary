@@ -210,16 +210,16 @@ real testnet or mainnet deployment.
 `check` reuses results from a local cache (`canary_core::CacheStore`,
 written to `.stellar-canary-cache` in the project root). The cache key covers
 the fixture's contents, the network, the tool version and the project's
-detected shape, so editing a fixture cannot return an old result. RPC and
-Soroban results are still replayed without an age limit and the report does not
-yet mark a replayed result; delete the directory to force a fresh run. See
+detected shape, so editing a fixture cannot return an old result. Only offline
+XDR results are replayed by default; RPC and Soroban results are replayed only
+with `--live-cache-ttl <SECONDS>`, and any replayed result is marked
+`"source": "cache"` in the JSON report. `--no-cache` skips the cache. See
 [`docs/contracts/cf-01-report.md`](docs/contracts/cf-01-report.md#6-cached-results).
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for planned work. Highlights: Protocol 29
-support once evidence-backed fixtures exist, limiting and marking replayed
-live results, and additional RPC/Soroban compatibility assertions.
+support once evidence-backed fixtures exist, and additional RPC/Soroban compatibility assertions.
 
 ## Workspace layout
 

@@ -4,6 +4,16 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Replayed results are now marked and live results are no longer replayed by
+  default. `results[].source` in the JSON report is `"live"` or `"cache"`
+  (absent in older reports, meaning not recorded). `check` no longer serves
+  RPC or Soroban results from the cache unless `--live-cache-ttl <SECONDS>`
+  is given, and then only while the entry is younger than that. XDR results,
+  which are offline and fully determined by the cache key, are still cached.
+  New `--no-cache` skips the cache entirely. The terminal and Markdown
+  reports state how many results were replayed. Cache entries now carry their
+  creation time and a layout number; entries from earlier layouts are never
+  read.
 - The result cache key now includes the fixture's contents (the fixture file
   and any `input_file` or `expected_file` it references), the network name,
   the tool version and a path-free project fingerprint (project type,

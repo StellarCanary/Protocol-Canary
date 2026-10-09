@@ -59,6 +59,27 @@ pub struct ReportInput {
 }
 
 impl ReportInput {
+    /// How many results were replayed from the local result cache instead of
+    /// being executed in this run.
+    pub fn cached_count(&self) -> usize {
+        self.results
+            .iter()
+            .filter(|r| r.source == canary_core::ResultSource::Cache)
+            .count()
+    }
+
+    /// The sentence reporters add when [`ReportInput::cached_count`] is not
+    /// zero, or `None`.
+    pub fn cache_notice(&self) -> Option<String> {
+        let cached = self.cached_count();
+        (cached > 0).then(|| {
+            format!(
+                "{cached} of {} results were replayed from the local result cache and were not executed in this run. Use --no-cache for a fresh run.",
+                self.results.len()
+            )
+        })
+    }
+
     /// Returns the run's results for one surface, in the order they appear
     /// in [`ReportInput::results`] — the order the runner executed them in.
     ///
@@ -84,6 +105,7 @@ impl ReportInput {
     ///     details: None,
     ///     duration_ms: 3,
     ///     fixture_id: Some("p28-xdr-cap83-empty-tx-set".into()),
+    ///     source: canary_core::ResultSource::Live,
     /// };
     /// let rpc_pass = canary_core::CompatibilityResult {
     ///     test_id: "p28-rpc-get-network".into(),
@@ -201,6 +223,7 @@ mod tests {
             details: None,
             duration_ms: 0,
             fixture_id: None,
+            source: canary_core::ResultSource::Live,
         }
     }
 

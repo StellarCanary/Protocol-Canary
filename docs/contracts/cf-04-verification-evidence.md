@@ -1,8 +1,8 @@
 # CF-04: Verification evidence and the Protocol 29 boundary
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decisions: D-05 (freshness window), D-09 (Protocol 28 RPC
-identity fixtures after Protocol 29).
+Pending maintainer decision: D-05 (freshness window). D-09 is approved
+(Option C), recorded in section 5.
 Authoritative for: what counts as verification, how it is recorded, and what
 may be claimed about Protocol 29.
 
@@ -125,8 +125,9 @@ current file is `historical`.
    `warning: the RPC endpoint reports protocol 29, but this run targets protocol
    28`. The Protocol 28 XDR and Soroban simulation fixtures passed.
 4. **No fixtures exist for protocol 29.** `check --protocol 29` against the same
-   pack skips all 7 fixtures and exits 0 with `counts.total = 0`
-   (see CF-01 section 7).
+   pack skips all 7 fixtures. With `0.1.1` that exited 0 with `counts.total = 0`
+   and `status: pass`; after D-02 (CF-01 section 7) it exits 2 and prints no
+   report.
 
 ### Scope of any future "Protocol 29 compatibility" statement
 
@@ -149,17 +150,72 @@ Not allowed:
   for Protocol 29. This project pins `stellar-xdr =28.0.1`. Which versions the
   engine should track is a maintainer decision and is not inferred here.
 
-### Open decision D-09
+### Decision D-09: Option C (approved by the maintainer)
 
-Because the two Protocol 28 RPC identity fixtures now fail against both public
-networks, the maintainers must choose and record one approach before Protocol 29
-work starts:
+The Protocol 28 pack is preserved and Protocol 29 coverage is developed
+separately, from real upstream specifications and real verification captures
+only. The options that were considered:
 
 | Option | Effect | Cost |
 |---|---|---|
-| A. Leave them. A Protocol 28 target against a Protocol 29 network reports failure. | Honest and already the behavior. | Every Testnet CI run of the published pack fails. |
-| B. Keep them but require an explicit network applicability field (a fixture applies only while the network reports its protocol). | Failures become skips with a reason. | Needs engine support and a fixture format change (CF-06 compatibility rules). |
-| C. Add a Protocol 29 RPC identity pack and keep the Protocol 28 pack for historical networks (for example a pinned local node). | Clear separation. | Requires live evidence first (section 3) before any P29 fixture is added. |
+| A. Leave the Protocol 28 identity fixtures. A Protocol 28 target against a Protocol 29 network reports failure. | Honest and already the behavior. | Every Testnet CI run of the published pack fails. |
+| B. Keep them but require an explicit network applicability field. | Failures become skips with a reason. | Needs engine support and a fixture format change. **Not chosen.** |
+| **C. Keep the Protocol 28 pack unchanged and add Protocol 29 coverage separately.** | Clear separation. | Requires live evidence (section 3) before any Protocol 29 fixture exists. **Chosen.** |
+
+Rules that follow from the decision:
+
+1. **No Protocol 28 assertion is ever edited to expect protocol 29.**
+   `p28-rpc-network` and `p28-rpc-latest-ledger` keep `protocolVersion = 28`. Their
+   failure against a network that reports 29 is a correct result.
+2. **Historical evidence stays.** Header comments, dated observations and
+   `docs/protocol-28.md` in `ProtocolCanary-Fixtures` are not rewritten. A new
+   observation is added beside them, with its own date.
+3. **An endpoint that reports protocol 29 cannot serve as a Protocol 28 live
+   environment.** As of 2026-10-09 both public networks checked report 29, so
+   the live Protocol 28 RPC identity fixtures cannot pass against them. A
+   Protocol 28 run against such an endpoint is expected to show that
+   fixture failing, the mismatch warning, and the offline XDR fixtures passing.
+   Running them against a Protocol 28 environment (for example a node the user
+   operates) is the user's choice and is outside what this project provides.
+   This is documented, not worked around.
+4. **The mismatch stays visible.** The `warning: the RPC endpoint reports
+   protocol N, but this run targets protocol M` line, `network.observedProtocol`
+   and `targetProtocol` remain separate in the report (RH-05 pins this with
+   tests). Observing a protocol is never reported as compatibility.
+5. **Protocol 29 fixtures need all of:** an authoritative source (the upstream
+   release page lists no CAPs for Protocol 29, so no CAP-specific fixture
+   exists), a real capture made with a read-only call under section 3 with its
+   `evidenceRef`, and a verification record. Until then there are no Protocol 29
+   fixtures, and `check --protocol 29` against the shipped pack refuses to run
+   (exit `2`, D-02) instead of reporting success.
+6. **No new CAPs are invented for Protocol 29.** Anything described as
+   "Protocol 29 behavior" must cite the upstream page or a capture.
+7. **Out of scope throughout:** transaction submission, signing, private keys, a
+   backend or a database.
+
+#### Protocol 29 RPC coverage investigation
+
+On 2026-10-09 between 08:38 and 08:39 UTC, one read-only request each of
+`getNetwork`, `getLatestLedger`, `getVersionInfo`, `getHealth` and `getFeeStats`
+was sent to `https://soroban-testnet.stellar.org` and to
+`https://mainnet.sorobanrpc.com` (a public Mainnet endpoint whose operator this
+project has not verified). All ten returned HTTP 200 with a JSON-RPC result.
+Observed: `protocolVersion` was `29` in `getNetwork`, `getLatestLedger` and
+`getVersionInfo` on both networks; `getVersionInfo` returned version
+`29.0.0-b2b701685c79aee17fe4eb22dbd08a5dfd11594d` built `2026-09-22T14:52:44`
+with `captiveCoreVersion` `stellar-core 29.0.0 (...)`; Mainnet `getNetwork` had
+no `friendbotUrl`, Testnet's did. The `getLatestLedger` response carried a
+`metadataXdr` field of about 1.28 million characters on Mainnet and 0.21
+million on Testnet, which the engine downloads and discards.
+
+What this establishes: the three methods the engine could assert on exist on
+both networks and agree on protocol 29 at that moment. What it does not
+establish: that any fixture is verified, that the endpoints are canonical, or
+anything about behavior over time. It is an observation log, kept in
+`ProtocolCanary-Fixtures` as `docs/protocol-29-rpc-observations.md`, and it is
+not a verification record under section 3. The engine currently supports only
+`getNetwork` and `getLatestLedger`; `getVersionInfo` support is specified in
+CA-01.
 
 ## 6. Unsupported behavior
 
@@ -205,4 +261,4 @@ displays freshness and must show `unverified` plainly.
 | CF-04-E Scheduled read-only verification job that saves captures | ProtocolCanary-Fixtures | CF-04-A. Needs maintainer approval of the schedule and endpoints. |
 | CF-04-F Document the Protocol 29 boundary (section 5) in the Fixtures docs | ProtocolCanary-Fixtures | this contract |
 | CF-04-G Engine regression tests for target 28 / observed 29, target 29 with no fixtures, target and observed equal, failed observation | Protocol-Canary | none |
-| CF-04-H Any new Protocol 29 fixture | ProtocolCanary-Fixtures | **Blocked** until live evidence exists under section 3 and D-09 is decided. |
+| CF-04-H Any new Protocol 29 fixture | ProtocolCanary-Fixtures | **Blocked** until live evidence exists under section 3. D-09 (Option C) is decided; it does not unblock this. |

@@ -102,7 +102,9 @@ A consumer, in order, and stopping at the first failure:
 1. Obtain the expected `archive.sha256` from a trusted source: the lockfile
    (CF-03) when pinned, otherwise the manifest from the same release over HTTPS.
 2. Download over HTTPS only, following at most 3 redirects, to hosts on a short
-   allow list (GitHub release hosts). Enforce a maximum download size equal to
+   allow list (pending D-11: a release asset download redirects from
+   `github.com` to a different GitHub-operated host, and the exact hosts must be
+   taken from a real redirect and tested, not assumed). Enforce a maximum download size equal to
    the manifest's `archive.bytes` plus no slack, or a hard cap when no manifest
    exists.
 3. Compare SHA-256 of the received bytes with the expected value.

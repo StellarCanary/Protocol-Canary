@@ -67,7 +67,13 @@ license and a pinned checksum.
   `style-src 'self'`, `connect-src 'none'`, `img-src 'self' data:`,
   `base-uri 'none'`, `form-action 'none'`, so a request is blocked even if a bug
   tried to make one.
-- Size limit 10 MiB; larger files are refused with a message.
+- The policy is delivered in a `<meta http-equiv="Content-Security-Policy">`
+  tag because GitHub Pages cannot set response headers. A meta tag does not
+  support `frame-ancestors` or reporting directives; `connect-src 'none'` and
+  `script-src 'self'`, which the no-upload guarantee relies on, are enforced.
+- Size limit 10 MiB; larger files are refused with a message. Nesting depth is
+  limited separately by the browser's `JSON.parse`; the test corpus includes a
+  deeply nested report.
 - Parsing and validation follow CF-01 exactly: JSON syntax, `schemaVersion === 1`,
   required fields and types, known `status` and `surface` values, no duplicate
   result identity. Unknown extra fields are ignored. Invalid input shows
@@ -176,6 +182,9 @@ is how a project makes it a failure.
 ### 3.5 Diagnostics and redaction
 
 When no usable report exists, the Action may upload a diagnostics artifact
+(**proposed to be opt-in and off by default, pending D-10**: an artifact on a
+public repository can be downloaded by anyone who can read the repository, and
+redaction by pattern is best effort)
 containing only: Action version, resolved engine version and commit, the
 sanitized command line (no `--rpc-url` query string, no token), the exit code, a
 timeout flag, and the last 64 KiB of stdout and stderr with these removed or

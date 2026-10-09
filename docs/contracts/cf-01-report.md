@@ -1,6 +1,8 @@
 # CF-01: Report contract
 
-Status: frozen for implementation planning, contract version 1.
+Status: frozen for implementation planning, contract version 1. Updated with
+the maintainer decisions D-02 (zero-check runs) and the report-provenance
+direction for RH-02; see the decision log in [`README.md`](README.md).
 Authoritative for: report compatibility, identity and failure semantics.
 Field-by-field reference for the current output stays in
 [`../json-report-contract.md`](../json-report-contract.md); where the two
@@ -27,12 +29,13 @@ a real run on 2026-10-09:
 - `status` is the overall outcome. `error` outranks the policy decision, the
   same precedence as exit code `3` (`policy.rs: exit_code_for_run`).
 - `testId` and `fixtureId` are equal today; `fixtureId` may be absent.
-- A run in which every fixture is skipped produces `status: "pass"`,
-  `counts.total: 0` and exit code `0`. Reproduced on 2026-10-09 with
-  `stellar-canary check --protocol 29` against the shipped Protocol 28 pack:
-  7 skipped, 0 executed, pass, exit 0. See section 7.
-- Nothing in the report says whether a result was executed in this run or
-  replayed from the local result cache. See section 6.
+- In `0.1.1` a run in which every fixture is skipped produces
+  `status: "pass"`, `counts.total: 0` and exit code `0`. Reproduced on
+  2026-10-09 with `stellar-canary check --protocol 29` against the shipped
+  Protocol 28 pack: 7 skipped, 0 executed, pass, exit 0. The maintainer has
+  approved changing this in the next release; see section 7.
+- In `0.1.1` nothing in the report says whether a result was executed in this
+  run or replayed from the local result cache. See section 6.
 
 ## 2. Compatibility classes
 
@@ -42,7 +45,7 @@ a real run on 2026-10-09:
 | Add a value to a closed enum (`status`, `surface`) | Breaking | Requires `schemaVersion` 2. Existing consumers reject unknown values on purpose. |
 | Remove or rename a field, change a type, change the meaning of a value | Breaking | `schemaVersion` 2. |
 | Make an optional field required | Breaking | `schemaVersion` 2. |
-| Change a default that turns a previously passing run into a failing one | Breaking | Must be opt-in in `schemaVersion` 1 (see D-02). |
+| Change a default that turns a previously passing invocation into a failing one | Release-boundary change | Does not change the report shape, so it does not bump `schemaVersion`. It needs maintainer approval, a minor-version release, an opt-out flag, and a changelog entry stating the old and new behavior. D-02 is the precedent. Otherwise it must be opt-in. |
 
 `toolVersion` is informational and never used for feature detection by
 consumers. A consumer that needs a feature checks for the field.
@@ -70,7 +73,7 @@ implementing change lands; until then they are a plan.
 
 | Field | Type | Meaning | Owner contract |
 |---|---|---|---|
-| `results[].source` | `"live"` or `"cache"` | Whether this result was executed in this run or replayed from the local cache. Absent means unknown, not live. | CF-01 |
+| `results[].source` | `"live"` or `"cache"` | Whether this result was executed in this run or replayed from the local result cache. Absent means *not recorded* (a report from `0.1.1` or earlier), never live. A value a consumer does not know is read as not recorded. The engine never writes `"unknown"`. Implemented by RH-02 as an optional field under the additive rule. | CF-01 |
 | `skipped[].code` | string, lowercase kebab | Stable machine identifier for the skip reason. `reason` stays free text. Initial codes: `protocol-mismatch`, `surface-disabled`, `missing-capability`. | CF-01 |
 | `fixturePack` | object | `{ "digest": "sha256:<hex>", "registryVersion": 1, "source": "directory" or "release", "revision": string or null }` | CF-02 |
 | `lock` | object | `{ "path": "<relative>", "status": "absent" or "verified" }` | CF-03 |
@@ -102,23 +105,39 @@ must not rely on order for correctness. Producers must keep it deterministic.
 
 `CacheStore` is wired into `check` (`canary-runner/src/execution.rs`,
 `canary-cli/src/commands.rs`, cache directory `.stellar-canary-cache` under the
-project root). The `ROADMAP.md`, `docs/architecture.md` and `CHANGELOG.md`
-"known gap" text saying otherwise is out of date (corrected in the same branch).
+project root) and has been since `0.1.0`.
 
-Verified on 2026-10-09: the cache key is `(fixtureId, protocol, project git
-commit or `commit-dirty`, hash of RPC URL, observed protocol)`. It does not
-include the fixture's content. Editing a fixture file in a dirty working tree
-and rerunning returns the previous result: a fixture asserting
-`protocolVersion = 30` failed, was edited to `29` (which passes against Testnet),
-and the next run still reported `fail`. There is also no expiry. Consequences
-for this contract:
+**`0.1.1` behavior (defect).** Verified on 2026-10-09: the cache key is
+`(fixtureId, protocol, project git commit or `commit-dirty`, hash of RPC URL,
+observed protocol)`. It does not include the fixture's content. Editing a
+fixture file and rerunning returned the previous result: a fixture asserting
+`protocolVersion = 30` failed, was edited to `29` (which passes against
+Testnet), and the next run still reported `fail`. Entries never expired, RPC
+and Soroban results were replayed like any other, and a replayed result looked
+identical to a live one.
 
-- A consumer cannot currently tell a replayed result from a live one.
-- A passing replayed live-network result is not evidence about the network now.
-- `results[].source` (section 3) is the additive fix for the first point. The
-  cache key correction is an engine defect tracked separately from this
-  contract; the contract only requires that once `source` exists, a replayed
-  result carries `"cache"`.
+**Required behavior (RH-01 and RH-02, approved direction).**
+
+1. The key covers everything that determines the result: the fixture file bytes
+   and the bytes of any referenced payload, the target protocol, the network
+   name, the RPC endpoint, the observed protocol, the tool version, and a
+   path-free project fingerprint (type, capabilities, Git commit and dirty
+   flag). No absolute path is part of it. The cache has a layout number; an
+   entry from another layout, an entry whose stored key differs from the
+   requested key, and an unreadable entry are all misses.
+2. Offline XDR results may be reused without a time limit, because the key
+   contains every input they depend on.
+3. RPC and Soroban results are not stored or served by default. A recorded
+   answer from a network is not evidence about the network now. A caller may
+   opt in with `--live-cache-ttl SECONDS`, and then an entry is served only
+   while younger than that; an entry dated in the future is not served.
+   `--no-cache` disables reading and writing. There is no default freshness
+   window, and it is unrelated to the verification freshness window of CF-04.
+4. A replayed result carries `"source": "cache"`; a result executed in this run
+   carries `"source": "live"`. The terminal and Markdown reports say how many
+   results were replayed.
+5. A consumer treats a `"cache"` result as a recording. A report whose passing
+   RPC or Soroban results are all `"cache"` is not evidence about the network.
 
 ## 7. Failure semantics
 
@@ -131,12 +150,34 @@ configuration error, `3` execution error, `4` invalid fixture, `5` internal.
 | Warnings only | `warning` | 0 | `warnings_are_failures` turns this into `fail`. |
 | Any `fail` | `fail` | 1 | |
 | Any `error` | `error` | 3 | Outranks `fail`. |
-| Zero results executed (empty fixtures dir, or every fixture skipped) | `pass` | 0 | **Known false-green hazard.** Today indistinguishable from a real pass except by `counts.total == 0`. |
+| Zero results executed, `0.1.1` and earlier | `pass` | 0 | The old false-green behavior. Not to be relied on. |
+| Zero fixtures would execute, releases after `0.1.1`, no `--allow-empty` | none: no report is printed | 2 | Approved as D-02. `check` stops before executing anything. |
+| Zero fixtures would execute, releases after `0.1.1`, with `--allow-empty` | `pass` | 0 | Intentional empty run. A warning is printed to stderr. `counts.total` is `0`. |
+
+**D-02 (approved by the maintainer).** From the next release, `check` fails by
+default when no fixture would execute. Exit code `2` is the configuration error
+code; no result exists to be a compatibility failure (`1`) and nothing failed to
+execute (`3`). The error names the cause: the fixtures directory is missing, it
+holds no `*.toml` files, or every loaded fixture was skipped because of the
+target protocol, a disabled surface, or a capability the project does not
+declare. No report is printed, so a consumer cannot mistake the run for a
+result, and the JSON report shape is unchanged. The published `0.1.1` behavior
+and tag are not rewritten. Because this changes the outcome of an existing
+invocation it ships in a minor version and the changelog states the old and new
+behavior. A caller that wants an empty run to pass passes `--allow-empty`.
+`inspect` and `fixtures` are unaffected: they exist to show why a plan is empty.
+
+Consequence for the Action: with an engine release that contains this change,
+the CLI exits `2` with empty stdout. The Action's existing path for "no usable
+report" then reports `execution-failed` with the exit code description and the
+CLI's stderr, which carries the diagnostic. An Action pinned to `0.1.1` keeps the
+old behavior until its `version` default moves.
 
 Rules for consumers (Action, viewer, comparison):
 
 1. Never present a report with `counts.total == 0` as "compatible". Show it as
-   "no checks ran", with the skip counts.
+   "no checks ran", with the skip counts. Such a report now exists only when the
+   caller passed `--allow-empty`, or when it was written by `0.1.1` or earlier.
 2. Never recompute `status`. Display it. A consumer may verify that `counts`
    agree with `results` and warn if not.
 3. An unsupported `schemaVersion`, an unknown `status` or `surface`, a missing
@@ -144,9 +185,10 @@ Rules for consumers (Action, viewer, comparison):
    consumer reports "invalid report", not a compatibility result.
 4. An invalid report must never produce a green outcome.
 
-Opt-in guard (planned, version 1 compatible): a `check` flag that makes a run
-with zero executed results exit `2`. The default stays unchanged in version 1.
-See D-02 for the decision on changing the default.
+Exit code `2` now covers two situations: invalid configuration and an empty
+plan. A script that needs to tell them apart reads the message; no separate code
+is introduced because the existing error architecture already classes both as
+"the run was not set up to produce a result" (maintainer direction).
 
 ## 8. Security and trust boundaries
 
@@ -183,7 +225,7 @@ sharing guidance.
 }
 ```
 
-A report that ran nothing (illustrative; this is the false-green shape):
+A report that ran nothing (illustrative). The shape is valid, but it can only come from `0.1.1` or earlier, or from a later release run with `--allow-empty`; consumers must never read it as compatibility:
 
 <!-- contract-example: report-v1-valid -->
 ```json
@@ -241,7 +283,7 @@ Invalid: unsupported version.
 | CF-01-A Publish a JSON Schema for report v1 matching section 3 | Protocol-Canary | this contract | Schema must accept `0.1.1` output and ignore unknown properties. |
 | CF-01-B Conformance test: reporter output validates against the schema | Protocol-Canary | CF-01-A | |
 | CF-01-C Corpus of real `v0.1.0` and `v0.1.1` reports and parse tests | Protocol-Canary | none | Needs the tagged binaries; do not hand-write them. |
-| CF-01-D Emit `skipped[].code` | Protocol-Canary | this contract | Scheduler already distinguishes the three causes. |
-| CF-01-E Emit `results[].source` | Protocol-Canary | this contract | Independent of the cache key fix. |
-| CF-01-F Opt-in zero-result guard | Protocol-Canary | D-02 | |
+| CF-01-D Emit `skipped[].code` | Protocol-Canary | this contract | The scheduler now records a `SkipCause` with the stable codes `protocol-mismatch`, `surface-disabled`, `missing-capability` (RH-03); only the JSON field is missing. |
+| CF-01-E Emit `results[].source` | Protocol-Canary | this contract | **Done in RH-02.** |
+| CF-01-F Zero-result guard | Protocol-Canary | D-02 | **Done in RH-03** as a default failure with `--allow-empty`; the opt-in design this row used to describe is superseded. |
 | CF-01-G Action tolerates reserved fields and rejects duplicate identities | ProtocolCanary-Action | this contract | |

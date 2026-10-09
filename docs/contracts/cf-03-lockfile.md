@@ -49,7 +49,9 @@ compared).
 
 1. `lockVersion` must be the integer `1`. Anything else is an error that names
    the found and supported versions.
-2. Unknown keys and unknown tables are errors. A lock is a pin; silently ignoring
+2. Unknown keys and unknown tables are errors (unlike report consumers, which
+   ignore unknown fields: a lock is a pin, and an ignored key could silently drop a
+   pin, while a report is only a record). A lock is a pin; silently ignoring
    a key could silently drop a pin.
 3. Duplicate keys are errors (the TOML parser already rejects them).
 4. `packDigest` must match `^sha256:[0-9a-f]{64}$`.
@@ -77,7 +79,7 @@ The lock supplies identity, not settings, so it only conflicts on facts:
 | `--no-lock` given | Lock ignored entirely and the report records `lock.status = "absent"`. |
 | Lock `protocol` differs from the effective target protocol | Stale. |
 | Computed pack digest differs from `packDigest` | Stale. |
-| `tool.version` present and differs from the running binary | Warning on stderr; not a failure in version 1. |
+| `tool.version` present and differs from the running binary | Warning on stderr; not a failure in version 1 (pending D-12: the lock pins fixtures, not the engine, so it does not stop a different engine from running). |
 
 Stale means: the run stops before executing anything, prints the expected and
 computed digest, and exits with the configuration error code `2` (D-04 records

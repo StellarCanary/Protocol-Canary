@@ -126,6 +126,13 @@ timestamps and permissions, and of whether the pack was read from a checkout or
 an extracted archive. It changes when any byte of any fixture or payload
 changes, when a file is added, removed or renamed.
 
+**Not the same as the engine's cache digest.** The engine's result cache keeps
+its own per-fixture content digest (the fixture file plus the payloads it
+references, length-framed) so that an edited fixture cannot reuse a result. That
+value is internal to the local cache, differs in construction from the file
+hashes and the pack digest defined here, and is never written to a registry, a
+lockfile or a report. Do not compare the two.
+
 **Revision versus content digest.** `packDigest` identifies content. Two commits
 with identical pack bytes have the same digest. A git revision identifies
 history. Consumers pin the digest and may record the revision for humans.

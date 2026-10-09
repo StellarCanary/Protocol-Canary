@@ -12,7 +12,7 @@ unit test).
 |---|---|---|
 | `0` | `Pass` | Every applicable check passed. |
 | `1` | `CompatibilityFailure` | At least one fixture's compatibility assertion failed — a real incompatibility was found. |
-| `2` | `ConfigurationError` | Invalid CLI configuration, e.g. a `--config` path that does not exist, or unparseable configuration. No checks run. |
+| `2` | `ConfigurationError` | Invalid CLI configuration, e.g. a `--config` path that does not exist, or unparseable configuration. Also, after `0.1.1`, a `check` in which no fixture applies and `--allow-empty` was not given. No checks run. |
 | `3` | `ExecutionError` | A check could not complete due to an XDR, RPC, or Soroban execution problem — most commonly an unreachable or erroring RPC endpoint. Distinct from a compatibility failure: the check couldn't run, rather than running and finding a mismatch. |
 | `4` | `InvalidFixture` | A fixture file failed to load: bad TOML, a missing required field, an unrecognized `surface`, a duplicate `id` across the fixture set, or a dangling `input_file`/`expected_file` reference. |
 | `5` | `InternalError` | An internal error unrelated to configuration, fixtures, or the three compatibility surfaces (for example, a Git-metadata or local-cache error). |

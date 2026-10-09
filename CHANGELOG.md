@@ -4,6 +4,23 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- **Behavior change (next release, not in `0.1.1`):** `check` now fails when
+  it would execute zero fixtures. `0.1.1` and earlier reported such a run as
+  `Status: PASS` with `0/0 applicable checks` and exit code `0`, so a missing
+  fixtures directory, a wrong `--fixtures-dir`, or `--protocol 29` against a
+  pack that only has Protocol 28 fixtures all looked like success. The run now
+  exits `2` before executing anything and prints no report, with an error
+  naming the cause: the directory is missing, it holds no `*.toml` files, or
+  every loaded fixture was skipped (target protocol, disabled surface, missing
+  project capability). New `--allow-empty` keeps the old exit code for runs
+  that are meant to be empty; it prints a warning and the report still shows
+  `counts.total: 0`. The JSON report shape is unchanged. Because this turns a
+  previously passing invocation into a failing one, release it in a minor
+  version (`0.2.0`) and say so in the release notes. Scripts and CI that rely
+  on an empty run passing need `--allow-empty` or, better, a fixtures path
+  that matches the target protocol. The GitHub Action pins an engine version
+  and only sees this once its default `version` moves to the release that
+  contains it.
 - Replayed results are now marked and live results are no longer replayed by
   default. `results[].source` in the JSON report is `"live"` or `"cache"`
   (absent in older reports, meaning not recorded). `check` no longer serves

@@ -31,12 +31,15 @@ fixtures require, and its report predates the `counts` field — see
 
 ## Fixture directory not found
 
-**Symptom.** `check`/`fixtures` reports `0/0 applicable checks` when you
-expected fixtures to run.
+**Symptom.** `check` fails with `no checks ran: ...` (exit code `2`), or
+`fixtures` reports no fixtures, when you expected fixtures to run. With
+`0.1.1` and earlier, `check` instead reported `0/0 applicable checks` and
+passed.
 
 **Likely cause.** `--fixtures-dir` is missing, misspelled, or relative to
-the wrong working directory — a nonexistent `--fixtures-dir` is treated as
-zero fixtures, not an error, by design.
+the wrong working directory. The error message says whether the directory is
+missing, empty, or whether its fixtures were skipped because of the target
+protocol, a disabled surface or a missing capability.
 
 **What to check.** `stellar-canary fixtures --fixtures-dir <path> --protocol <N>`
 first, to see exactly what would be loaded, before running `check`.

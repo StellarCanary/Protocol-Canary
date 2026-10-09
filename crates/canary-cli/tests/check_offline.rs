@@ -19,21 +19,6 @@ fn xdr_fixture(id: &str, kind: &str, value_base64: &str) -> String {
 }
 
 #[test]
-fn an_offline_run_with_no_fixtures_passes_trivially() {
-    let dir = TempProject::new("check-empty");
-    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
-
-    let output = run_in(&dir.path, &["check"]);
-    assert!(output.status.success());
-    assert_eq!(output.status.code(), Some(0));
-    let text = stdout(&output);
-    assert!(text.contains("0/0 applicable checks passed."));
-    assert!(text.contains("Status: PASS"));
-    // An offline (xdr-only) run must never mention the network.
-    assert!(!text.contains("Network:"));
-}
-
-#[test]
 fn a_passing_xdr_fixture_exits_zero() {
     let dir = TempProject::new("check-xdr-pass");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
@@ -121,7 +106,12 @@ fn a_protocol_mismatched_fixture_is_skipped_not_run() {
         ),
     );
 
-    let output = run_in(&dir.path, &["check", "--verbose"]);
+    // The only fixture targets another protocol, so nothing applies: that is
+    // an empty run, which is refused unless explicitly allowed.
+    let refused = run_in(&dir.path, &["check", "--verbose"]);
+    assert_eq!(refused.status.code(), Some(2));
+
+    let output = run_in(&dir.path, &["check", "--verbose", "--allow-empty"]);
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
     assert!(text.contains("0/0 applicable checks passed."));
@@ -132,6 +122,11 @@ fn a_protocol_mismatched_fixture_is_skipped_not_run() {
 fn json_output_is_valid_json_with_the_expected_top_level_fields() {
     let dir = TempProject::new("check-json");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
 
     let output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(output.status.code(), Some(0));

@@ -18,6 +18,7 @@ Options:
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
       --output <PATH>                Write the rendered report to this path, in addition to stdout.
+      --allow-empty                  Allow a run in which no fixture applies. Without it such a run fails with exit code 2.
       --verbose                      Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
       --quiet                        Shorten terminal-format output to a single status line.
       --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
@@ -36,8 +37,10 @@ Precedence, highest first: `--protocol` flag, then `.stellar-canary.toml`'s
 `--fixtures-dir` defaults to `fixtures` relative to the current directory.
 It accepts any local path — including a checkout of
 [`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures)
-— and is loaded recursively. A directory that does not exist is treated as
-zero fixtures (a trivial `0/0` pass), not an error. See [Fixtures](../fixtures-guide.md).
+— and is loaded recursively. A directory that does not exist is loaded as
+zero fixtures. In releases after `0.1.1` a run that then has nothing to execute
+fails with exit code `2` (see [No applicable fixtures](#no-applicable-fixtures));
+`0.1.1` and earlier reported a `0/0` pass. See [Fixtures](../fixtures-guide.md).
 
 ## Output formats
 
@@ -202,3 +205,22 @@ project root (add it to `.gitignore`).
 - A replayed result is marked `"source": "cache"` in the JSON report, and the
   terminal and Markdown reports say how many results were replayed.
 - A damaged, unreadable or old-layout entry is ignored and the fixture runs.
+
+## No applicable fixtures
+
+A run that executes zero fixtures proves nothing about compatibility, so after
+`0.1.1` it fails instead of passing:
+
+```text
+error: configuration error: no checks ran: all 7 loaded fixtures were skipped. 7 target another protocol (this run targets protocol 29; the fixtures target protocol 28). Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended.
+```
+
+The exit code is `2` and no report is printed. The message says which case
+applies: the fixtures directory is missing, it holds no `*.toml` files, or
+every loaded fixture was skipped because of its protocol, a disabled surface
+or a capability the project does not declare. `--allow-empty` makes the run
+proceed, prints a warning, and reports `counts.total: 0`; it never hides a
+failure in a run that does execute fixtures.
+
+`stellar-canary 0.1.1` and earlier exited `0` with `Status: PASS` in these
+cases.

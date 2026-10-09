@@ -75,6 +75,12 @@ pub struct CheckArgs {
     #[arg(long, value_name = "PATH")]
     pub output: Option<PathBuf>,
 
+    /// Allow a run in which no fixture applies. Without this flag such a run
+    /// fails with exit code 2, because executing nothing is not evidence of
+    /// compatibility.
+    #[arg(long)]
+    pub allow_empty: bool,
+
     /// Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
     #[arg(long)]
     pub verbose: bool,

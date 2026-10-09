@@ -1,8 +1,8 @@
 # CF-06: Canonical fixture releases
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decisions: D-06 (extraction limits), D-07 (signing beyond
-checksums).
+Pending maintainer decision: D-07 (signing beyond checksums). D-06 is approved
+(extraction limits).
 Authoritative for: fixture-pack release artifacts, manifest, immutability,
 checksums, archive verification, safe extraction and compatibility.
 
@@ -132,7 +132,7 @@ Reject the whole archive, extracting nothing further, when any entry:
   device, fifo);
 - duplicates another path, including after Unicode case folding;
 - would make the entry count, total uncompressed bytes, single-file size or path
-  depth exceed the limits. Proposed defaults, pending D-06: 2,000 entries,
+  depth exceed the limits. Approved limits under D-06: 2,000 entries,
   16 MiB uncompressed in total, 1 MiB per file, depth 8 (for scale, the Protocol 28 pack is 8 files and 17,102 bytes on 2026-10-09);
 - sets setuid, setgid or sticky bits (modes are ignored, and files are created
   `0644`).

@@ -1,7 +1,7 @@
 # CA-01: RPC request parameters and assertions
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-06 (the response-size cap in section 6).
+D-06 is approved (the response-size cap in section 6 and request parameter bounds in section 3).
 Authoritative for: which Stellar RPC methods a fixture may call, how request
 parameters are declared, how responses are asserted on, how errors are
 classified, and what stays compatible.
@@ -127,7 +127,7 @@ fixture (exit code 4) and never a runtime surprise:
    hex string for `hash`; non-negative integers for ledger numbers; `limit` within
    its documented range. `xdrFormat`, if present, must be `"base64"`.
 4. Documented maxima are upper bounds. The engine may enforce lower ones. Initial
-   engine bounds (pending D-06): at most 50 `keys`, `limit` at most 50, at most 2
+   engine bounds (approved under D-06): at most 50 `keys`, `limit` at most 50, at most 2
    `filters`.
 5. The request is the only thing a fixture can influence on the wire. It cannot
    change the endpoint, add headers, or choose a method outside the table.
@@ -220,7 +220,7 @@ JSON-RPC error is expected in version 1.
 
 ## 6. Limits and cost
 
-- The response size cap is pending D-06; the proposed value is 16 MiB, which is
+- The response size cap is approved under D-06 at 16 MiB, which is
   far above the Mainnet `getLatestLedger` observation (about 1.3 MB) and well
   below anything that would exhaust memory. A larger body is an `error`.
 - `get-latest-ledger` returns a large `metadataXdr` field. Each additional

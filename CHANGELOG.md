@@ -4,7 +4,35 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-- **Behavior change (next release, not in `0.1.1`):** `check` now fails when
+## [0.2.0] - not yet released
+
+The date is filled in when the tag is created. `0.1.1` stays published and
+unchanged.
+
+### Upgrade notes
+
+Read these before moving a CI job from `0.1.1`.
+
+1. **A run that executes nothing now fails.** `check` exits `2` and prints no
+   report when no fixture applies (missing or empty fixtures directory, or every
+   fixture skipped by protocol, disabled surface or missing capability). Add
+   `--allow-empty` only if an empty run is intended. This is the reason for a
+   minor version.
+2. **Fixture directories must not contain symbolic links, junctions or unsafe
+   `input_file`/`expected_file` paths.** They are rejected with exit `4`.
+   The canonical Protocol 28 pack (tag `protocol-28` and current `main` of
+   `ProtocolCanary-Fixtures`) contains none and loads unchanged; CI checks both.
+3. **RPC and Soroban results are no longer replayed from the local cache unless
+   `--live-cache-ttl` is given.** Old cache entries are ignored.
+4. **JSON reports gain an optional `results[].source`** (`live` or `cache`).
+   `schemaVersion` stays `1`; consumers that ignore unknown fields are unaffected.
+5. The two Protocol 28 RPC identity fixtures fail against a network that reports
+   protocol 29. That is correct and unchanged by this release. This release does
+   not add Protocol 29 support.
+
+### Changes
+
+- **Behavior change from `0.1.1`:** `check` now fails when
   it would execute zero fixtures. `0.1.1` and earlier reported such a run as
   `Status: PASS` with `0/0 applicable checks` and exit code `0`, so a missing
   fixtures directory, a wrong `--fixtures-dir`, or `--protocol 29` against a
@@ -15,8 +43,8 @@ All notable changes to this project are documented in this file.
   project capability). New `--allow-empty` keeps the old exit code for runs
   that are meant to be empty; it prints a warning and the report still shows
   `counts.total: 0`. The JSON report shape is unchanged. Because this turns a
-  previously passing invocation into a failing one, release it in a minor
-  version (`0.2.0`) and say so in the release notes. Scripts and CI that rely
+  previously passing invocation into a failing one, it ships in a minor
+  version (`0.2.0`). Scripts and CI that rely
   on an empty run passing need `--allow-empty` or, better, a fixtures path
   that matches the target protocol. The GitHub Action pins an engine version
   and only sees this once its default `version` moves to the release that
@@ -65,6 +93,10 @@ All notable changes to this project are documented in this file.
   as a configuration error (exit 2); an observed-protocol mismatch prints
   a `warning:` line on stderr and the run continues (the report's
   `(observed protocol N)` annotation is unchanged).
+- Internal: Windows junction and symbolic link tests for the fixture loader, a
+  CI job that runs the engine against the canonical Protocol 28 pack (tag and
+  `main`), and a release workflow check that the tag equals the workspace
+  version.
 
 ## [0.1.1]
 

@@ -307,6 +307,7 @@ storage (no database, no hosted API state).
 | Malformed fixture file | Exit `4` (`InvalidFixture`); the CLI reports which file and the parse error, and does not run any fixtures from that load. |
 | A fixture's compatibility assertion fails | Exit `1`, `status: "fail"`; the specific failing `testId` and detail are reported in both terminal and JSON. |
 | Invalid CLI configuration (e.g. `--config` path does not exist) | Exit `2` (`ConfigurationError`) with a specific message; no checks run. |
+| No fixture applies to the run (missing or empty fixtures directory, or everything skipped), releases after `0.1.1` | Exit `2` with a message naming the cause; no report is printed. `--allow-empty` opts out. `0.1.1` and earlier exited `0` with `status: "pass"`. |
 | The Action cannot install or execute Canary at all (build/timeout/unparseable output) | Action's own `status` output is `"execution-failed"` (distinct from a `fail` compatibility result) — the summary states "Protocol Canary could not be executed" with the real diagnostic, never a fabricated compatibility message. |
 | A report is missing the `counts` field (older `schemaVersion`-1 output) | The Action derives `counts` from `results` rather than erroring — see `ProtocolCanary-Action`'s `tests/unit/output.test.ts`. Backward compatibility is preserved, not removed. |
 | GitHub artifact upload fails | Logged as a warning; the underlying compatibility result and job pass/fail are unaffected — artifact upload is auxiliary, never load-bearing for the result. |

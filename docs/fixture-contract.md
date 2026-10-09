@@ -14,12 +14,21 @@ this path via `--fixtures-dir` (default: `fixtures`, resolved relative to
 the current working directory). There is no other loading mechanism —
 no network fetch, no package registry, no database.
 
-If `--fixtures-dir` does not exist, the CLI treats that as zero fixtures
-(not an error): `check` still runs (with `0/0 applicable checks`, a
-trivial pass) and `fixtures` reports "no fixtures found". Calling
-`canary_fixtures::load_directory` directly on a nonexistent path, however,
-*does* return an error (`FixtureError::ReadDir`) — the CLI's
-`is_dir()` guard is what makes a missing directory non-fatal.
+If `--fixtures-dir` does not exist, the CLI loads zero fixtures rather than
+failing the load, and `fixtures` reports "no fixtures found". What `check` does
+with zero fixtures depends on the release:
+
+- **`0.1.1` and earlier:** `check` ran with `0/0 applicable checks` and exited
+  `0` with `status: pass`.
+- **Releases after `0.1.1`:** a run in which no fixture applies (no directory,
+  no fixture files, or every fixture filtered out by protocol, disabled surface
+  or missing capability) exits `2` with a diagnostic saying which, because
+  executing nothing is not evidence of compatibility. `--allow-empty` restores
+  the old exit code for runs that are meant to be empty.
+
+Calling `canary_fixtures::load_directory` directly on a nonexistent path
+*does* return an error (`FixtureError::ReadDir`) — the CLI's `is_dir()` guard
+is what makes a missing directory non-fatal at load time.
 
 ## 2. Directory structure
 

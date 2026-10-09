@@ -2,6 +2,8 @@ mod support;
 
 use support::{run_in, stderr, stdout, TempProject};
 
+const FIXTURE: &str = "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n";
+
 const OFFLINE_CONFIG: &str = r#"
 version = 1
 protocol = 28
@@ -16,6 +18,7 @@ soroban = false
 fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network() {
     let dir = TempProject::new("report-roundtrip");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));
@@ -39,6 +42,7 @@ fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network()
 fn report_defaults_to_markdown_when_no_format_flag_is_given() {
     let dir = TempProject::new("report-default-format");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));
@@ -71,6 +75,7 @@ fn report_defaults_to_markdown_when_no_format_flag_is_given() {
 fn report_renders_a_saved_json_report_as_terminal_output_when_asked() {
     let dir = TempProject::new("report-terminal-format");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));

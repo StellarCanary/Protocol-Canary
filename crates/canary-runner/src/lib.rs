@@ -7,4 +7,6 @@ pub mod scheduler;
 
 pub use aggregation::{summarize, ResultSummary};
 pub use execution::execute;
-pub use scheduler::{build_plan, CompatibilityPlan, EnabledSurfaces, SkippedFixture};
+pub use scheduler::{
+    build_plan, explain_empty_plan, CompatibilityPlan, EnabledSurfaces, SkipCause, SkippedFixture,
+};

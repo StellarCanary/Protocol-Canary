@@ -146,6 +146,24 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     };
     let plan = canary_runner::build_plan(&loaded_fixtures, target_protocol, enabled, &project)?;
 
+    // A run that executes nothing proves nothing, so it must not look like a
+    // pass. This is checked before any check runs and before a report exists,
+    // which is why it is a configuration error (exit 2) rather than a result.
+    if plan.applicable_count() == 0 {
+        let explanation = canary_runner::explain_empty_plan(
+            &plan,
+            &loaded_fixtures,
+            target_protocol,
+            &args.fixtures_dir,
+        );
+        if !args.allow_empty {
+            return Err(CanaryError::Configuration(format!(
+                "{explanation} Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended."
+            )));
+        }
+        eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
+    }
+
     let git = collect_git_context(&CliGitRepository::new(&root));
 
     let context = ExecutionContext {

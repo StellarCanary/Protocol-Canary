@@ -1,8 +1,7 @@
 # CF-06: Canonical fixture releases
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-07 (signing beyond checksums). D-06 is approved
-(extraction limits).
+Updated with maintainer decisions D-06 (extraction limits approved) and D-07 (release signatures deferred beyond checksums). D-11 remains blocked.
 Authoritative for: fixture-pack release artifacts, manifest, immutability,
 checksums, archive verification, safe extraction and compatibility.
 
@@ -102,9 +101,7 @@ A consumer, in order, and stopping at the first failure:
 1. Obtain the expected `archive.sha256` from a trusted source: the lockfile
    (CF-03) when pinned, otherwise the manifest from the same release over HTTPS.
 2. Download over HTTPS only, following at most 3 redirects, to hosts on a short
-   allow list (pending D-11: a release asset download redirects from
-   `github.com` to a different GitHub-operated host, and the exact hosts must be
-   taken from a real redirect and tested, not assumed). Enforce a maximum download size equal to
+   allow list (D-11 remains blocked: real evidence from the published engine v0.2.0 release asset confirmed `github.com` redirects to `release-assets.githubusercontent.com`; the redirect policy and strict allow list must be codified and tested before implementation). Enforce a maximum download size equal to
    the manifest's `archive.bytes` plus no slack, or a hard cap when no manifest
    exists.
 3. Compare SHA-256 of the received bytes with the expected value.
@@ -119,8 +116,9 @@ the mismatch shown; the manifest is never allowed to override a pin.
 Checksums fetched from the same origin as the archive protect against corruption
 and partial downloads, not against a compromised release. Authenticity beyond
 that needs a pin held elsewhere (the lockfile in the consumer's repository) or a
-signature (D-07: whether to adopt signed releases is a maintainer decision and
-is not designed here).
+signature (approved under D-07: release signatures beyond checksums are deferred,
+and checksums are never presented as proof of authenticity; the residual risk of a
+compromised release page is accepted).
 
 ## 6. Safe extraction
 

@@ -82,11 +82,11 @@ RUSTFLAGS="--remap-path-prefix=$PWD=/build \
 `release.yml` applies that remapping to the release build. What this does and does
 not show: the same commit, toolchain, operating system and flags give the same
 bytes regardless of the build directory. It does not show that a build on a
-different operating system, CPU architecture or toolchain version matches, and the
-published binary has not yet been compared with an independent rebuild because no
-`0.2.0` release exists. Before claiming a release is reproducible, download its
-asset, rebuild the tag with the command above on the same kind of machine, and
-compare `sha256sum`; record the result with the release.
+different operating system, CPU architecture or toolchain version matches.
+For the `v0.2.0` release, the published Linux x86_64 release asset was downloaded
+and independently rebuilt from tag `v0.2.0` with the remapping above: both produced
+the exact identical SHA-256 hash `34656189e15169a9f9d339288f7a8a95bb81d86ecee14ca278a165d041d28943`,
+confirming byte-level independent reproducibility on Linux x86_64 with toolchain 1.91.0.
 
 ## What a release does not do
 

@@ -1,8 +1,7 @@
 # CF-08: Readiness viewer and GitHub Action integration
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-08b (where the viewer is hosted). D-10 is approved
-(diagnostics artifacts opt-in and disabled by default).
+Updated with maintainer decisions D-08b (viewer hosted at `viewer/` beside the book) and D-10 (diagnostics artifacts opt-in and disabled by default).
 Authoritative for: the static browser-local report viewer, policy
 interpretation, Action inputs and outputs, fixture acquisition, diagnostics and
 the cross-repository integration points.
@@ -53,10 +52,9 @@ viewer" refer to something not yet created.
 ### 2.1 Delivery
 
 A static page: HTML, CSS and JavaScript in one directory, no build server, no
-runtime network request. Proposed location `viewer/` in `Protocol-Canary`,
+runtime network request. Approved location `viewer/` in `Protocol-Canary`,
 published beside the book at `/viewer/` by extending the existing Pages workflow
-(D-08b records the alternative of a separate path or repository; the three-
-repository rule says it stays in `Protocol-Canary`). Third-party scripts, fonts,
+(approved under D-08b; maintainer accepts shared origin with dedicated storage keys or prefix). Third-party scripts, fonts,
 analytics and CDN requests are forbidden; any library is vendored with its
 license and a pinned checksum.
 
@@ -85,8 +83,8 @@ license and a pinned checksum.
 - The page persists nothing by default (no localStorage, cookies, IndexedDB).
   A theme preference may be stored in `localStorage` only; reports never are. A
   GitHub Pages project site shares the origin `stellarcanary.github.io` with the
-  organization's other Pages sites, so the storage key must be prefixed and the
-  decision D-08b must accept that shared origin.
+  organization's other Pages sites, so the storage key must be prefixed with `stellar-canary-viewer:`
+  (approved under D-08b, accepting the shared origin with isolation).
 
 ### 2.3 Policy interpretation
 

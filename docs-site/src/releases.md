@@ -4,21 +4,14 @@
 
 | | |
 |---|---|
-| Current version | `v0.1.1` |
-| Distribution | A git tag (`v0.1.1`), installed via `cargo install --git ... --tag v0.1.1 --locked`. |
-| GitHub Release | [`v0.1.1`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.1.1) is published (target commit `919668859bc1bef3d58737f13695b486d67632ea`). It carries no prebuilt binary and no checksum artifact — installation still builds from source via the tag, exactly as before. If prebuilt binaries are ever added, this page and [Installation](./installation.md) will be updated to reflect it. |
-| What changed in `0.1.1` | `canary-xdr` gained support for the `"ContractExecutable"` XDR type (previously only `"StellarValue"`), needed to test CAP-0085's `CONTRACT_EXECUTABLE_EXTERNAL_REF` case. |
+| Current version | `v0.2.0` |
+| Distribution | A git tag (`v0.2.0`), installed via `cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked`, or prebuilt Linux binary from GitHub Release. |
+| GitHub Release | [`v0.2.0`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.2.0) is published (target commit `7e1eb63dd63be6aefcb9d248ae80afc66436c4c6`). It carries prebuilt binary `stellar-canary-linux-x86_64` and `SHA256SUMS`. Checksums are verified with `sha256sum -c SHA256SUMS`. |
+| What changed in `0.2.0` | `check` fails by default when zero fixtures execute (exit code `2`, `--allow-empty` opts out), fixture directories containing symbolic links or unsafe payload paths are rejected, and results record `results[].source`. |
 
-### Next engine release: `0.2.0` (prepared, not published)
+### Previous engine release: `0.1.1`
 
-The workspace and `CHANGELOG.md` are prepared for `0.2.0`, which changes the
-outcome of two existing invocations: a `check` that executes nothing now fails
-(exit `2`, `--allow-empty` opts out) and fixture directories containing links
-or unsafe payload paths are rejected. The "Current version" above stays `v0.1.1`
-until the tag exists. See `CHANGELOG.md` for the upgrade notes and
-`docs/releasing.md` in the repository for the procedure and the verification a
-release needs. `ProtocolCanary-Action` keeps its pinned default engine version;
-it does not follow this release automatically.
+[`v0.1.1`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.1.1) is published (target commit `919668859bc1bef3d58737f13695b486d67632ea`), preserved unchanged. It carries no prebuilt binary and installs from source via `--tag v0.1.1`. `ProtocolCanary-Action` keeps its default pinned to `0.1.1`.
 
 ## ProtocolCanary-Action
 
@@ -40,10 +33,10 @@ it does not follow this release automatically.
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
-This is the only combination that has actually been run together and
-verified end-to-end (5/5 PASS against live Testnet). `v0.1.0` is
+`v0.2.0` is verified against both the `protocol-28` pack and `ProtocolCanary-Action` (including `--allow-empty` and empty-run refusal handling). `v0.1.0` is
 installable but predates `ContractExecutable` XDR support (needed by two
 current Protocol 28 fixtures) and the `counts` field in its JSON report —
 the Action tolerates the missing field, but `v0.1.1` is the version this
@@ -53,10 +46,8 @@ table verifies against.
 
 | | Git tags | GitHub Releases | Prebuilt binaries |
 |---|---|---|---|
-| `Protocol-Canary` | Yes (`v0.1.0`, `v0.1.1`) | Yes (`v0.1.1`) | No |
+| `Protocol-Canary` | Yes (`v0.1.0`, `v0.1.1`, `v0.2.0`) | Yes (`v0.1.1`, `v0.2.0`) | Yes (Linux x86_64 for `v0.2.0`) |
 | `ProtocolCanary-Action` | Yes (`v0.1.1`, `v1`) | Yes | N/A (a JS action; its "binary" is the committed `dist/index.js`) |
 | `ProtocolCanary-Fixtures` | Yes (`protocol-28`) | Yes (`protocol-28`) | N/A (not a distributable binary) |
 
-Do not assume a `Protocol-Canary` binary download exists anywhere — every
-documented install path in [Installation](./installation.md) builds from
-source.
+Prebuilt binaries for Linux x86_64 are available for `v0.2.0` on GitHub Releases. Alternative install paths build from source via Cargo as documented in [Installation](./installation.md).

@@ -133,7 +133,7 @@ Reject the whole archive, extracting nothing further, when any entry:
 - duplicates another path, including after Unicode case folding;
 - would make the entry count, total uncompressed bytes, single-file size or path
   depth exceed the limits. Proposed defaults, pending D-06: 2,000 entries,
-  16 MiB uncompressed in total, 1 MiB per file, depth 8;
+  16 MiB uncompressed in total, 1 MiB per file, depth 8 (for scale, the Protocol 28 pack is 8 files and 17,102 bytes on 2026-10-09);
 - sets setuid, setgid or sticky bits (modes are ignored, and files are created
   `0644`).
 

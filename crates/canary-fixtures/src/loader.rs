@@ -400,10 +400,13 @@ mod tests {
 
         /// Creates a junction `link` -> `target` with `mklink /J`.
         fn make_junction(link: &Path, target: &Path) {
+            // `cmd` reads a `/` in an argument as the start of a switch
+            // ("Invalid switch - loop"), so hand it backslash paths only.
+            let native = |p: &Path| p.display().to_string().replace('/', "\\");
             let status = Command::new("cmd")
                 .args(["/C", "mklink", "/J"])
-                .arg(link)
-                .arg(target)
+                .arg(native(link))
+                .arg(native(target))
                 .output()
                 .expect("cmd is available on Windows");
             assert!(

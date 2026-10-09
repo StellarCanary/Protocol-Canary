@@ -176,8 +176,10 @@ addition to the existing six. Upstream returns several large quantities as strin
 (`getFeeStats` fee values, `closeTime`); asserting on them as numbers fails by
 design, and asserting on their range is out of scope for version 1.
 
-At least one assertion should exist for a fixture to say anything; a fixture with
-no `[[assert]]` is valid today and only proves the call returned a result.
+An RPC fixture must have at least one `[[assert]]` (engine 0.2.0 and the
+Fixtures validator agree; before 0.2.0 the engine accepted none and the fixture
+passed while checking nothing). Unknown keys in a fixture body or in an assertion
+entry are errors for the same reason.
 
 ### 4.3 Paths
 

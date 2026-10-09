@@ -133,9 +133,21 @@ pub fn build_plan(
         }
 
         match fixture.metadata.surface {
-            Surface::Xdr => plan.xdr.push(XdrFixture::from_loaded(fixture)?),
-            Surface::Rpc => plan.rpc.push(RpcFixture::from_loaded(fixture)?),
-            Surface::Soroban => plan.soroban.push(SorobanFixture::from_loaded(fixture)?),
+            // A body the surface cannot read is a problem with the fixture,
+            // not an execution error: it is exit 4 like any other invalid
+            // fixture (`docs/fixture-contract.md`), not exit 3.
+            Surface::Xdr => plan.xdr.push(
+                XdrFixture::from_loaded(fixture)
+                    .map_err(|e| CanaryError::Fixture(e.to_string()))?,
+            ),
+            Surface::Rpc => plan.rpc.push(
+                RpcFixture::from_loaded(fixture)
+                    .map_err(|e| CanaryError::Fixture(e.to_string()))?,
+            ),
+            Surface::Soroban => plan.soroban.push(
+                SorobanFixture::from_loaded(fixture)
+                    .map_err(|e| CanaryError::Fixture(e.to_string()))?,
+            ),
         }
     }
 
@@ -258,7 +270,7 @@ mod tests {
 
     #[test]
     fn schedules_a_matching_rpc_fixture() {
-        let fixtures = vec![loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n")];
+        let fixtures = vec![loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")];
         let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
         assert_eq!(plan.rpc.len(), 1);
         assert_eq!(plan.rpc[0].metadata.id, "p28-rpc-1");
@@ -344,7 +356,7 @@ mod tests {
                 "xdr",
                 "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n",
             ),
-            loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n"),
+            loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n"),
         ];
         let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
         assert_eq!(plan.applicable_count(), 2);

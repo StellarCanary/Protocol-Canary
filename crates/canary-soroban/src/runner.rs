@@ -100,6 +100,20 @@ impl SorobanFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
+        if let Some(message) = canary_fixtures::unknown_body_keys(
+            table,
+            &[
+                "source_account",
+                "contract_id",
+                "function",
+                "sequence_number",
+                "args",
+                "expect",
+            ],
+        ) {
+            return Err(invalid(message));
+        }
+
         let string_field = |name: &str| -> Result<String, SorobanFixtureError> {
             table
                 .get(name)
@@ -132,6 +146,11 @@ impl SorobanFixture {
             .get("expect")
             .and_then(toml::Value::as_table)
             .ok_or_else(|| invalid("missing required table \"expect\"".to_string()))?;
+        if let Some(message) =
+            canary_fixtures::unknown_body_keys(expect, &["kind", "message_contains"])
+        {
+            return Err(invalid(format!("[expect]: {message}")));
+        }
         let assertion = match expect.get("kind").and_then(toml::Value::as_str) {
             Some("simulation-success") => SorobanAssertion::SimulationSuccess,
             Some("simulation-error") => SorobanAssertion::SimulationError {
@@ -169,6 +188,9 @@ fn parse_arg(
     let table = entry
         .as_table()
         .ok_or_else(|| invalid("each [[args]] entry must be a table".to_string()))?;
+    if let Some(message) = canary_fixtures::unknown_body_keys(table, &["kind", "value"]) {
+        return Err(invalid(format!("[[args]] entry: {message}")));
+    }
     let kind = table
         .get("kind")
         .and_then(toml::Value::as_str)

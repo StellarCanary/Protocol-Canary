@@ -9,7 +9,9 @@ pub mod manifest;
 pub mod validator;
 
 pub use loader::{load_directory, FixtureError};
-pub use manifest::{content_digest, parse_fixture_file, parse_fixture_str, LoadedFixture};
+pub use manifest::{
+    content_digest, parse_fixture_file, parse_fixture_str, unknown_body_keys, LoadedFixture,
+};
 pub use validator::validate;
 
 #[cfg(test)]

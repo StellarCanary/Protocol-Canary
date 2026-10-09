@@ -185,6 +185,10 @@ impl RpcFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
+        if let Some(message) = canary_fixtures::unknown_body_keys(table, &["method", "assert"]) {
+            return Err(invalid(message));
+        }
+
         let method: RpcMethod = table
             .get("method")
             .and_then(toml::Value::as_str)
@@ -197,6 +201,12 @@ impl RpcFixture {
             .and_then(toml::Value::as_array)
             .cloned()
             .unwrap_or_default();
+
+        if assert_entries.is_empty() {
+            return Err(invalid(
+                "an rpc fixture needs at least one [[assert]] table; without one it would pass while checking nothing (is a section misspelled?)".to_string(),
+            ));
+        }
 
         let mut assertions = Vec::with_capacity(assert_entries.len());
         for entry in &assert_entries {
@@ -218,6 +228,12 @@ fn parse_assertion(
     let table = entry
         .as_table()
         .ok_or_else(|| invalid("each [[assert]] entry must be a table".to_string()))?;
+
+    if let Some(message) =
+        canary_fixtures::unknown_body_keys(table, &["kind", "field", "value", "expected_type"])
+    {
+        return Err(invalid(format!("[[assert]] entry: {message}")));
+    }
 
     let kind = table
         .get("kind")
@@ -497,7 +513,7 @@ mod tests {
     async fn a_transport_failure_produces_an_error_status_not_a_fail() {
         let runner = DefaultRpcRunner::new(HttpRpcClient::new("http://127.0.0.1:0"));
         let fixture =
-            RpcFixture::from_loaded(&fixture("p28-rpc-3", "method = \"get-network\"\n")).unwrap();
+            RpcFixture::from_loaded(&fixture("p28-rpc-3", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
         let result = runner.run(&fixture, &context()).await.unwrap();
         assert_eq!(result.status, Status::Error);
     }

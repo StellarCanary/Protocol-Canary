@@ -117,6 +117,10 @@ soroban = true
 warnings_are_failures = false
 ```
 
+From `0.2.0` an unknown section or key is an error (exit code `2`, naming the
+field), not ignored. Before, a misspelling such as `[test]` for `[tests]` left
+every surface enabled without a word.
+
 ## Protocol 28
 
 The first compatibility pack targets Stellar Protocol 28: a real CAP-0083
@@ -207,7 +211,7 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
-`check` reuses results from a local cache (`canary_core::CacheStore`,
+From `0.2.0`, `check` reuses results from a local cache (`canary_core::CacheStore`,
 written to `.stellar-canary-cache` in the project root). The cache key covers
 the fixture's contents, the network, the tool version and the project's
 detected shape, so editing a fixture cannot return an old result. Only offline

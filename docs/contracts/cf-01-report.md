@@ -34,8 +34,9 @@ a real run on 2026-10-09:
   2026-10-09 with `stellar-canary check --protocol 29` against the shipped
   Protocol 28 pack: 7 skipped, 0 executed, pass, exit 0. The maintainer has
   approved changing this in the next release; see section 7.
-- In `0.1.1` nothing in the report says whether a result was executed in this
-  run or replayed from the local result cache. See section 6.
+- Reports from `0.1.1` and earlier carry no `results[].source`. Those releases
+  did not use the result cache at all, so every result in them was executed in
+  that run; see section 6 for the cache that arrives with `0.2.0`.
 
 ## 2. Compatibility classes
 
@@ -105,9 +106,12 @@ must not rely on order for correctness. Producers must keep it deterministic.
 
 `CacheStore` is wired into `check` (`canary-runner/src/execution.rs`,
 `canary-cli/src/commands.rs`, cache directory `.stellar-canary-cache` under the
-project root) and has been since `0.1.0`.
+project root). The wiring was added after `0.1.1` (commit `d12dc89`, 2026-09-23).
+`0.1.0` and `0.1.1` created a `CacheStore` but never read or wrote it, so no
+released version ever served a stale result.
 
-**`0.1.1` behavior (defect).** Verified on 2026-10-09: the cache key is
+**Behavior of `main` before the cache fixes (defect, never released).** Verified
+on 2026-10-09: the cache key is
 `(fixtureId, protocol, project git commit or `commit-dirty`, hash of RPC URL,
 observed protocol)`. It does not include the fixture's content. Editing a
 fixture file and rerunning returned the previous result: a fixture asserting

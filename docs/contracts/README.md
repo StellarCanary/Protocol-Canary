@@ -117,11 +117,11 @@ listed in the Phase 2 report, not here, so this file does not go stale.
 
 | # | Finding | Addressed by |
 |---|---|---|
-| 1 | The result cache is wired into `check` (since `v0.1.0`) but its key ignored fixture content, so an edited fixture returned a stale result, and a cached result looked identical to a live one (CF-01 section 6). | RH-01 (key), RH-02 (provenance and live policy) |
+| 1 | The result cache was wired into `check` on `main` after `v0.1.1` (commit `d12dc89`; `0.1.0` and `0.1.1` never used it), and that unreleased wiring keyed on fixture id but not fixture content, so an edited fixture returned a stale result, and a cached result looked identical to a live one (CF-01 section 6). Nothing released was affected. | RH-01 (key), RH-02 (provenance and live policy) |
 | 2 | `check --protocol 29` with the shipped pack skipped everything and reported `pass`, exit 0 (CF-01 section 7, CF-04 section 5). | RH-03 (D-02) |
 | 3 | The two Protocol 28 RPC fixtures fail against Testnet because the network reports protocol 29 (CF-04 section 5). | Not a defect. Decided as D-09 Option C and documented. |
 | 4 | The fixture loader followed symlinks and did not confine `input_file` and `expected_file` to the pack (CF-02 section 1). | RH-04 |
 | 5 | The JSON report contract example showed `"skipped": []`, but the CLI omits an empty `skipped` (CF-01 section 1). | Corrected in the first contract commit. |
 | 6 | Project detection ignores workspace members, so a virtual Cargo workspace detects as `Unknown` (CF-07 section 1). | Open. Contributor work (CF-07-C). |
-| 7 | `ROADMAP.md`, the README, `docs/architecture.md` and the mdBook said the cache is not wired. | Corrected in this branch. |
+| 7 | `ROADMAP.md`, the README, `docs/architecture.md` and the mdBook said the cache is not wired. That was true of `0.1.x` and false of `main` after `d12dc89`. | Rewritten for the `0.2.0` behavior, with the release it starts in stated. |
 | 8 | Target, observed and fixture protocols had no regression test keeping them apart. | RH-05 |

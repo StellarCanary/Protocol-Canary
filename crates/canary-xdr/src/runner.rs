@@ -82,6 +82,16 @@ impl XdrFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
+        let kind_for_keys = table.get("kind").and_then(toml::Value::as_str);
+        let allowed: &[&str] = if kind_for_keys == Some("encode-equals") {
+            &["type", "kind", "value_base64", "expected_base64"]
+        } else {
+            &["type", "kind", "value_base64"]
+        };
+        if let Some(message) = canary_fixtures::unknown_body_keys(table, allowed) {
+            return Err(invalid(message));
+        }
+
         let type_name: XdrTypeName = table
             .get("type")
             .and_then(toml::Value::as_str)

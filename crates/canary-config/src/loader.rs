@@ -219,6 +219,35 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_misspelled_section_instead_of_silently_ignoring_it() {
+        // `[test]` for `[tests]` used to leave every surface enabled and say
+        // nothing, so a project meaning to run offline made network calls.
+        let (_dir, path) = write_temp_config("version = 1\nprotocol = 28\n\n[test]\nrpc = false\n");
+        let err = load(&path).unwrap_err();
+        assert!(matches!(err, ConfigError::Parse { .. }), "{err}");
+        assert!(err.to_string().contains("unknown field `test`"), "{err}");
+    }
+
+    #[test]
+    fn rejects_a_misspelled_key_inside_a_section() {
+        let (_dir, path) = write_temp_config(
+            "version = 1\nprotocol = 28\n\n[policy]\nwarnings_are_failure = true\n",
+        );
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("unknown field `warnings_are_failure`"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn rejects_an_unknown_top_level_key() {
+        let (_dir, path) = write_temp_config("version = 1\nprotocol = 28\nnetwork = \"mainnet\"\n");
+        assert!(load(&path).is_err());
+    }
+
+    #[test]
     fn rejects_malformed_toml() {
         let (_dir, path) = write_temp_config("this is not valid toml [[[");
         let err = load(&path).unwrap_err();

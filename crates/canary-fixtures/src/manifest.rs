@@ -59,6 +59,39 @@ pub fn parse_fixture_file(path: &Path) -> Result<LoadedFixture, FixtureError> {
     parse_fixture_str(&raw_text, path)
 }
 
+/// Checks that every key of a fixture body table is one the surface reads.
+///
+/// Surface bodies are carried as raw TOML, so without this a misspelled key
+/// (`[[asert]]` for `[[assert]]`, `expected_base64x`) is dropped silently and
+/// the fixture can pass while checking nothing. Returns a message naming the
+/// unknown keys and the accepted ones.
+pub fn unknown_body_keys(table: &toml::value::Table, allowed: &[&str]) -> Option<String> {
+    let mut unknown: Vec<&str> = table
+        .keys()
+        .map(String::as_str)
+        .filter(|key| !allowed.contains(key))
+        .collect();
+    if unknown.is_empty() {
+        return None;
+    }
+    unknown.sort_unstable();
+    let mut accepted = allowed.to_vec();
+    accepted.sort_unstable();
+    Some(format!(
+        "unknown key(s) {}; this surface accepts {}",
+        unknown
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        accepted
+            .iter()
+            .map(|k| format!("{k:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ))
+}
+
 /// Digest of everything that defines a fixture's behavior: its file and the
 /// payload files it references.
 ///

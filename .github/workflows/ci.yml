@@ -47,6 +47,40 @@ jobs:
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+  canonical-pack:
+    name: canonical fixture pack (${{ matrix.pack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The released, immutable Protocol 28 pack.
+          - pack: protocol-28 tag
+            ref: protocol-28
+            min_xdr: 3
+          # Whatever the Fixtures repository holds now.
+          - pack: Fixtures main
+            ref: main
+            min_xdr: 4
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check out ProtocolCanary-Fixtures
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: StellarCanary/ProtocolCanary-Fixtures
+          ref: ${{ matrix.ref }}
+          path: canonical-pack
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Load the pack and run its offline fixtures
+        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack ${{ matrix.min_xdr }}
+
   audit:
     name: cargo audit
     runs-on: ubuntu-latest

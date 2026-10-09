@@ -22,6 +22,15 @@ jobs:
       - name: Install Rust toolchain
         run: rustup show
 
+      - name: Tag matches the workspace version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          versions=$(cargo metadata --no-deps --locked --format-version 1 \
+            | python3 -c 'import json,sys; print("\n".join(sorted({p["version"] for p in json.load(sys.stdin)["packages"]})))')
+          echo "workspace versions: $versions"
+          [ "$(echo "$versions" | wc -l)" -eq 1 ] || { echo "workspace crates disagree on their version"; exit 1; }
+          [ "v$versions" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME does not match workspace version $versions"; exit 1; }
+
       - name: cargo fmt --check
         run: cargo fmt --all --check
 
@@ -29,10 +38,15 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: cargo test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: cargo build --release
-        run: cargo build --workspace --release
+        # The binary embeds source and registry paths. Remapping them makes the
+        # result independent of the checkout directory (measured: two builds in
+        # different directories were byte-identical; docs/releasing.md).
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
+        run: cargo build --workspace --release --locked
 
       - name: Prepare assets
         run: |

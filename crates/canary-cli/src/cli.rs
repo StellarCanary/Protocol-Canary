@@ -86,6 +86,22 @@ pub struct CheckArgs {
     /// Maximum number of concurrent network requests for RPC/Soroban fixtures.
     #[arg(long, default_value_t = 4)]
     pub max_concurrency: u32,
+
+    /// Do not read or write the local result cache. Every fixture runs fresh.
+    #[arg(long, conflicts_with = "live_cache_ttl")]
+    pub no_cache: bool,
+
+    /// Allow RPC and Soroban results from the local cache to be replayed for
+    /// up to this many seconds. Off by default: a cached live result says
+    /// nothing about what the network does now. Replayed results are marked
+    /// `"source": "cache"` in the JSON report. XDR results are offline and
+    /// are always cacheable.
+    #[arg(
+        long,
+        value_name = "SECONDS",
+        value_parser = clap::value_parser!(u64).range(1..)
+    )]
+    pub live_cache_ttl: Option<u64>,
 }
 
 #[derive(Debug, Parser)]

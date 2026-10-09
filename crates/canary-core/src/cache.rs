@@ -5,12 +5,13 @@
 //! directory, keyed by everything that can invalidate reuse.
 
 use std::path::PathBuf;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
 use crate::digest::sha256_hex;
 use crate::errors::CanaryError;
-use crate::model::{CompatibilityResult, ProtocolVersion, Status};
+use crate::model::{CompatibilityResult, ProtocolVersion, ResultSource, Status, Surface};
 
 /// Version of the on-disk entry layout and of the key it was stored under.
 ///
@@ -18,7 +19,7 @@ use crate::model::{CompatibilityResult, ProtocolVersion, Status};
 /// before fixture contents were part of the key) are never read: a different
 /// file name keeps them from being found and this number must match when an
 /// entry is parsed. Bump it whenever what a key means changes.
-pub const CACHE_FORMAT: u32 = 2;
+pub const CACHE_FORMAT: u32 = 3;
 
 /// Everything that must match for a cached result to be safe to reuse.
 ///
@@ -66,8 +67,8 @@ impl CacheKey {
     ///
     /// It is a SHA-256 of [`CacheKey::canonical`], so it is stable across
     /// Rust versions and platforms and two different keys cannot share a
-    /// name by way of character replacement. The leading `v2-` ties the name
-    /// to [`CACHE_FORMAT`].
+    /// name by way of character replacement. The leading `v` and number tie the
+    /// name to [`CACHE_FORMAT`].
     pub fn to_file_stem(&self) -> String {
         format!(
             "v{CACHE_FORMAT}-{}",
@@ -82,42 +83,120 @@ struct CacheEntry {
     /// The full canonical key, checked on read so an entry is only ever
     /// returned for the exact key it was written for.
     key: String,
+    /// Seconds since the Unix epoch when the entry was written.
+    created_at: u64,
     result: CompatibilityResult,
+}
+
+/// What the cache may serve and store.
+///
+/// A cached XDR result is a pure function of the fixture bytes and the
+/// pinned `stellar-xdr` version, both of which are in the key, so it can be
+/// reused without limit. A cached RPC or Soroban result is a recording of a
+/// network's answer at one moment. It says nothing about what the network
+/// does now, so it is neither stored nor served unless the caller sets
+/// `live_max_age`, and then only while the entry is younger than that.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CachePolicy {
+    /// When `false` nothing is read or written (`--no-cache`).
+    pub enabled: bool,
+    /// Maximum age of a replayed RPC or Soroban result. `None` (the
+    /// default) means live results are never replayed.
+    pub live_max_age: Option<Duration>,
+}
+
+impl Default for CachePolicy {
+    fn default() -> Self {
+        CachePolicy {
+            enabled: true,
+            live_max_age: None,
+        }
+    }
+}
+
+impl CachePolicy {
+    fn allows(&self, surface: Surface) -> bool {
+        self.enabled && (surface == Surface::Xdr || self.live_max_age.is_some())
+    }
 }
 
 /// A local, file-backed cache of [`CompatibilityResult`]s.
 pub struct CacheStore {
     root: PathBuf,
+    policy: CachePolicy,
 }
 
 impl CacheStore {
+    /// A store under `root` with the default [`CachePolicy`]: XDR results
+    /// are cached, live results are not.
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        CacheStore { root: root.into() }
+        CacheStore {
+            root: root.into(),
+            policy: CachePolicy::default(),
+        }
+    }
+
+    /// Replaces the policy.
+    pub fn with_policy(mut self, policy: CachePolicy) -> Self {
+        self.policy = policy;
+        self
     }
 
     fn entry_path(&self, key: &CacheKey) -> PathBuf {
         self.root.join(format!("{}.json", key.to_file_stem()))
     }
 
-    /// Returns a previously cached result for `key`, if one exists and is
-    /// readable. Any I/O or parse failure is treated as a cache miss rather
-    /// than an error, since a stale/corrupt cache entry must never turn
-    /// into a false compatibility failure. An entry whose layout version or
-    /// stored key does not match is also a miss.
-    pub fn get(&self, key: &CacheKey) -> Option<CompatibilityResult> {
+    /// Returns a previously cached result for `key`, marked
+    /// [`ResultSource::Cache`], if the policy allows it for `surface` and an
+    /// acceptable entry exists. Any I/O or parse failure is treated as a
+    /// cache miss rather than an error, since a stale/corrupt cache entry
+    /// must never turn into a false compatibility failure. An entry whose
+    /// layout version or stored key does not match, or that is too old for
+    /// a live surface, is also a miss.
+    pub fn get(&self, key: &CacheKey, surface: Surface) -> Option<CompatibilityResult> {
+        self.get_at(key, surface, SystemTime::now())
+    }
+
+    /// [`CacheStore::get`] with the current time supplied by the caller.
+    pub fn get_at(
+        &self,
+        key: &CacheKey,
+        surface: Surface,
+        now: SystemTime,
+    ) -> Option<CompatibilityResult> {
+        if !self.policy.allows(surface) {
+            return None;
+        }
         let bytes = std::fs::read(self.entry_path(key)).ok()?;
         let entry: CacheEntry = serde_json::from_slice(&bytes).ok()?;
         if entry.format != CACHE_FORMAT || entry.key != key.canonical() {
             return None;
         }
-        Some(entry.result)
+        if surface != Surface::Xdr {
+            let max_age = self.policy.live_max_age?;
+            let created = UNIX_EPOCH + Duration::from_secs(entry.created_at);
+            // An entry stamped in the future (a clock that moved back, or a
+            // hand-edited file) has no trustworthy age, so it is not used.
+            let age = now.duration_since(created).ok()?;
+            if age > max_age {
+                return None;
+            }
+        }
+        let mut result = entry.result;
+        result.source = ResultSource::Cache;
+        Some(result)
     }
 
-    /// Stores `result` under `key`, unless it is an execution error:
-    /// temporary execution failures (e.g. an RPC timeout) must not be
-    /// cached as if they were a stable outcome.
-    pub fn put(&self, key: &CacheKey, result: &CompatibilityResult) -> Result<(), CanaryError> {
-        if result.status == Status::Error {
+    /// Stores `result` under `key` if the policy allows it for `surface`,
+    /// unless it is an execution error: temporary execution failures (e.g.
+    /// an RPC timeout) must not be cached as if they were a stable outcome.
+    pub fn put(
+        &self,
+        key: &CacheKey,
+        surface: Surface,
+        result: &CompatibilityResult,
+    ) -> Result<(), CanaryError> {
+        if result.status == Status::Error || !self.policy.allows(surface) {
             return Ok(());
         }
         std::fs::create_dir_all(&self.root)
@@ -125,7 +204,15 @@ impl CacheStore {
         let entry = CacheEntry {
             format: CACHE_FORMAT,
             key: key.canonical(),
-            result: result.clone(),
+            created_at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            result: CompatibilityResult {
+                // What is stored is a recording of a live execution.
+                source: ResultSource::Live,
+                ..result.clone()
+            },
         };
         let bytes = serde_json::to_vec_pretty(&entry)
             .map_err(|e| CanaryError::Cache(format!("failed to serialize cache entry: {e}")))?;
@@ -180,6 +267,7 @@ mod tests {
             details: None,
             duration_ms: 5,
             fixture_id: Some("p28-xdr-cap83-001".into()),
+            source: crate::model::ResultSource::Live,
         }
     }
 
@@ -188,10 +276,12 @@ mod tests {
         let dir = tempdir();
         let store = CacheStore::new(dir.path());
         let key = sample_key();
-        assert!(store.get(&key).is_none());
+        assert!(store.get(&key, Surface::Xdr).is_none());
 
-        store.put(&key, &sample_result(Status::Pass)).unwrap();
-        let fetched = store.get(&key).expect("cached result");
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+        let fetched = store.get(&key, Surface::Xdr).expect("cached result");
         assert_eq!(fetched.status, Status::Pass);
     }
 
@@ -201,8 +291,10 @@ mod tests {
         let store = CacheStore::new(dir.path());
         let key = sample_key();
 
-        store.put(&key, &sample_result(Status::Error)).unwrap();
-        assert!(store.get(&key).is_none());
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Error))
+            .unwrap();
+        assert!(store.get(&key, Surface::Xdr).is_none());
     }
 
     #[test]
@@ -210,11 +302,13 @@ mod tests {
         let dir = tempdir();
         let store = CacheStore::new(dir.path());
         let key = sample_key();
-        store.put(&key, &sample_result(Status::Pass)).unwrap();
-        assert!(store.get(&key).is_some());
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+        assert!(store.get(&key, Surface::Xdr).is_some());
 
         store.clear().unwrap();
-        assert!(store.get(&key).is_none());
+        assert!(store.get(&key, Surface::Xdr).is_none());
     }
 
     #[test]
@@ -297,7 +391,7 @@ mod tests {
             ..sample_key()
         };
         let stem = key.to_file_stem();
-        assert_eq!(stem.len(), "v2-".len() + 64);
+        assert_eq!(stem.len(), "v3-".len() + 64);
         assert!(stem.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'));
     }
 
@@ -321,14 +415,19 @@ mod tests {
         let dir = tempdir();
         let store = CacheStore::new(dir.path());
         let before = sample_key();
-        store.put(&before, &sample_result(Status::Pass)).unwrap();
+        store
+            .put(&before, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
 
         let after = CacheKey {
             fixture_digest: "digest-b".into(),
             ..before.clone()
         };
-        assert!(store.get(&after).is_none());
-        assert!(store.get(&before).is_some(), "the original key still hits");
+        assert!(store.get(&after, Surface::Xdr).is_none());
+        assert!(
+            store.get(&before, Surface::Xdr).is_some(),
+            "the original key still hits"
+        );
     }
 
     #[test]
@@ -344,7 +443,7 @@ mod tests {
             serde_json::to_vec(&legacy).unwrap(),
         )
         .unwrap();
-        assert!(store.get(&key).is_none());
+        assert!(store.get(&key, Surface::Xdr).is_none());
     }
 
     #[test]
@@ -352,13 +451,15 @@ mod tests {
         let dir = tempdir();
         let store = CacheStore::new(dir.path());
         let key = sample_key();
-        store.put(&key, &sample_result(Status::Pass)).unwrap();
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
         let path = dir.path().join(format!("{}.json", key.to_file_stem()));
         let mut value: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         value["format"] = serde_json::json!(CACHE_FORMAT + 1);
         std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
-        assert!(store.get(&key).is_none());
+        assert!(store.get(&key, Surface::Xdr).is_none());
     }
 
     #[test]
@@ -370,13 +471,15 @@ mod tests {
             fixture_digest: "digest-b".into(),
             ..sample_key()
         };
-        store.put(&key, &sample_result(Status::Fail)).unwrap();
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Fail))
+            .unwrap();
         std::fs::copy(
             dir.path().join(format!("{}.json", key.to_file_stem())),
             dir.path().join(format!("{}.json", other.to_file_stem())),
         )
         .unwrap();
-        assert!(store.get(&other).is_none());
+        assert!(store.get(&other, Surface::Xdr).is_none());
     }
 
     #[test]
@@ -389,10 +492,12 @@ mod tests {
             b"{ not json",
         )
         .unwrap();
-        assert!(store.get(&key).is_none());
+        assert!(store.get(&key, Surface::Xdr).is_none());
         // And it can be replaced by a good entry afterwards.
-        store.put(&key, &sample_result(Status::Pass)).unwrap();
-        assert!(store.get(&key).is_some());
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+        assert!(store.get(&key, Surface::Xdr).is_some());
     }
 
     #[test]
@@ -400,7 +505,7 @@ mod tests {
         let dir = tempdir();
         let store = CacheStore::new(dir.path());
         store
-            .put(&sample_key(), &sample_result(Status::Pass))
+            .put(&sample_key(), Surface::Xdr, &sample_result(Status::Pass))
             .unwrap();
         let names: Vec<_> = std::fs::read_dir(dir.path())
             .unwrap()
@@ -408,6 +513,157 @@ mod tests {
             .collect();
         assert_eq!(names.len(), 1, "{names:?}");
         assert!(names[0].ends_with(".json"));
+    }
+
+    fn live_store(dir: &TempDir, max_age_secs: u64) -> CacheStore {
+        CacheStore::new(dir.path()).with_policy(CachePolicy {
+            enabled: true,
+            live_max_age: Some(Duration::from_secs(max_age_secs)),
+        })
+    }
+
+    #[test]
+    fn a_replayed_result_is_marked_as_coming_from_the_cache() {
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+
+        assert_eq!(
+            store.get(&key, Surface::Xdr).unwrap().source,
+            ResultSource::Cache
+        );
+    }
+
+    #[test]
+    fn a_stored_result_is_recorded_as_a_live_execution() {
+        // Whatever marker the caller's value carried, the file records the
+        // execution it came from; only reading it back says `cache`.
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+        let replayed = CompatibilityResult {
+            source: ResultSource::Cache,
+            ..sample_result(Status::Pass)
+        };
+        store.put(&key, Surface::Xdr, &replayed).unwrap();
+        let raw = std::fs::read_to_string(dir.path().join(format!("{}.json", key.to_file_stem())))
+            .unwrap();
+        assert!(raw.contains("\"source\": \"live\""), "{raw}");
+    }
+
+    #[test]
+    fn live_results_are_neither_stored_nor_served_by_default() {
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+        for surface in [Surface::Rpc, Surface::Soroban] {
+            store
+                .put(&key, surface, &sample_result(Status::Pass))
+                .unwrap();
+            assert!(store.get(&key, surface).is_none(), "{surface}");
+        }
+        assert!(
+            std::fs::read_dir(dir.path())
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+            "nothing was written for live surfaces"
+        );
+    }
+
+    #[test]
+    fn a_live_entry_is_served_only_while_it_is_fresh() {
+        let dir = tempdir();
+        let store = live_store(&dir, 60);
+        let key = sample_key();
+        store
+            .put(&key, Surface::Rpc, &sample_result(Status::Pass))
+            .unwrap();
+        let written = SystemTime::now();
+
+        let at = |secs: u64| store.get_at(&key, Surface::Rpc, written + Duration::from_secs(secs));
+        assert!(at(0).is_some(), "just written");
+        assert!(at(59).is_some(), "inside the window");
+        assert!(at(120).is_none(), "outside the window");
+        assert_eq!(at(1).unwrap().source, ResultSource::Cache);
+    }
+
+    #[test]
+    fn a_live_entry_dated_in_the_future_is_not_trusted() {
+        let dir = tempdir();
+        let store = live_store(&dir, 3600);
+        let key = sample_key();
+        store
+            .put(&key, Surface::Soroban, &sample_result(Status::Pass))
+            .unwrap();
+
+        let long_ago = SystemTime::now() - Duration::from_secs(7200);
+        assert!(store.get_at(&key, Surface::Soroban, long_ago).is_none());
+    }
+
+    #[test]
+    fn xdr_results_do_not_expire() {
+        let dir = tempdir();
+        let store = CacheStore::new(dir.path());
+        let key = sample_key();
+        store
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+
+        let far_future = SystemTime::now() + Duration::from_secs(365 * 24 * 3600);
+        assert!(store.get_at(&key, Surface::Xdr, far_future).is_some());
+    }
+
+    #[test]
+    fn a_disabled_cache_reads_and_writes_nothing() {
+        let dir = tempdir();
+        let enabled = CacheStore::new(dir.path());
+        let key = sample_key();
+        enabled
+            .put(&key, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+
+        let disabled = CacheStore::new(dir.path()).with_policy(CachePolicy {
+            enabled: false,
+            live_max_age: Some(Duration::from_secs(60)),
+        });
+        assert!(
+            disabled.get(&key, Surface::Xdr).is_none(),
+            "an existing entry is not read"
+        );
+        let other = CacheKey {
+            fixture_id: "other".into(),
+            ..key
+        };
+        disabled
+            .put(&other, Surface::Xdr, &sample_result(Status::Pass))
+            .unwrap();
+        assert!(
+            enabled.get(&other, Surface::Xdr).is_none(),
+            "nothing was written"
+        );
+    }
+
+    #[test]
+    fn an_entry_without_a_creation_time_is_never_read() {
+        // Layout 2 (before replay provenance and expiry) had no timestamp.
+        let dir = tempdir();
+        let store = live_store(&dir, 3600);
+        let key = sample_key();
+        let layout2 = serde_json::json!({
+            "format": 2,
+            "key": key.canonical(),
+            "result": sample_result(Status::Pass),
+        });
+        std::fs::write(
+            dir.path().join(format!("{}.json", key.to_file_stem())),
+            serde_json::to_vec(&layout2).unwrap(),
+        )
+        .unwrap();
+        assert!(store.get(&key, Surface::Xdr).is_none());
+        assert!(store.get(&key, Surface::Rpc).is_none());
     }
 
     /// Minimal temp-dir helper so this crate does not need a `tempfile`

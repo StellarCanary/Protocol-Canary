@@ -68,6 +68,10 @@ impl MarkdownReporter {
             "**Result: {}**",
             input.overall_status().as_str().to_uppercase()
         );
+        if let Some(notice) = input.cache_notice() {
+            let _ = writeln!(out);
+            let _ = writeln!(out, "_{notice}_");
+        }
 
         let failures: Vec<_> = input
             .results
@@ -120,6 +124,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some(id.into()),
+            source: canary_core::ResultSource::Live,
         }
     }
 

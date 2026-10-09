@@ -57,7 +57,8 @@ a compatibility failure.
       "status": "pass",
       "summary": "StellarValue round-tripped byte-for-byte",
       "durationMs": 1,
-      "fixtureId": "p28-xdr-cap83-empty-tx-set"
+      "fixtureId": "p28-xdr-cap83-empty-tx-set",
+      "source": "live"
     }
   ],
   "git": {
@@ -86,6 +87,7 @@ a compatibility failure.
 | `counts.passed` / `.failed` / `.warnings` / `.errors` | integer | yes | Count of each `Status` value among `results`. |
 | `counts.skipped` | integer | yes | `skipped.length`. |
 | `results` | array | yes | One entry per fixture that actually ran (never includes skipped fixtures). Empty array is valid (e.g. no fixtures found) and is a pass, not an error. |
+| `results[].source` | string \| absent | `"live"` or `"cache"` from the release after `0.1.1` | `"live"`: executed during this run. `"cache"`: replayed from the local result cache, so it records an earlier run and is not an observation made now. Absent in reports written by `0.1.1` and earlier: that means *not recorded*, never "live". Consumers must ignore values they do not know. Added without a `schemaVersion` change because it is optional and additive. |
 | `results[].testId` / `.fixtureId` | string | yes (`fixtureId` may be `null`) | Currently always equal to each other and to the fixture's `id`; treat them as the same identifier. |
 | `results[].protocol` | integer | yes | The fixture's own declared protocol (matches `targetProtocol`, since non-matching fixtures are skipped before this point). |
 | `results[].surface` | string | yes | `"xdr"`, `"rpc"`, or `"soroban"` (always lowercase — contrast with the capitalized headings in the terminal/Markdown reporters). |

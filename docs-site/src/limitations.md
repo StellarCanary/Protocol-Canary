@@ -25,12 +25,10 @@ Stated plainly, not hidden:
 - **The current release does not publish prebuilt binaries.** Every
   documented install path builds from source via `cargo install`. See
   [Releases](./releases.md).
-- **Replayed RPC and Soroban results have no age limit.** `check` reuses
-  results from `.stellar-canary-cache` in the project root. An edited fixture
-  is never answered from an old entry, but a recorded answer from a network
-  is replayed however old it is, and the report does not mark replayed
-  results. Delete the directory to force a fresh run. See
-  [Architecture](./architecture.md#stateful-vs-ephemeral-components).
+- **`--live-cache-ttl` replays recorded network answers.** It is off by
+  default. When set, a cached RPC or Soroban result is served for up to that
+  many seconds and marked `"source": "cache"`; it says nothing about what the
+  network does now. See [`check`](./cli/check.md#result-cache).
 - **No formal third-party security audit has been performed** on any of
   the three repositories. See [Security](./security.md#audit-status).
 - **Mainnet has not been separately verified.** Every fixture in the

@@ -164,6 +164,7 @@ impl XdrRunner for DefaultXdrRunner {
             details,
             duration_ms,
             fixture_id: Some(fixture.metadata.id.clone()),
+            source: canary_core::ResultSource::Live,
         })
     }
 }

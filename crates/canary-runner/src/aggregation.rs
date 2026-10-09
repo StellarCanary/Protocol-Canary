@@ -80,6 +80,7 @@ impl ResultSummary {
 ///         details: None,
 ///         duration_ms: 5,
 ///         fixture_id: None,
+///         source: canary_core::ResultSource::Live,
 ///     },
 ///     CompatibilityResult {
 ///         test_id: "rpc-01".into(),
@@ -90,6 +91,7 @@ impl ResultSummary {
 ///         details: None,
 ///         duration_ms: 12,
 ///         fixture_id: None,
+///         source: canary_core::ResultSource::Live,
 ///     },
 /// ];
 ///
@@ -134,6 +136,7 @@ mod tests {
             details: None,
             duration_ms: 0,
             fixture_id: None,
+            source: canary_core::ResultSource::Live,
         }
     }
 

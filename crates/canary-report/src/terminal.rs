@@ -133,6 +133,9 @@ impl TerminalReporter {
             .count();
         let total = input.results.len();
         let _ = writeln!(out, "{passed}/{total} applicable checks passed.");
+        if let Some(notice) = input.cache_notice() {
+            let _ = writeln!(out, "{notice}");
+        }
         let _ = writeln!(out);
         let _ = writeln!(out, "Status: {}", decision_label(input));
 
@@ -180,6 +183,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some(id.into()),
+            source: canary_core::ResultSource::Live,
         }
     }
 
@@ -307,5 +311,21 @@ mod tests {
         assert!(!text.contains("no RPC endpoint configured"));
         assert!(!text.contains("p28-soroban-1 ("));
         assert!(!text.contains("p28-rpc-2 ("));
+    }
+
+    #[test]
+    fn a_run_with_replayed_results_says_so() {
+        let mut cached = result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass);
+        cached.source = canary_core::ResultSource::Cache;
+        let live = result("p28-xdr-2", canary_core::Surface::Xdr, Status::Pass);
+        let text = TerminalReporter::render(&base_input(vec![cached, live], PolicyDecision::Pass));
+        assert!(text.contains("1 of 2 results were replayed from the local result cache"));
+    }
+
+    #[test]
+    fn a_fully_live_run_has_no_cache_notice() {
+        let live = result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass);
+        let text = TerminalReporter::render(&base_input(vec![live], PolicyDecision::Pass));
+        assert!(!text.contains("result cache"));
     }
 }

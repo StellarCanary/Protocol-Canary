@@ -89,7 +89,7 @@ to the CLI's own exit code and `status` field.
 
 | Component | State model |
 |---|---|
-| `stellar-canary` binary | No server state. `check` reads and writes a local result cache (`canary_core::CacheStore`, directory `.stellar-canary-cache` in the project root), so a run can replay an earlier result instead of calling RPC/Soroban (the key covers fixture contents, so an edited fixture is never answered from an old entry). See [Limitations](./limitations.md). |
+| `stellar-canary` binary | No server state. `check` reads and writes a local result cache (`canary_core::CacheStore`, directory `.stellar-canary-cache` in the project root), so a run can replay an earlier result instead of calling RPC/Soroban (only offline XDR results by default; the key covers fixture contents, so an edited fixture is never answered from an old entry). See [Limitations](./limitations.md). |
 | `ProtocolCanary-Fixtures` | State lives only as version-controlled git history — a fixture pack is a fixed snapshot at a given commit. |
 | `ProtocolCanary-Action` | Fully ephemeral — runs inside a GitHub-hosted runner VM destroyed after the job. Its only durable output is the workflow artifact/job summary GitHub stores. |
 | Stellar RPC / Testnet | External network state, owned by the Stellar network, outside this project. Protocol Canary only reads from it or simulates against it — never writes. |

@@ -258,7 +258,7 @@ mod tests {
         RpcFixture::from_loaded(
             &parse_fixture_str(
                 &format!(
-                    "id = \"{id}\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"{method}\"\n"
+                    "id = \"{id}\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"{method}\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"protocolVersion\"\n"
                 ),
                 std::path::Path::new("r.toml"),
             )
@@ -319,7 +319,7 @@ mod tests {
         plan.rpc.push(
             RpcFixture::from_loaded(
                 &parse_fixture_str(
-                    "id = \"r\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"get-network\"\n",
+                    "id = \"r\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
                     std::path::Path::new("r.toml"),
                 )
                 .unwrap(),
@@ -366,7 +366,7 @@ mod tests {
         plan.rpc.push(
             RpcFixture::from_loaded(
                 &parse_fixture_str(
-                    "id = \"r\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"get-network\"\n",
+                    "id = \"r\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"c\"\ndescription = \"d\"\nmethod = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
                     std::path::Path::new("r.toml"),
                 )
                 .unwrap(),

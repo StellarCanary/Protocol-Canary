@@ -110,6 +110,19 @@ unrecognized `surface` string) fails at parse time with
 `FixtureError::Parse`/`Read`, also exit code 4 — never silently treated
 as a project incompatibility.
 
+Since `0.2.0` the surface-specific part of a fixture is checked as strictly as the
+common part, and a body the surface cannot read is exit code 4 (before, it was
+reported as an execution error, exit 3, which contradicted the paragraph above):
+
+- an unknown key in the body is an error that names it and lists the accepted keys
+  (`type`, `kind`, `value_base64`, and `expected_base64` for `encode-equals` on
+  `xdr`; `method` and `assert` on `rpc`; `source_account`, `contract_id`,
+  `function`, `sequence_number`, `args`, `expect` on `soroban`), and likewise in an
+  `[[assert]]`, `[[args]]` or `[expect]` entry. A misspelled `[[asert]]` used to be
+  dropped silently;
+- an `rpc` fixture needs at least one `[[assert]]`; one with none used to pass while
+  checking nothing.
+
 ## 4. Fixture ID resolution
 
 The `id` field is the fixture's identity everywhere: it is the string

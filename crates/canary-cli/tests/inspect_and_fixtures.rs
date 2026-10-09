@@ -69,7 +69,7 @@ fn fixtures_command_lists_fixture_ids_grouped_by_surface() {
     );
     dir.write(
         "fixtures/rpc/p28-rpc-1.toml",
-        "id = \"p28-rpc-1\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n",
+        "id = \"p28-rpc-1\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
     );
 
     let output = run_in(&dir.path, &["fixtures", "--protocol", "28"]);

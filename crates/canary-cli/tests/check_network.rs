@@ -30,7 +30,7 @@ async fn a_failing_get_network_call_surfaces_the_error() {
     // We only need an empty fixture to make it try to run RPC
     dir.write(
         "fixtures/p28-rpc-1.toml",
-        "id = \"p28-rpc-1\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\nargs_json = \"{}\"\n",
+        "id = \"p28-rpc-1\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
     );
 
     let server_uri = server.uri();

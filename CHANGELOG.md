@@ -32,7 +32,13 @@ Read these before moving a CI job from `0.1.1`.
    code `2` and the field name. Before, a typo such as `[test]` for `[tests]`
    was ignored and left every surface enabled. A config that only used the
    documented keys is unaffected; the example configs in this repository load.
-6. The two Protocol 28 RPC identity fixtures fail against a network that reports
+6. **Fixtures are checked strictly.** An unknown key in a fixture body, an `rpc`
+   fixture with no `[[assert]]`, or a misspelled assertion table is an invalid
+   fixture (exit `4`), where before the fixture ran and could pass while checking
+   nothing. A fixture body the engine cannot read is now exit `4` instead of `3`,
+   as `docs/fixture-contract.md` always said. The canonical Protocol 28 pack is
+   unaffected (CI checks the tag and `main`).
+7. The two Protocol 28 RPC identity fixtures fail against a network that reports
    protocol 29. That is correct and unchanged by this release. This release does
    not add Protocol 29 support.
 
@@ -96,6 +102,8 @@ Read these before moving a CI job from `0.1.1`.
 - `.stellar-canary.toml` is parsed strictly: unknown sections and keys are
   errors (`#[serde(deny_unknown_fields)]` on every config table), so a
   misspelled `[tests]` can no longer silently run network checks.
+- Fixture bodies are parsed strictly (unknown keys, empty RPC assertion lists) and
+  reported as exit `4`; see the upgrade notes.
 - Internal: Windows junction and symbolic link tests for the fixture loader, a
   CI job that runs the engine against the canonical Protocol 28 pack (tag and
   `main`), and a release workflow check that the tag equals the workspace

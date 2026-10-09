@@ -4,6 +4,12 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Documentation: the README, `ROADMAP.md`, `docs/architecture.md` and the
+  mdBook said the result cache was not wired into `check`. It has been wired
+  since `0.1.0` (`crates/canary-cli/src/commands.rs`). The text now describes
+  the actual behavior and its known limits (key ignores fixture content, no
+  expiry, replayed results are not marked in the report). The "Known gaps"
+  entry under `0.1.0` below is left as the historical record.
 - `canary-core` no longer exports the unused `CompatibilityTest` trait and
   `CompatibilityPlanner` marker type; the `planner` module is removed and
   `engine` now exports only `ExecutionContext`. Surface runners implement

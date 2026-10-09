@@ -6,10 +6,11 @@ contributor) picks them up.
 
 ## Near term
 
-- **Wire `CacheStore` into `check`.** The local, file-backed result cache
-  in `canary-core` is implemented and unit-tested but not yet used by
-  `check`'s execution path; every run currently calls RPC/Soroban fresh.
-  Useful once fixture counts or CI frequency make rate limits a concern.
+- **Correct result-cache invalidation.** `check` already reuses results
+  from the local file-backed cache in `canary-core`, but the cache key
+  ignores fixture content, entries never expire, and the report does not mark
+  a replayed result. See
+  [`docs/contracts/cf-01-report.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-01-report.md).
 - **Additional Protocol 28 fixtures.** CAP-0086 sparse-map host functions
   have no fixture yet — the currently published Soroban SDK surface does
   not expose the host functionality the intended fixture would need. See

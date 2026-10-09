@@ -22,8 +22,10 @@ Read these before moving a CI job from `0.1.1`.
    `input_file`/`expected_file` paths.** They are rejected with exit `4`.
    The canonical Protocol 28 pack (tag `protocol-28` and current `main` of
    `ProtocolCanary-Fixtures`) contains none and loads unchanged; CI checks both.
-3. **RPC and Soroban results are no longer replayed from the local cache unless
-   `--live-cache-ttl` is given.** Old cache entries are ignored.
+3. **`check` now keeps a result cache in `.stellar-canary-cache/` in the project
+   root.** Only offline XDR results are replayed by default; RPC and Soroban
+   results are replayed only with `--live-cache-ttl`. Add the directory to
+   `.gitignore`, or pass `--no-cache`.
 4. **JSON reports gain an optional `results[].source`** (`live` or `cache`).
    `schemaVersion` stays `1`; consumers that ignore unknown fields are unaffected.
 5. The two Protocol 28 RPC identity fixtures fail against a network that reports
@@ -49,25 +51,25 @@ Read these before moving a CI job from `0.1.1`.
   that matches the target protocol. The GitHub Action pins an engine version
   and only sees this once its default `version` moves to the release that
   contains it.
-- Replayed results are now marked and live results are no longer replayed by
-  default. `results[].source` in the JSON report is `"live"` or `"cache"`
-  (absent in older reports, meaning not recorded). `check` no longer serves
-  RPC or Soroban results from the cache unless `--live-cache-ttl <SECONDS>`
-  is given, and then only while the entry is younger than that. XDR results,
-  which are offline and fully determined by the cache key, are still cached.
-  New `--no-cache` skips the cache entirely. The terminal and Markdown
-  reports state how many results were replayed. Cache entries now carry their
-  creation time and a layout number; entries from earlier layouts are never
-  read.
-- The result cache key now includes the fixture's contents (the fixture file
-  and any `input_file` or `expected_file` it references), the network name,
-  the tool version and a path-free project fingerprint (project type,
-  capabilities and Git state). Before this, editing a fixture and running
-  `check` again could return the previous result. Cache file names are now a
-  SHA-256 of the full key instead of a lossy, partly hashed name, so fixture
-  ids that differ only in punctuation no longer share a file. Entries written
-  by `0.1.1` use a different layout and are never read; they can be deleted
-  with the rest of `.stellar-canary-cache`.
+- **The local result cache is now used by `check`.** `0.1.0` and `0.1.1`
+  created the cache type but never consulted it (the "Known gaps" entry under
+  `0.1.0` was accurate for both). It was wired in after `0.1.1`, and the
+  version released here includes three corrections made before any release:
+  - The cache key covers the fixture's contents (the fixture file and any
+    `input_file` or `expected_file` it references), the network name, the tool
+    version and a path-free project fingerprint (project type, capabilities
+    and Git state). While the wiring was unreleased, an edited fixture could
+    return the previous result; that never shipped. File names are a SHA-256
+    of the full key, and each entry records a layout number and its key.
+  - Only offline XDR results are replayed by default. RPC and Soroban results
+    are neither stored nor served unless `--live-cache-ttl <SECONDS>` is given,
+    and then only while younger than that. `--no-cache` skips the cache.
+  - `results[].source` in the JSON report is `"live"` or `"cache"` (absent in
+    older reports, meaning not recorded). The terminal and Markdown reports say
+    how many results were replayed.
+
+  Visible effect: `check` creates a `.stellar-canary-cache/` directory in the
+  project root. It is a cache and safe to delete; add it to `.gitignore`.
 - Fixture loading is stricter, and the same on every platform. A symbolic
   link or junction anywhere under `--fixtures-dir` is now an invalid fixture
   (exit 4) instead of being followed, a `.git` directory is no longer
@@ -75,12 +77,6 @@ Read these before moving a CI job from `0.1.1`.
   qualified, contains a backslash or has an empty, `.` or `..` segment is
   rejected when the fixture is parsed. A fixture directory that relied on
   links or on `..` references must be flattened into real files.
-- Documentation: the README, `ROADMAP.md`, `docs/architecture.md` and the
-  mdBook said the result cache was not wired into `check`. It has been wired
-  since `0.1.0` (`crates/canary-cli/src/commands.rs`). The text now describes
-  the actual behavior and its known limits (key ignores fixture content, no
-  expiry, replayed results are not marked in the report). The "Known gaps"
-  entry under `0.1.0` below is left as the historical record.
 - `canary-core` no longer exports the unused `CompatibilityTest` trait and
   `CompatibilityPlanner` marker type; the `planner` module is removed and
   `engine` now exports only `ExecutionContext`. Surface runners implement

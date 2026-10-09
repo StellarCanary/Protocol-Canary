@@ -207,7 +207,7 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
-`check` reuses results from a local cache (`canary_core::CacheStore`,
+From `0.2.0`, `check` reuses results from a local cache (`canary_core::CacheStore`,
 written to `.stellar-canary-cache` in the project root). The cache key covers
 the fixture's contents, the network, the tool version and the project's
 detected shape, so editing a fixture cannot return an old result. Only offline

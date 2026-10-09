@@ -9,6 +9,17 @@
 | GitHub Release | [`v0.1.1`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.1.1) is published (target commit `919668859bc1bef3d58737f13695b486d67632ea`). It carries no prebuilt binary and no checksum artifact — installation still builds from source via the tag, exactly as before. If prebuilt binaries are ever added, this page and [Installation](./installation.md) will be updated to reflect it. |
 | What changed in `0.1.1` | `canary-xdr` gained support for the `"ContractExecutable"` XDR type (previously only `"StellarValue"`), needed to test CAP-0085's `CONTRACT_EXECUTABLE_EXTERNAL_REF` case. |
 
+### Next engine release: `0.2.0` (prepared, not published)
+
+The workspace and `CHANGELOG.md` are prepared for `0.2.0`, which changes the
+outcome of two existing invocations: a `check` that executes nothing now fails
+(exit `2`, `--allow-empty` opts out) and fixture directories containing links
+or unsafe payload paths are rejected. The "Current version" above stays `v0.1.1`
+until the tag exists. See `CHANGELOG.md` for the upgrade notes and
+`docs/releasing.md` in the repository for the procedure and the verification a
+release needs. `ProtocolCanary-Action` keeps its pinned default engine version;
+it does not follow this release automatically.
+
 ## ProtocolCanary-Action
 
 | | |

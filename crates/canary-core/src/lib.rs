@@ -7,12 +7,14 @@
 //! dependency on any other crate in this workspace.
 
 pub mod cache;
+pub mod digest;
 pub mod engine;
 pub mod errors;
 pub mod model;
 pub mod policy;
 
 pub use cache::{CacheKey, CacheStore};
+pub use digest::sha256_hex;
 pub use engine::ExecutionContext;
 pub use errors::{CanaryError, ErrorCategory, ExitCode};
 pub use model::{

@@ -59,6 +59,42 @@ pub fn parse_fixture_file(path: &Path) -> Result<LoadedFixture, FixtureError> {
     parse_fixture_str(&raw_text, path)
 }
 
+/// Digest of everything that defines a fixture's behavior: its file and the
+/// payload files it references.
+///
+/// Raw bytes are hashed with no newline or encoding normalization, so any
+/// edit changes the digest. A referenced payload that is missing, unreadable
+/// or a symbolic link is hashed as "unavailable", which differs from an empty
+/// file; validation reports the underlying problem separately. Paths are not
+/// part of the digest, so it is the same in any checkout location.
+pub fn content_digest(
+    fixture_bytes: &[u8],
+    input_file: Option<&Path>,
+    expected_file: Option<&Path>,
+) -> String {
+    let input = payload_part(input_file);
+    let expected = payload_part(expected_file);
+    canary_core::sha256_hex(&[b"canary-fixture/1", fixture_bytes, &input, &expected])
+}
+
+/// Frames one optional payload: `0` absent, `1` unavailable, `2` + bytes.
+fn payload_part(path: Option<&Path>) -> Vec<u8> {
+    let Some(path) = path else {
+        return vec![0];
+    };
+    let is_plain_file = std::fs::symlink_metadata(path)
+        .map(|meta| meta.file_type().is_file())
+        .unwrap_or(false);
+    match is_plain_file.then(|| std::fs::read(path).ok()).flatten() {
+        Some(bytes) => {
+            let mut part = vec![2];
+            part.extend(bytes);
+            part
+        }
+        None => vec![1],
+    }
+}
+
 /// Checks that `reference` is a plain relative path and joins it to `dir`.
 ///
 /// The rules are lexical, so they behave the same on every platform and do
@@ -132,6 +168,14 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
 
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
 
+    let input_file = resolve_reference(path, dir, "input_file", raw.input_file)?;
+    let expected_file = resolve_reference(path, dir, "expected_file", raw.expected_file)?;
+    let content_digest = content_digest(
+        raw_text.as_bytes(),
+        input_file.as_deref(),
+        expected_file.as_deref(),
+    );
+
     Ok(LoadedFixture {
         metadata: FixtureMetadata {
             id: raw.id,
@@ -141,10 +185,11 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
             description: raw.description,
             source_reference: raw.source_reference,
             required_capabilities: raw.required_capabilities,
+            content_digest,
         },
         source_path: path.to_path_buf(),
-        input_file: resolve_reference(path, dir, "input_file", raw.input_file)?,
-        expected_file: resolve_reference(path, dir, "expected_file", raw.expected_file)?,
+        input_file,
+        expected_file,
         body: raw.body,
     })
 }
@@ -238,5 +283,79 @@ mod tests {
         );
         let err = parse_fixture_file(&path).unwrap_err();
         assert!(matches!(err, FixtureError::Parse { .. }));
+    }
+
+    const DIGEST_FIXTURE: &str = "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ninput_file = \"in.bin\"\n";
+
+    fn digest_of(dir: &Path, text: &str) -> String {
+        parse_fixture_str(text, &dir.join("fixture.toml"))
+            .unwrap()
+            .metadata
+            .content_digest
+    }
+
+    #[test]
+    fn digest_changes_when_the_fixture_text_changes() {
+        let dir = crate::test_support::temp_dir("digest-text");
+        std::fs::write(dir.path.join("in.bin"), "payload").unwrap();
+        let a = digest_of(&dir.path, DIGEST_FIXTURE);
+        let b = digest_of(
+            &dir.path,
+            &DIGEST_FIXTURE.replace(
+                "\"test\"\ndescription = \"test\"",
+                "\"test\"\ndescription = \"edited\"",
+            ),
+        );
+        assert_eq!(a.len(), 64);
+        assert_ne!(a, b);
+        assert_eq!(
+            a,
+            digest_of(&dir.path, DIGEST_FIXTURE),
+            "stable for equal input"
+        );
+    }
+
+    #[test]
+    fn digest_changes_when_a_referenced_payload_changes() {
+        let dir = crate::test_support::temp_dir("digest-payload");
+        std::fs::write(dir.path.join("in.bin"), "payload one").unwrap();
+        let before = digest_of(&dir.path, DIGEST_FIXTURE);
+        std::fs::write(dir.path.join("in.bin"), "payload two").unwrap();
+        assert_ne!(before, digest_of(&dir.path, DIGEST_FIXTURE));
+    }
+
+    #[test]
+    fn digest_does_not_depend_on_where_the_fixture_lives() {
+        let one = crate::test_support::temp_dir("digest-path-one");
+        let two = crate::test_support::temp_dir("digest-path-two");
+        for dir in [&one, &two] {
+            std::fs::write(dir.path.join("in.bin"), "same bytes").unwrap();
+        }
+        assert_eq!(
+            digest_of(&one.path, DIGEST_FIXTURE),
+            digest_of(&two.path, DIGEST_FIXTURE)
+        );
+    }
+
+    #[test]
+    fn a_missing_payload_does_not_digest_like_an_empty_one() {
+        let dir = crate::test_support::temp_dir("digest-missing");
+        let missing = digest_of(&dir.path, DIGEST_FIXTURE);
+        std::fs::write(dir.path.join("in.bin"), "").unwrap();
+        assert_ne!(missing, digest_of(&dir.path, DIGEST_FIXTURE));
+    }
+
+    #[test]
+    fn a_payload_in_the_wrong_slot_changes_the_digest() {
+        // The same bytes as an input and as an expected file are different
+        // fixtures.
+        let dir = crate::test_support::temp_dir("digest-slot");
+        std::fs::write(dir.path.join("in.bin"), "x").unwrap();
+        let as_input = digest_of(&dir.path, DIGEST_FIXTURE);
+        let as_expected = digest_of(
+            &dir.path,
+            &DIGEST_FIXTURE.replace("input_file", "expected_file"),
+        );
+        assert_ne!(as_input, as_expected);
     }
 }

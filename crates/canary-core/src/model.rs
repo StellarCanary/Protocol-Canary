@@ -242,6 +242,13 @@ pub struct FixtureMetadata {
     pub description: String,
     pub source_reference: Option<String>,
     pub required_capabilities: Vec<Capability>,
+    /// SHA-256 (lowercase hex) of everything that defines this fixture's
+    /// behavior: the fixture file's bytes and the bytes of any `input_file`
+    /// and `expected_file` it references. Empty when the metadata was built
+    /// in memory rather than loaded from disk. It is part of the result
+    /// cache key, so editing a fixture or its payload cannot reuse a result.
+    #[serde(default)]
+    pub content_digest: String,
 }
 
 /// An in-memory collection of loaded, validated fixture metadata.
@@ -335,6 +342,7 @@ mod tests {
                 description: "StellarValue roundtrip".into(),
                 source_reference: Some("CAP-0083".into()),
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
             FixtureMetadata {
                 id: "p27-rpc-001".into(),
@@ -344,6 +352,7 @@ mod tests {
                 description: "network identity".into(),
                 source_reference: None,
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
         ]);
 

@@ -7,7 +7,9 @@
 //! result list stays deterministic regardless of which network call
 //! happened to finish first.
 
-use canary_core::{CompatibilityResult, ExecutionContext, ProtocolVersion, Status, Surface};
+use canary_core::{
+    CompatibilityResult, ExecutionContext, FixtureMetadata, ProtocolVersion, Status, Surface,
+};
 use canary_rpc::{HttpRpcClient, RpcFixture, RpcRunner};
 use canary_soroban::{SorobanFixture, SorobanRunner};
 use canary_xdr::{DefaultXdrRunner, XdrFixture, XdrRunner};
@@ -38,7 +40,7 @@ fn run_xdr(fixtures: &[XdrFixture], context: &ExecutionContext) -> Vec<Compatibi
     fixtures
         .iter()
         .map(|fixture| {
-            let cache_key = cache_key(context, &fixture.metadata.id);
+            let cache_key = cache_key(context, &fixture.metadata);
             if let Some(cached) = context.cache.get(&cache_key) {
                 return cached;
             }
@@ -70,7 +72,7 @@ async fn run_rpc(
         .map(|(index, fixture)| {
             let runner = &runner;
             async move {
-                let cache_key = cache_key(context, &fixture.metadata.id);
+                let cache_key = cache_key(context, &fixture.metadata);
                 if let Some(cached) = context.cache.get(&cache_key) {
                     return (index, cached);
                 }
@@ -107,7 +109,7 @@ async fn run_soroban(
         .map(|(index, fixture)| {
             let runner = &runner;
             async move {
-                let cache_key = cache_key(context, &fixture.metadata.id);
+                let cache_key = cache_key(context, &fixture.metadata);
                 if let Some(cached) = context.cache.get(&cache_key) {
                     return (index, cached);
                 }
@@ -150,18 +152,41 @@ fn error_result(
     }
 }
 
-fn cache_key(context: &ExecutionContext, fixture_id: &str) -> canary_core::CacheKey {
-    let project_fingerprint = match (&context.git.commit, context.git.is_dirty) {
-        (Some(commit), Some(true)) => format!("{}-dirty", commit),
+/// Path-free identity of the project for cache purposes: its type, its
+/// sorted capabilities and its Git state. The absolute project path and the
+/// directory name are deliberately absent so a moved or renamed checkout
+/// keeps its entries, and a different project cannot collide on a shared
+/// name.
+fn project_fingerprint(context: &ExecutionContext) -> String {
+    let mut capabilities: Vec<String> = context
+        .project
+        .capabilities
+        .iter()
+        .map(|c| format!("{c:?}"))
+        .collect();
+    capabilities.sort();
+    let git = match (&context.git.commit, context.git.is_dirty) {
+        (Some(commit), Some(true)) => format!("{commit}+dirty"),
         (Some(commit), _) => commit.clone(),
-        (None, _) => context.project.name.clone(),
+        (None, _) => "no-commit".to_string(),
     };
+    format!(
+        "{:?}|{}|{git}",
+        context.project.project_type,
+        capabilities.join(",")
+    )
+}
+
+fn cache_key(context: &ExecutionContext, fixture: &FixtureMetadata) -> canary_core::CacheKey {
     canary_core::CacheKey {
-        fixture_id: fixture_id.to_string(),
+        fixture_id: fixture.id.clone(),
+        fixture_digest: fixture.content_digest.clone(),
         protocol: context.protocol,
-        project_fingerprint,
+        project_fingerprint: project_fingerprint(context),
+        network: context.network.name.to_string(),
         rpc_endpoint: context.network.rpc_url.clone(),
         observed_protocol: context.network.observed_protocol,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
     }
 }
 
@@ -202,9 +227,9 @@ mod tests {
 
     /// [`context()`] backed by a cache directory nothing has written to.
     ///
-    /// `CacheKey::to_file_stem` hashes `network.rpc_url`, and every test here
-    /// leaves that as the literal `"unused"` — so the shared temp cache keeps
-    /// handing back entries written by earlier runs of this suite. A cache hit
+    /// Every test here leaves `network.rpc_url` as the literal `"unused"` and
+    /// uses fixed fixture ids, so the shared temp cache can hand back entries
+    /// written by earlier runs of this suite. A cache hit
     /// returns the stored result *without contacting the mock server*, which
     /// is precisely the concurrent execution the out-of-order tests below
     /// exist to observe, so they have to start from an empty cache.
@@ -469,5 +494,113 @@ mod tests {
         assert_eq!(results[1].test_id, "r2");
         assert_eq!(results[0].status, Status::Pass);
         assert_eq!(results[1].status, Status::Pass);
+    }
+
+    const VALID_STELLAR_VALUE: &str =
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    fn xdr_fixture(id: &str, value_base64: &str) -> XdrFixture {
+        XdrFixture::from_loaded(
+            &parse_fixture_str(
+                &format!(
+                    "id = \"{id}\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"c\"\ndescription = \"d\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{value_base64}\"\n"
+                ),
+                std::path::Path::new("f.toml"),
+            )
+            .unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn editing_a_fixture_cannot_reuse_the_previous_result() {
+        let context = uncached_context();
+
+        let passing = xdr_fixture("same-id", VALID_STELLAR_VALUE);
+        let first = run_xdr(std::slice::from_ref(&passing), &context);
+        assert_eq!(first[0].status, Status::Pass);
+        assert!(
+            context
+                .cache
+                .get(&cache_key(&context, &passing.metadata))
+                .is_some(),
+            "the passing result was stored"
+        );
+
+        // Same id, same project, same network, but the fixture changed.
+        let edited = xdr_fixture("same-id", "not-valid-xdr!!");
+        let second = run_xdr(std::slice::from_ref(&edited), &context);
+        assert_eq!(
+            second[0].status,
+            Status::Fail,
+            "the edited fixture must be evaluated, not served the old pass"
+        );
+
+        // Going back to the original content is a hit on the original entry.
+        let third = run_xdr(std::slice::from_ref(&passing), &context);
+        assert_eq!(third[0].status, Status::Pass);
+    }
+
+    #[test]
+    fn an_unchanged_fixture_is_served_from_the_cache() {
+        let context = uncached_context();
+        let fixture = xdr_fixture("cached", VALID_STELLAR_VALUE);
+        let key = cache_key(&context, &fixture.metadata);
+
+        let mut planted = run_xdr(std::slice::from_ref(&fixture), &context).remove(0);
+        planted.summary = "planted marker".into();
+        context.cache.put(&key, &planted).unwrap();
+
+        let result = run_xdr(std::slice::from_ref(&fixture), &context).remove(0);
+        assert_eq!(result.summary, "planted marker");
+    }
+
+    #[test]
+    fn cache_key_does_not_depend_on_the_project_path_or_name() {
+        let mut a = uncached_context();
+        let mut b = uncached_context();
+        a.project.root = "/home/one/project".into();
+        a.project.name = "project".into();
+        b.project.root = "C:\\work\\other-checkout".into();
+        b.project.name = "renamed".into();
+        let fixture = xdr_fixture("path-free", VALID_STELLAR_VALUE);
+        assert_eq!(
+            cache_key(&a, &fixture.metadata),
+            cache_key(&b, &fixture.metadata)
+        );
+    }
+
+    #[test]
+    fn cache_key_changes_with_project_network_and_observation() {
+        let fixture = xdr_fixture("axes", VALID_STELLAR_VALUE);
+        let base = cache_key(&uncached_context(), &fixture.metadata);
+
+        let mut context = uncached_context();
+        context.project.capabilities = vec![canary_core::Capability::SorobanContract];
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "capabilities");
+
+        let mut context = uncached_context();
+        context.git.commit = Some("abc123".into());
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "commit");
+        context.git.is_dirty = Some(true);
+        let dirty = cache_key(&context, &fixture.metadata);
+        context.git.is_dirty = Some(false);
+        assert_ne!(dirty, cache_key(&context, &fixture.metadata), "dirty flag");
+
+        let mut context = uncached_context();
+        context.network.name = NetworkName::Mainnet;
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "network");
+
+        let mut context = uncached_context();
+        context.network.rpc_url = "https://other.example".into();
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "endpoint");
+
+        let mut context = uncached_context();
+        context.network.observed_protocol = Some(ProtocolVersion(29));
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "observed");
+
+        let mut context = uncached_context();
+        context.protocol = ProtocolVersion(29);
+        assert_ne!(cache_key(&context, &fixture.metadata), base, "target");
     }
 }

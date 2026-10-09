@@ -7,10 +7,9 @@ or contributor) picks them up.
 
 ## Near term
 
-- **Correct result-cache invalidation.** `check` already reuses results
-  from the local file-backed cache in `canary-core`, but the cache key
-  ignores fixture content, entries never expire, and the report does not mark
-  a replayed result. See
+- **Limit and mark replayed live results.** The result cache key now
+  covers fixture contents, but RPC and Soroban results are still replayed
+  without an age limit and the report does not mark a replayed result. See
   [`docs/contracts/cf-01-report.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/contracts/cf-01-report.md).
 - **Additional Protocol 28 fixtures.** CAP-0086 sparse-map host functions
   have no fixture yet — the currently published Soroban SDK surface does

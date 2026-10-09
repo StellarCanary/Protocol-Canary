@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- The result cache key now includes the fixture's contents (the fixture file
+  and any `input_file` or `expected_file` it references), the network name,
+  the tool version and a path-free project fingerprint (project type,
+  capabilities and Git state). Before this, editing a fixture and running
+  `check` again could return the previous result. Cache file names are now a
+  SHA-256 of the full key instead of a lossy, partly hashed name, so fixture
+  ids that differ only in punctuation no longer share a file. Entries written
+  by `0.1.1` use a different layout and are never read; they can be deleted
+  with the rest of `.stellar-canary-cache`.
 - Fixture loading is stricter, and the same on every platform. A symbolic
   link or junction anywhere under `--fixtures-dir` is now an invalid fixture
   (exit 4) instead of being followed, a `.git` directory is no longer

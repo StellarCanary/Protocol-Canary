@@ -80,6 +80,7 @@ mod tests {
                 description: "test".into(),
                 source_reference: None,
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
             source_path: PathBuf::from(source_path),
             input_file: None,

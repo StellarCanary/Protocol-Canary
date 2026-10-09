@@ -25,10 +25,10 @@ Stated plainly, not hidden:
 - **The current release does not publish prebuilt binaries.** Every
   documented install path builds from source via `cargo install`. See
   [Releases](./releases.md).
-- **The result cache can return stale results.** `check` reuses results
-  from `.stellar-canary-cache` in the project root. The cache key does not
-  include fixture content and entries never expire, so an edited fixture
-  can return an earlier result, and the report does not mark replayed
+- **Replayed RPC and Soroban results have no age limit.** `check` reuses
+  results from `.stellar-canary-cache` in the project root. An edited fixture
+  is never answered from an old entry, but a recorded answer from a network
+  is replayed however old it is, and the report does not mark replayed
   results. Delete the directory to force a fresh run. See
   [Architecture](./architecture.md#stateful-vs-ephemeral-components).
 - **No formal third-party security audit has been performed** on any of

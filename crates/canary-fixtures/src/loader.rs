@@ -387,4 +387,120 @@ mod tests {
             ));
         }
     }
+
+    /// Windows has two kinds of link the loader must refuse: symbolic links
+    /// (which need the "create symbolic links" privilege, held by an elevated
+    /// shell and by GitHub's Windows runners) and junctions (directory links
+    /// that need no privilege). Rust reports both through
+    /// `FileType::is_symlink`; these tests pin that on the real filesystem.
+    #[cfg(windows)]
+    mod windows_links {
+        use super::*;
+        use std::process::Command;
+
+        /// Creates a junction `link` -> `target` with `mklink /J`.
+        fn make_junction(link: &Path, target: &Path) {
+            let status = Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .expect("cmd is available on Windows");
+            assert!(
+                status.status.success(),
+                "mklink /J failed: {}{}",
+                String::from_utf8_lossy(&status.stdout),
+                String::from_utf8_lossy(&status.stderr)
+            );
+        }
+
+        /// Runs `create`; if the process lacks the symlink privilege
+        /// (ERROR_PRIVILEGE_NOT_HELD, 1314) the test is skipped with a note
+        /// instead of failing for a reason unrelated to the loader.
+        fn symlink_or_skip(create: impl FnOnce() -> std::io::Result<()>) -> bool {
+            match create() {
+                Ok(()) => true,
+                Err(e) if e.raw_os_error() == Some(1314) => {
+                    eprintln!("skipped: symbolic links need a privilege this process lacks");
+                    false
+                }
+                Err(e) => panic!("could not create a symbolic link: {e}"),
+            }
+        }
+
+        #[test]
+        fn rejects_a_junction_to_a_directory_outside() {
+            let dir = crate::test_support::temp_dir("loader-junction");
+            let outside = crate::test_support::temp_dir("loader-junction-target");
+            write(
+                &outside.path.join("p28-xdr-001.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            make_junction(&dir.path.join("escape"), &outside.path);
+
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_junction_loop_instead_of_recursing() {
+            let dir = crate::test_support::temp_dir("loader-junction-loop");
+            write(&dir.path.join("sub/keep.txt"), "x");
+            make_junction(&dir.path.join("sub/loop"), &dir.path);
+
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_directory_symbolic_link() {
+            let dir = crate::test_support::temp_dir("loader-win-symlink-dir");
+            let outside = crate::test_support::temp_dir("loader-win-symlink-dir-target");
+            write(
+                &outside.path.join("p28-xdr-001.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            if !symlink_or_skip(|| {
+                std::os::windows::fs::symlink_dir(&outside.path, dir.path.join("escape"))
+            }) {
+                return;
+            }
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_file_symbolic_link() {
+            let dir = crate::test_support::temp_dir("loader-win-symlink-file");
+            let outside = crate::test_support::temp_dir("loader-win-symlink-file-target");
+            write(
+                &outside.path.join("real.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            if !symlink_or_skip(|| {
+                std::os::windows::fs::symlink_file(
+                    outside.path.join("real.toml"),
+                    dir.path.join("link.toml"),
+                )
+            }) {
+                return;
+            }
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn accepts_a_fixtures_dir_that_is_itself_a_junction() {
+            let real = crate::test_support::temp_dir("loader-win-root-real");
+            let holder = crate::test_support::temp_dir("loader-win-root-holder");
+            write(
+                &real.path.join("p28-xdr-001.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            let link = holder.path.join("fixtures");
+            make_junction(&link, &real.path);
+
+            assert_eq!(load_directory(&link).expect("loads").len(), 1);
+        }
+    }
 }

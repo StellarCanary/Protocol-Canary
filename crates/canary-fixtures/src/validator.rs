@@ -38,24 +38,26 @@ fn check_unique_ids(fixtures: &[LoadedFixture]) -> Result<(), FixtureError> {
 
 fn check_referenced_files_exist(fixtures: &[LoadedFixture]) -> Result<(), FixtureError> {
     for fixture in fixtures {
-        if let Some(input_file) = &fixture.input_file {
-            if !input_file.is_file() {
-                return Err(FixtureError::MissingReferencedFile {
-                    id: fixture.metadata.id.clone(),
-                    source_path: fixture.source_path.clone(),
-                    kind: "input",
-                    referenced: input_file.clone(),
-                });
-            }
-        }
-        if let Some(expected_file) = &fixture.expected_file {
-            if !expected_file.is_file() {
-                return Err(FixtureError::MissingReferencedFile {
-                    id: fixture.metadata.id.clone(),
-                    source_path: fixture.source_path.clone(),
-                    kind: "expected",
-                    referenced: expected_file.clone(),
-                });
+        for (kind, reference) in [
+            ("input", &fixture.input_file),
+            ("expected", &fixture.expected_file),
+        ] {
+            let Some(path) = reference else { continue };
+            // `symlink_metadata` does not follow links, so a link in place of
+            // a payload is reported as such instead of being read through.
+            match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(FixtureError::SymbolicLink { path: path.clone() });
+                }
+                Ok(meta) if meta.file_type().is_file() => {}
+                _ => {
+                    return Err(FixtureError::MissingReferencedFile {
+                        id: fixture.metadata.id.clone(),
+                        source_path: fixture.source_path.clone(),
+                        kind,
+                        referenced: path.clone(),
+                    });
+                }
             }
         }
     }

@@ -12,12 +12,17 @@ There is no registry and no digest today. Facts checked on 2026-10-09:
 
 - `canary_fixtures::load_directory` walks the given directory recursively
   (`collect_toml_files`), sorts paths, and parses **every** `*.toml` file as a
-  fixture. It descends into hidden directories and follows symlinked
-  directories (`Path::is_dir` follows links).
-- A fixture may name `input_file` and `expected_file`. They are resolved with
-  `dir.join(name)` with no confinement (an absolute path or `../` escapes the
-  pack) and are only checked for existence by `validate`. No runner reads them
-  yet.
+  fixture. In `0.1.1` it descended into every directory, including `.git`, and
+  followed symlinked directories (`Path::is_dir` follows links). Since the loader
+  hardening (RH-04) it does not enter a directory named `.git`, rejects any
+  symbolic link or junction below the given directory with
+  `FixtureError::SymbolicLink`, and still walks other hidden directories.
+- A fixture may name `input_file` and `expected_file`. In `0.1.1` they were
+  resolved with `dir.join(name)` with no confinement (an absolute path or `../`
+  escaped the pack) and were only checked for existence by `validate`. Since RH-04
+  a reference must be a plain relative path (no empty, `.` or `..` segment, no
+  leading `/`, drive prefix, backslash or NUL) and a referenced symbolic link is
+  rejected; see `docs/fixture-contract.md`. No runner reads the payloads yet.
 - Fixture identity is the `id` string. It is unique across the loaded tree.
 - `ProtocolCanary-Fixtures` validates fixtures with `tools/validate/validate.py`
   and `schemas/fixture-v1.schema.json`. It has one git tag, `protocol-28`, with
@@ -30,9 +35,9 @@ depend on a path, a checkout tool or a commit hash.
 
 A **pack** is a directory root. Its files are:
 
-1. every regular file whose name ends in `.toml`, at any depth (this matches
-   the loader, so the registry can never list a different set than the engine
-   would load);
+1. every regular file whose name ends in `.toml`, at any depth, except inside a
+   directory named `.git` (this matches the loader, so the registry can never
+   list a different set than the engine would load);
 2. every regular file referenced by a fixture's `input_file` or `expected_file`.
 
 Everything else (README, schemas, docs, `.git`) is outside the pack and does
@@ -181,5 +186,5 @@ its root or loop.
 | CF-02-D Python validator rules 1 to 5 | ProtocolCanary-Fixtures | CF-02-B |
 | CF-02-E CI freshness check | ProtocolCanary-Fixtures | CF-02-B |
 | CF-02-F Rust pack walker and digest (`canary-fixtures`) matching CF-02-A | Protocol-Canary | CF-02-A |
-| CF-02-G Reject symlinks and escaping payload paths in the loader | Protocol-Canary | this contract |
+| CF-02-G Reject symlinks and escaping payload paths in the loader | Protocol-Canary | **Done in RH-04.** |
 | CF-02-H `.gitattributes` for LF pack files | ProtocolCanary-Fixtures | none |

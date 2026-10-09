@@ -92,6 +92,18 @@ open. Nothing here is approved by this review; open items are in the table above
 | S5 | CF-05 and CF-08 cap report size at 10 MiB, but JSON nesting depth is separate. | `serde_json` limits recursion to 128 levels by default and `JSON.parse` is iterative enough for 10 MiB; the viewer test corpus must include a deeply nested report. Part of D-06. |
 | S6 | `getLatestLedger` responses carry `metadataXdr` of about 1.28 million characters on Mainnet. The engine downloads and discards it, so an RPC-heavy run on a metered connection pays for it. | Not a contract change. Recorded in CA-01 as a cost to weigh before adding more fixtures on that method. |
 
+## Contract addenda (CA)
+
+Addenda complete contracts that were missing a specification the backlog needs.
+They are frozen the same way as the eight contracts.
+
+| ID | Addendum |
+|---|---|
+| [CA-01](ca-01-rpc-requests-and-assertions.md) | RPC request parameters and response assertions (`getVersion` in older notes means `getVersionInfo`) |
+| [CA-02](ca-02-fixtures-json.md) | `stellar-canary fixtures --format json` |
+| [CA-03](ca-03-inspect-json.md) | `stellar-canary inspect --format json` |
+| [CA-04](ca-04-project-fingerprint.md) | Project fingerprint |
+
 ## Findings that shaped these contracts
 
 Verified on 2026-10-09 against `main` at `1ff7908` (Engine), `828b41c`

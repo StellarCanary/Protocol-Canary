@@ -41,6 +41,11 @@ jobs:
         run: cargo test --workspace --locked
 
       - name: cargo build --release
+        # The binary embeds source and registry paths. Remapping them makes the
+        # result independent of the checkout directory (measured: two builds in
+        # different directories were byte-identical; docs/releasing.md).
+        env:
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
         run: cargo build --workspace --release --locked
 
       - name: Prepare assets

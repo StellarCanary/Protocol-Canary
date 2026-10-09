@@ -62,13 +62,31 @@ current one.
 
 ## Reproducibility
 
-What has been verified, and what has not, for a given release is recorded in the
-release evidence, not assumed here. Two builds of the same commit with the same
-toolchain (`rust-toolchain.toml` pins 1.91.0) in the same directory produce the
-same binary only if nothing embeds a timestamp or a path that differs between
-runs. Compare `sha256sum` of independent builds before claiming it, and state the
-conditions (toolchain, operating system, build directory). A different build
-directory or operating system can legitimately give a different binary.
+Measured on 2026-10-09 on one Linux x86_64 machine with the pinned toolchain
+(`rust-toolchain.toml`, 1.91.0), building the same commit with
+`cargo build --workspace --release --locked`:
+
+| Conditions | Result |
+|---|---|
+| Same directory, built twice | byte-identical |
+| Two different directories | **different binaries**: source paths are embedded |
+| Two different directories, with the path remapping below | byte-identical |
+
+```bash
+RUSTFLAGS="--remap-path-prefix=$PWD=/build \
+  --remap-path-prefix=$HOME/.cargo=/cargo \
+  --remap-path-prefix=$HOME/.rustup=/rustup" \
+  cargo build --workspace --release --locked
+```
+
+`release.yml` applies that remapping to the release build. What this does and does
+not show: the same commit, toolchain, operating system and flags give the same
+bytes regardless of the build directory. It does not show that a build on a
+different operating system, CPU architecture or toolchain version matches, and the
+published binary has not yet been compared with an independent rebuild because no
+`0.2.0` release exists. Before claiming a release is reproducible, download its
+asset, rebuild the tag with the command above on the same kind of machine, and
+compare `sha256sum`; record the result with the release.
 
 ## What a release does not do
 

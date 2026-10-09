@@ -1,7 +1,7 @@
 # CA-04: Project fingerprint
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-06 (the per-file size limit in section 3).
+D-06 is approved (the per-file size limit in section 3, 1 MiB).
 Authoritative for: a reproducible, path-free digest of the project inputs the
 tool actually inspected, and what it can and cannot be used for.
 Depends on: CF-07 (which files are inspected).
@@ -55,7 +55,7 @@ The fingerprint is a digest over the **inputs the detector read** and the
 
 A symbolic link met during the scan is never followed and is recorded as
 `unreadable`, reason `symlink`. Files above the per-manifest size limit
-(1 MiB, pending D-06) are `unreadable`, reason `too-large`. A file whose path is
+(1 MiB, approved under D-06) are `unreadable`, reason `too-large`. A file whose path is
 not valid UTF-8 cannot be normalized; it is not hashed, a `non-utf8-path` line
 with only a counter is added, and the digest still changes if their number does.
 

@@ -1,7 +1,8 @@
 # CF-08: Readiness viewer and GitHub Action integration
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-08b (where the viewer is hosted).
+Pending maintainer decision: D-08b (where the viewer is hosted). D-10 is approved
+(diagnostics artifacts opt-in and disabled by default).
 Authoritative for: the static browser-local report viewer, policy
 interpretation, Action inputs and outputs, fixture acquisition, diagnostics and
 the cross-repository integration points.
@@ -185,9 +186,10 @@ is how a project makes it a failure.
 ### 3.5 Diagnostics and redaction
 
 When no usable report exists, the Action may upload a diagnostics artifact
-(**proposed to be opt-in and off by default, pending D-10**: an artifact on a
+(**opt-in and disabled by default, approved under D-10**: an artifact on a
 public repository can be downloaded by anyone who can read the repository, and
-redaction by pattern is best effort)
+redaction by pattern is best effort; no diagnostics artifact is uploaded unless
+the user explicitly enables it)
 containing only: Action version, resolved engine version and commit, the
 sanitized command line (no `--rpc-url` query string, no token), the exit code, a
 timeout flag, and the last 64 KiB of stdout and stderr with these removed or

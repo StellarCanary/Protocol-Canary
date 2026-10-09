@@ -1,6 +1,7 @@
 # CF-05: Report comparison
 
 Status: frozen for implementation planning, contract version 1.
+D-06 is approved (report comparison input cap: 10 MiB per report).
 Authoritative for: result identity across reports, status transitions,
 comparison output and baseline compatibility.
 
@@ -116,7 +117,7 @@ meanings of `1` and `2`.
 
 ## 6. Security and trust boundaries
 
-Both inputs are untrusted files. Size cap on each (proposed 10 MiB, to be confirmed by the maintainers), no network access, no path in output. Strings copied into
+Both inputs are untrusted files. Size cap on each (approved under D-06: 10 MiB per report), no network access, no path in output. Strings copied into
 output (`id`) are from reports and are escaped by whatever renders them.
 
 ## 7. Validation and test requirements

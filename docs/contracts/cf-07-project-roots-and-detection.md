@@ -1,8 +1,8 @@
 # CF-07: Project roots and capability detection
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decisions: D-06 (scan limit values), D-08 (root discovery
-rule when `--project-root` is absent).
+Pending maintainer decision: D-08 (root discovery
+rule when `--project-root` is absent). D-06 is approved (scan limit values).
 Authoritative for: project root selection, supported manifests, dependency
 identifiers, scan boundaries and the evidence behind detected capabilities.
 
@@ -98,7 +98,7 @@ the parser work is not blocked, but it must not ship with guessed coordinates.
 - Never leave the selected root.
 - Excluded directory names, anywhere: `.git`, `node_modules`, `target`, `vendor`,
   `dist`, `build`, `.venv`, `venv`, `__pycache__`, `.gradle`, `.cache`.
-- Bounds (defaults pending D-06): depth 4 below the root, 2,000 directories
+- Bounds (approved under D-06): depth 4 below the root, 2,000 directories
   visited, 10,000 directory entries read, 1 MiB per manifest read, 64 workspace
   members. Hitting any bound stops that part of the scan and records a
   diagnostic; it never turns into a pass or into a silent `Unknown`.

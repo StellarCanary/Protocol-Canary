@@ -59,6 +59,66 @@ pub fn parse_fixture_file(path: &Path) -> Result<LoadedFixture, FixtureError> {
     parse_fixture_str(&raw_text, path)
 }
 
+/// Checks that `reference` is a plain relative path and joins it to `dir`.
+///
+/// The rules are lexical, so they behave the same on every platform and do
+/// not depend on what exists on disk: a reference may not be empty, absolute,
+/// rooted, drive-qualified, contain a backslash or NUL, or have an empty,
+/// `.` or `..` segment. The accepted separator is `/`.
+fn resolve_reference(
+    source_path: &Path,
+    dir: &Path,
+    field: &'static str,
+    reference: Option<String>,
+) -> Result<Option<PathBuf>, FixtureError> {
+    let Some(reference) = reference else {
+        return Ok(None);
+    };
+    if let Some(reason) = unsafe_reference_reason(&reference) {
+        return Err(FixtureError::UnsafeReference {
+            source_path: source_path.to_path_buf(),
+            field,
+            reference,
+            reason,
+        });
+    }
+    Ok(Some(
+        reference
+            .split('/')
+            .fold(dir.to_path_buf(), |p, seg| p.join(seg)),
+    ))
+}
+
+fn unsafe_reference_reason(reference: &str) -> Option<&'static str> {
+    if reference.is_empty() {
+        return Some("the path is empty");
+    }
+    if reference.contains('\0') {
+        return Some("the path contains a NUL character");
+    }
+    if reference.contains('\\') {
+        return Some("the path contains a backslash; use '/' as the separator");
+    }
+    if reference.starts_with('/') {
+        return Some("the path is absolute");
+    }
+    let mut segments = reference.split('/');
+    let first = segments.clone().next().unwrap_or("");
+    let bytes = first.as_bytes();
+    if bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' {
+        return Some("the path has a drive prefix");
+    }
+    for segment in segments.by_ref() {
+        match segment {
+            "" => return Some("the path has an empty segment"),
+            "." => return Some("the path has a '.' segment"),
+            ".." => return Some("the path escapes the fixture directory with '..'"),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Parses fixture TOML already in memory, as if it had come from `path`
 /// (used to resolve `input_file`/`expected_file` and for error messages).
 ///
@@ -83,8 +143,8 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
             required_capabilities: raw.required_capabilities,
         },
         source_path: path.to_path_buf(),
-        input_file: raw.input_file.map(|f| dir.join(f)),
-        expected_file: raw.expected_file.map(|f| dir.join(f)),
+        input_file: resolve_reference(path, dir, "input_file", raw.input_file)?,
+        expected_file: resolve_reference(path, dir, "expected_file", raw.expected_file)?,
         body: raw.body,
     })
 }

@@ -124,7 +124,9 @@ suite.
 
 `Protocol-Canary`'s own loader performs the load-time validation that
 actually gates a `check`/`fixtures` run: a duplicate ID, a dangling
-`input_file`/`expected_file` reference, or a structurally invalid file
+`input_file`/`expected_file` reference, an unsafe reference (absolute, `..`,
+backslash or drive prefix), a symbolic link anywhere in the fixture tree, or
+a structurally invalid file
 (bad TOML, missing required field, unrecognized `surface`) fails the
 whole load with [exit code `4`](./exit-codes.md) — never silently treated
 as a project incompatibility.

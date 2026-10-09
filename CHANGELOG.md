@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+- Fixture loading is stricter, and the same on every platform. A symbolic
+  link or junction anywhere under `--fixtures-dir` is now an invalid fixture
+  (exit 4) instead of being followed, a `.git` directory is no longer
+  entered, and an `input_file` or `expected_file` that is absolute, drive
+  qualified, contains a backslash or has an empty, `.` or `..` segment is
+  rejected when the fixture is parsed. A fixture directory that relied on
+  links or on `..` references must be flattened into real files.
 - Documentation: the README, `ROADMAP.md`, `docs/architecture.md` and the
   mdBook said the result cache was not wired into `check`. It has been wired
   since `0.1.0` (`crates/canary-cli/src/commands.rs`). The text now describes

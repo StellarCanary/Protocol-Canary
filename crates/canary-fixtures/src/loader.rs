@@ -63,6 +63,22 @@ pub enum FixtureError {
         second: PathBuf,
     },
 
+    /// An entry inside the fixture directory is a symbolic link (or a
+    /// Windows junction). Links are never followed: a link could point
+    /// outside the fixture directory or form a cycle.
+    #[error("unsafe entry in fixture directory: {path} is a symbolic link; fixture directories must not contain links")]
+    SymbolicLink { path: PathBuf },
+
+    /// A fixture's `input_file` or `expected_file` is not a plain relative
+    /// path that stays inside the fixture's own directory tree.
+    #[error("fixture file {source_path} has an unsafe {field} {reference:?}: {reason}")]
+    UnsafeReference {
+        source_path: PathBuf,
+        field: &'static str,
+        reference: String,
+        reason: &'static str,
+    },
+
     #[error(
         "fixture {id:?} ({source_path}) references a {kind} file that does not exist: {referenced}"
     )]
@@ -80,10 +96,24 @@ impl From<FixtureError> for CanaryError {
     }
 }
 
+/// Name of the version-control directory that the walk never enters.
+const VCS_DIR: &str = ".git";
+
 /// Recursively loads every `*.toml` fixture file under `dir`.
 ///
 /// Returns fixtures in a deterministic (sorted-by-path) order so that
 /// downstream planning and reporting stay reproducible.
+///
+/// Traversal rules, identical on every platform:
+///
+/// - `dir` itself may be a symbolic link (the caller chose it), but nothing
+///   below it may be: any symbolic link or junction, to a file or a
+///   directory, is rejected with [`FixtureError::SymbolicLink`]. Links are
+///   never followed, so a link cannot leave the fixture tree or form a loop.
+/// - A directory named `.git` is not entered. Pointing `--fixtures-dir` at
+///   a repository checkout is documented and supported; its history is not
+///   fixture data.
+/// - Entries that are neither regular files nor directories are ignored.
 pub fn load_directory(dir: &Path) -> Result<Vec<LoadedFixture>, FixtureError> {
     let mut paths = Vec::new();
     collect_toml_files(dir, &mut paths)?;
@@ -104,9 +134,20 @@ fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureE
             source,
         })?;
         let path = entry.path();
-        if path.is_dir() {
+        // `DirEntry::file_type` does not follow links, unlike `Path::is_dir`.
+        let file_type = entry.file_type().map_err(|source| FixtureError::ReadDir {
+            path: path.clone(),
+            source,
+        })?;
+        if file_type.is_symlink() {
+            return Err(FixtureError::SymbolicLink { path });
+        }
+        if file_type.is_dir() {
+            if entry.file_name() == VCS_DIR {
+                continue;
+            }
             collect_toml_files(&path, out)?;
-        } else if path.extension().is_some_and(|ext| ext == "toml") {
+        } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
             out.push(path);
         }
     }
@@ -172,5 +213,178 @@ mod tests {
 
         let err = load_directory(&dir.path).unwrap_err();
         assert!(matches!(err, FixtureError::Parse { .. }));
+    }
+
+    fn fixture_with_reference(id: &str, field: &str, value: &str) -> String {
+        format!("{}{field} = {value}\n", fixture_toml(id, "xdr"))
+    }
+
+    #[test]
+    fn does_not_enter_a_git_directory() {
+        let dir = crate::test_support::temp_dir("loader-dot-git");
+        write(
+            &dir.path.join("p28-xdr-001.toml"),
+            &fixture_toml("p28-xdr-001", "xdr"),
+        );
+        // Not a fixture; would fail to parse if the walk entered it.
+        write(&dir.path.join(".git/hooks/sample.toml"), "not [[[ toml");
+
+        let fixtures = load_directory(&dir.path).expect("loads");
+        assert_eq!(fixtures.len(), 1);
+    }
+
+    #[test]
+    fn still_enters_other_hidden_directories() {
+        let dir = crate::test_support::temp_dir("loader-hidden");
+        write(
+            &dir.path.join(".hidden/p28-xdr-001.toml"),
+            &fixture_toml("p28-xdr-001", "xdr"),
+        );
+
+        assert_eq!(load_directory(&dir.path).expect("loads").len(), 1);
+    }
+
+    #[test]
+    fn rejects_unsafe_payload_references() {
+        let cases = [
+            ("\"../outside.bin\"", "escapes"),
+            ("\"a/../../outside.bin\"", "escapes"),
+            ("\"/etc/passwd\"", "absolute"),
+            ("\"C:/Windows/win.ini\"", "drive"),
+            ("\"C:evil.bin\"", "drive"),
+            ("\"dir\\\\file.bin\"", "backslash"),
+            ("\"\"", "empty"),
+            ("\"a//b.bin\"", "empty segment"),
+            ("\"./a.bin\"", "'.' segment"),
+            ("\"a/\"", "empty segment"),
+        ];
+        for (value, expect) in cases {
+            for field in ["input_file", "expected_file"] {
+                let dir = crate::test_support::temp_dir("loader-unsafe-ref");
+                write(
+                    &dir.path.join("p28-xdr-001.toml"),
+                    &fixture_with_reference("p28-xdr-001", field, value),
+                );
+                let err = load_directory(&dir.path).unwrap_err();
+                match &err {
+                    FixtureError::UnsafeReference { field: f, .. } => assert_eq!(*f, field),
+                    other => panic!("{value} in {field}: expected UnsafeReference, got {other}"),
+                }
+                assert!(
+                    err.to_string().contains(expect),
+                    "{value}: message {err} should mention {expect}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn accepts_a_nested_relative_payload_reference() {
+        let dir = crate::test_support::temp_dir("loader-good-ref");
+        write(
+            &dir.path.join("p28-xdr-001.toml"),
+            &fixture_with_reference("p28-xdr-001", "input_file", "\"data/in.bin\""),
+        );
+        write(&dir.path.join("data/in.bin"), "payload");
+
+        let fixtures = load_directory(&dir.path).expect("loads");
+        assert_eq!(
+            fixtures[0].input_file.as_deref(),
+            Some(dir.path.join("data").join("in.bin").as_path())
+        );
+        crate::validate(&fixtures).expect("payload exists");
+    }
+
+    #[cfg(unix)]
+    mod symlinks {
+        use super::*;
+        use std::os::unix::fs::symlink;
+
+        #[test]
+        fn rejects_a_symlinked_fixture_file() {
+            let dir = crate::test_support::temp_dir("loader-link-file");
+            let outside = crate::test_support::temp_dir("loader-link-file-target");
+            write(
+                &outside.path.join("real.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            symlink(outside.path.join("real.toml"), dir.path.join("link.toml")).unwrap();
+
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_symlinked_directory_that_points_outside() {
+            let dir = crate::test_support::temp_dir("loader-link-dir");
+            let outside = crate::test_support::temp_dir("loader-link-dir-target");
+            write(
+                &outside.path.join("p28-xdr-001.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            symlink(&outside.path, dir.path.join("escape")).unwrap();
+
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_directory_loop_instead_of_recursing() {
+            let dir = crate::test_support::temp_dir("loader-link-loop");
+            write(&dir.path.join("sub/keep.txt"), "x");
+            symlink(&dir.path, dir.path.join("sub/loop")).unwrap();
+
+            let err = load_directory(&dir.path).unwrap_err();
+            assert!(matches!(err, FixtureError::SymbolicLink { .. }), "{err}");
+        }
+
+        #[test]
+        fn rejects_a_non_fixture_symlink_too() {
+            // The rule is "no links anywhere in the tree", not only on
+            // files that look like fixtures.
+            let dir = crate::test_support::temp_dir("loader-link-readme");
+            write(&dir.path.join("target.txt"), "x");
+            symlink(dir.path.join("target.txt"), dir.path.join("README")).unwrap();
+
+            assert!(matches!(
+                load_directory(&dir.path).unwrap_err(),
+                FixtureError::SymbolicLink { .. }
+            ));
+        }
+
+        #[test]
+        fn accepts_a_fixtures_dir_that_is_itself_a_symlink() {
+            let real = crate::test_support::temp_dir("loader-root-real");
+            let holder = crate::test_support::temp_dir("loader-root-holder");
+            write(
+                &real.path.join("p28-xdr-001.toml"),
+                &fixture_toml("p28-xdr-001", "xdr"),
+            );
+            let link = holder.path.join("fixtures");
+            symlink(&real.path, &link).unwrap();
+
+            assert_eq!(load_directory(&link).expect("loads").len(), 1);
+        }
+
+        #[test]
+        fn validate_rejects_a_symlinked_payload() {
+            let dir = crate::test_support::temp_dir("loader-link-payload");
+            write(&dir.path.join("real.bin"), "payload");
+            // Load first (the link does not exist yet), then swap the
+            // payload for a link, as a time-of-check change would.
+            write(
+                &dir.path.join("p28-xdr-001.toml"),
+                &fixture_with_reference("p28-xdr-001", "input_file", "\"in.bin\""),
+            );
+            write(&dir.path.join("in.bin"), "payload");
+            let fixtures = load_directory(&dir.path).expect("loads");
+            std::fs::remove_file(dir.path.join("in.bin")).unwrap();
+            symlink(dir.path.join("real.bin"), dir.path.join("in.bin")).unwrap();
+
+            assert!(matches!(
+                crate::validate(&fixtures).unwrap_err(),
+                FixtureError::SymbolicLink { .. }
+            ));
+        }
     }
 }

@@ -25,10 +25,12 @@ Stated plainly, not hidden:
 - **The current release does not publish prebuilt binaries.** Every
   documented install path builds from source via `cargo install`. See
   [Releases](./releases.md).
-- **`CacheStore` exists but is not currently wired into the primary check
-  flow.** The type is implemented and unit-tested in `canary-core`, but
-  `check` calls RPC/Soroban fresh on every run rather than reusing a
-  prior cached result. See [Architecture](./architecture.md#stateful-vs-ephemeral-components).
+- **The result cache can return stale results.** `check` reuses results
+  from `.stellar-canary-cache` in the project root. The cache key does not
+  include fixture content and entries never expire, so an edited fixture
+  can return an earlier result, and the report does not mark replayed
+  results. Delete the directory to force a fresh run. See
+  [Architecture](./architecture.md#stateful-vs-ephemeral-components).
 - **No formal third-party security audit has been performed** on any of
   the three repositories. See [Security](./security.md#audit-status).
 - **Mainnet has not been separately verified.** Every fixture in the

@@ -7,6 +7,9 @@ and verified by running the built CLI against the real fixtures in
 [`ProtocolCanary-Action`](https://github.com/StellarCanary/ProtocolCanary-Action)
 consumes to build its GitHub job summary and annotations.
 
+Compatibility, identity and failure rules for this report are defined in
+[`contracts/cf-01-report.md`](contracts/cf-01-report.md).
+
 ## Command
 
 ```bash
@@ -57,7 +60,6 @@ a compatibility failure.
       "fixtureId": "p28-xdr-cap83-empty-tx-set"
     }
   ],
-  "skipped": [],
   "git": {
     "commit": "68a5f8d52573fa741e095bc321443015f0f21250",
     "branch": "main",

@@ -207,17 +207,18 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
-The local result cache (`canary_core::CacheStore`) exists and is tested,
-but is not yet wired into `check`'s execution path — every run currently
-calls RPC/Soroban fresh rather than reusing a prior result. See
-[CHANGELOG.md](CHANGELOG.md) for the full known-gaps list.
+`check` reuses results from a local cache (`canary_core::CacheStore`,
+written to `.stellar-canary-cache` in the project root). The cache key does
+not include fixture content and entries do not expire, so an edited fixture
+can return a previous result; delete the directory to force a fresh run. The
+report does not yet mark replayed results. See
+[`docs/contracts/cf-01-report.md`](docs/contracts/cf-01-report.md#6-cached-results).
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for planned work. Highlights: Protocol 29
-support once its CAPs are finalized upstream, wiring the existing
-`CacheStore` into `check`'s execution path, and additional RPC/Soroban
-compatibility assertions.
+support once evidence-backed fixtures exist, correcting result-cache
+invalidation, and additional RPC/Soroban compatibility assertions.
 
 ## Workspace layout
 

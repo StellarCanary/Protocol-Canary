@@ -4,10 +4,9 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
-## [0.2.0] - not yet released
+## [0.2.0] - 2026-10-09
 
-The date is filled in when the tag is created. `0.1.1` stays published and
-unchanged.
+`0.1.1` stays published and unchanged.
 
 ### Upgrade notes
 

@@ -28,7 +28,11 @@ Read these before moving a CI job from `0.1.1`.
    `.gitignore`, or pass `--no-cache`.
 4. **JSON reports gain an optional `results[].source`** (`live` or `cache`).
    `schemaVersion` stays `1`; consumers that ignore unknown fields are unaffected.
-5. The two Protocol 28 RPC identity fixtures fail against a network that reports
+5. **`.stellar-canary.toml` now rejects unknown sections and keys** with exit
+   code `2` and the field name. Before, a typo such as `[test]` for `[tests]`
+   was ignored and left every surface enabled. A config that only used the
+   documented keys is unaffected; the example configs in this repository load.
+6. The two Protocol 28 RPC identity fixtures fail against a network that reports
    protocol 29. That is correct and unchanged by this release. This release does
    not add Protocol 29 support.
 
@@ -89,6 +93,9 @@ Read these before moving a CI job from `0.1.1`.
   as a configuration error (exit 2); an observed-protocol mismatch prints
   a `warning:` line on stderr and the run continues (the report's
   `(observed protocol N)` annotation is unchanged).
+- `.stellar-canary.toml` is parsed strictly: unknown sections and keys are
+  errors (`#[serde(deny_unknown_fields)]` on every config table), so a
+  misspelled `[tests]` can no longer silently run network checks.
 - Internal: Windows junction and symbolic link tests for the fixture loader, a
   CI job that runs the engine against the canonical Protocol 28 pack (tag and
   `main`), and a release workflow check that the tag equals the workspace

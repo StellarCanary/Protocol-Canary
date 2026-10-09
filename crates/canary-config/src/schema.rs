@@ -20,6 +20,7 @@ pub const DEFAULT_PROTOCOL: u32 = 28;
 
 /// The parsed, typed contents of `.stellar-canary.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
     pub version: u32,
     pub protocol: u32,
@@ -45,6 +46,7 @@ impl Default for ConfigFile {
 
 /// `[project]` — how to classify the project under test.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectSection {
     #[serde(rename = "type", default)]
     pub project_type: ProjectTypeSetting,
@@ -110,6 +112,7 @@ impl<'de> Deserialize<'de> for ProjectTypeSetting {
 
 /// `[tests]` — which surfaces are enabled for this project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestsSection {
     #[serde(default = "default_true")]
     pub xdr: bool,
@@ -135,6 +138,7 @@ impl Default for TestsSection {
 
 /// `[policy]` — how results are turned into a pass/warn/fail decision.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicySection {
     #[serde(default)]
     pub warnings_are_failures: bool,

@@ -117,6 +117,10 @@ soroban = true
 warnings_are_failures = false
 ```
 
+From `0.2.0` an unknown section or key is an error (exit code `2`, naming the
+field), not ignored. Before, a misspelling such as `[test]` for `[tests]` left
+every surface enabled without a word.
+
 ## Protocol 28
 
 The first compatibility pack targets Stellar Protocol 28: a real CAP-0083

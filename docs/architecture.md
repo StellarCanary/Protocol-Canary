@@ -367,6 +367,11 @@ current verified combination.
 
 ## Report generation and exit codes
 
+The interfaces shared by the three repositories (report, fixture registry
+and digest, lockfile, verification evidence, comparison, fixture releases,
+project detection, viewer and Action) are defined in
+[`contracts/`](contracts/README.md).
+
 See [`json-report-contract.md`](json-report-contract.md) for the full JSON
 schema and [`fixture-contract.md`](fixture-contract.md) for how fixtures
 are loaded and validated. Exit codes: `0` pass, `1` compatibility failure,

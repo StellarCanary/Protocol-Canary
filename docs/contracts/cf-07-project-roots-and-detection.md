@@ -1,8 +1,7 @@
 # CF-07: Project roots and capability detection
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-08 (root discovery
-rule when `--project-root` is absent). D-06 is approved (scan limit values).
+Updated with maintainer decisions D-08 (no upward root discovery; current directory or `--project-root` only) and D-06 (approved scan limit values).
 Authoritative for: project root selection, supported manifests, dependency
 identifiers, scan boundaries and the evidence behind detected capabilities.
 
@@ -46,8 +45,7 @@ Rules, in order:
    directory, and the choice is shown in `inspect`.
 2. Otherwise the current directory, exactly as today.
 
-Upward discovery (finding a repository root from a subdirectory) is not part of
-version 1 (D-08 asks whether to add it). The Git context is read from the
+Upward discovery (finding a repository root from a subdirectory) is rejected per approved decision D-08: the current directory or explicit `--project-root` only. The Git context is read from the
 selected root, and `git.commit` is the commit of the repository containing it;
 a root inside a nested git worktree uses that worktree's HEAD.
 

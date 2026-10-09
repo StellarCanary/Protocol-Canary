@@ -1,7 +1,7 @@
 # CF-02: Fixture registry and pack digest
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-03 (where the registry lives).
+Updated with maintainer decision D-03 (canonical registry committed in ProtocolCanary-Fixtures with CI freshness check).
 Authoritative for: registry JSON structure, canonical ordering, hashing inputs
 and the pack digest. Both the Rust engine and the Python tooling in
 `ProtocolCanary-Fixtures` implement it and must agree byte for byte.
@@ -94,8 +94,8 @@ fail when a registry value differs from the TOML value.
 
 JSON encoding: UTF-8, LF line endings, two-space indent, one trailing newline,
 object keys in the order shown above, no duplicate keys. Arrays are sorted as in
-section 4. The registry is committed or generated in a way that makes it
-byte-reproducible (D-03). A committed generated file is a conflict hot spot when many
+section 4. The registry is committed in ProtocolCanary-Fixtures in a way that makes it
+byte-reproducible (approved under D-03). A committed generated file is a conflict hot spot when many
 fixture pull requests land together, so there is one registry per protocol pack and
 the freshness check prints the regeneration command.
 

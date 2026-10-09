@@ -1,8 +1,7 @@
 # CF-04: Verification evidence and the Protocol 29 boundary
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-05 (freshness window). D-09 is approved
-(Option C), recorded in section 5.
+Updated with maintainer decisions D-05 (30-day freshness window for live verification evidence) and D-09 (Option C), recorded in section 5.
 Authoritative for: what counts as verification, how it is recorded, and what
 may be claimed about Protocol 29.
 
@@ -85,7 +84,7 @@ Derived, never stored:
 
 | State | Condition |
 |---|---|
-| `verified` | Latest record is `matched`, its `method` is one the fixture needs, and `checkedAt` is within the freshness window (D-05, proposed 30 days for live methods). |
+| `verified` | Latest record is `matched`, its `method` is one the fixture needs, and `checkedAt` is within the freshness window (approved 30 days for live methods under D-05). |
 | `stale` | Latest matching record is older than the window. |
 | `historical` | The only matching record observed a different `observedProtocol` than the fixture's `protocol`. |
 | `mismatched` | Latest record is `mismatched`. |

@@ -1,7 +1,7 @@
 # CF-03: StellarCanary lockfile
 
 Status: frozen for implementation planning, contract version 1.
-Pending maintainer decision: D-04 (exit code for a stale lock).
+Updated with maintainer decisions D-04 (exit code 2 for a stale lock) and D-12 (engine-version mismatch is a warning in lock.warnings).
 Authoritative for: `.stellar-canary.lock` version 1.
 
 ## 1. Purpose and existing behavior
@@ -79,11 +79,10 @@ The lock supplies identity, not settings, so it only conflicts on facts:
 | `--no-lock` given | Lock ignored entirely and the report records `lock.status = "absent"`. |
 | Lock `protocol` differs from the effective target protocol | Stale. |
 | Computed pack digest differs from `packDigest` | Stale. |
-| `tool.version` present and differs from the running binary | Warning on stderr; not a failure in version 1 (pending D-12: the lock pins fixtures, not the engine, so it does not stop a different engine from running). |
+| `tool.version` present and differs from the running binary | Warning on stderr and recorded in `lock.warnings`; not a failure in version 1 (approved under D-12: the lock pins fixtures, not the engine, so it does not stop a different engine from running). |
 
 Stale means: the run stops before executing anything, prints the expected and
-computed digest, and exits with the configuration error code `2` (D-04 records
-the alternative of using `4`). A stale lock is never auto-refreshed.
+computed digest, and exits with the configuration error code `2` (approved under D-04). A stale lock is never auto-refreshed.
 
 Absent lock behaves exactly as today.
 

@@ -1,7 +1,7 @@
 # CF-01: Report contract
 
 Status: frozen for implementation planning, contract version 1. Updated with
-the maintainer decisions D-02 (zero-check runs) and the report-provenance
+the maintainer decisions D-01 (additive report fields in schemaVersion 1), D-02 (zero-check runs) and the report-provenance
 direction for RH-02; see the decision log in [`README.md`](README.md).
 Authoritative for: report compatibility, identity and failure semantics.
 Field-by-field reference for the current output stays in

@@ -44,7 +44,7 @@ Download a prebuilt binary and its checksum from the [Releases](https://github.c
 Alternatively, install a released version from source:
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
 stellar-canary check
 ```
 
@@ -171,6 +171,7 @@ supplied via `--fixtures-dir`.
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
 Only combinations that have actually been run together are listed here.

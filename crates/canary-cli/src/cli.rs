@@ -10,6 +10,21 @@ use clap::{Parser, Subcommand, ValueEnum};
     version,
     about = "Rehearse Stellar protocol upgrades before they reach your production stack."
 )]
+/// Top-level command-line interface for the `stellar-canary` binary.
+///
+/// `Cli` is the `clap` entry point: it holds the one required subcommand the
+/// user typed — [`Command::Check`], [`Command::Inspect`],
+/// [`Command::Fixtures`], [`Command::Report`] or [`Command::Version`] —
+/// together with that subcommand's own argument struct. The binary name and
+/// version banner come from the `#[command(...)]` attributes above, and flags
+/// that apply to a single run live on the per-command `*Args` types rather
+/// than here.
+///
+/// Building a `Cli` parses process arguments only: it performs no I/O of its
+/// own and does not panic. Invalid input is a failure condition rather than
+/// an error value — `clap` prints the usage message to stderr and exits the
+/// process with status 2 before a `Cli` is ever constructed, so any `Cli`
+/// value that exists represents a successfully parsed invocation.
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,

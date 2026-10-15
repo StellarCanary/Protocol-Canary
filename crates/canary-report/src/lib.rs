@@ -43,6 +43,21 @@ pub struct NetworkSummary {
     pub error: Option<String>,
 }
 
+/// Facts about the engine run that produced a report (CF-01 `run`).
+///
+/// Deliberately limited to values that are the same for every run of one
+/// binary: a build timestamp or a per-run clock reading would make two
+/// otherwise identical runs differ byte for byte, which CF-01 section 4 rules
+/// out for report version 1.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RunSummary {
+    /// The Git commit the running binary was built from, or `None` when it
+    /// was built without Git history (a source archive, a packaged crate, or
+    /// no `git` executable). `None` is rendered as JSON `null`, never as a
+    /// placeholder string.
+    pub tool_build_commit: Option<String>,
+}
+
 /// Everything a reporter needs to render a finished run. This is the only
 /// input any reporter takes.
 #[derive(Debug, Clone)]
@@ -56,6 +71,10 @@ pub struct ReportInput {
     pub decision: PolicyDecision,
     pub git: GitContext,
     pub verbose: bool,
+    /// Build provenance of the engine. `None` means *not recorded* (a report
+    /// written before the field existed), which is different from a
+    /// recorded run whose commit is unknown.
+    pub run: Option<RunSummary>,
 }
 
 impl ReportInput {
@@ -125,6 +144,7 @@ impl ReportInput {
     ///     decision: canary_core::PolicyDecision::Pass,
     ///     git: canary_core::GitContext::default(),
     ///     verbose: false,
+    ///     run: None,
     /// };
     ///
     /// let xdr: Vec<_> = report.results_for(Surface::Xdr).collect();
@@ -241,6 +261,7 @@ mod tests {
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         }
     }
 

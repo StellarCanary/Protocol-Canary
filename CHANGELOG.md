@@ -4,6 +4,13 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- JSON reports gain an optional `run.toolBuildCommit`: the Git commit the
+  binary was built from, or `null` when it was built without Git history
+  (CF-01). `schemaVersion` stays `1`. No timestamp is recorded, so two builds
+  of one commit stay byte-for-byte comparable.
+
 ### Changed
 
 - RPC fixture assertions are evaluated against the raw JSON `result` the

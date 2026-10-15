@@ -18,6 +18,25 @@ use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
 
+/// The Git commit this binary was built from, captured by `build.rs`, or
+/// `None` when the build had no usable Git history.
+///
+/// The value is validated here as well as in `build.rs`: the compile-time
+/// variable is the only input, and anything that is not a full lowercase hex
+/// object name is treated as unknown rather than copied into a report.
+fn build_commit() -> Option<String> {
+    normalized_commit(option_env!("CANARY_BUILD_COMMIT").unwrap_or(""))
+}
+
+fn normalized_commit(raw: &str) -> Option<String> {
+    let commit = raw.trim();
+    let full_length = commit.len() == 40 || commit.len() == 64;
+    let lower_hex = commit
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    (full_length && lower_hex).then(|| commit.to_string())
+}
+
 /// Rejects `--protocol 0` the same way the config loader rejects
 /// `protocol = 0`, so the flag can't bypass that validation.
 fn validated_protocol_flag(protocol: Option<u32>) -> Result<Option<u32>, CanaryError> {
@@ -213,6 +232,9 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         decision,
         git,
         verbose: args.verbose,
+        run: Some(canary_report::RunSummary {
+            tool_build_commit: build_commit(),
+        }),
     };
 
     let format = if args.json {
@@ -643,6 +665,35 @@ mod tests {
     }
 
     #[test]
+    fn normalized_commit_accepts_only_full_lowercase_hex_object_names() {
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(normalized_commit(sha1).as_deref(), Some(sha1));
+        assert_eq!(normalized_commit(sha256).as_deref(), Some(sha256));
+        assert_eq!(
+            normalized_commit(&format!("{sha1}\n")).as_deref(),
+            Some(sha1)
+        );
+
+        assert_eq!(normalized_commit(""), None);
+        assert_eq!(normalized_commit("unknown"), None);
+        assert_eq!(normalized_commit(&sha1[..39]), None);
+        assert_eq!(normalized_commit(&sha1.to_uppercase()), None);
+        assert_eq!(normalized_commit(&sha1.replace('0', "g")), None);
+        assert_eq!(normalized_commit(&format!("{sha1}0")), None);
+    }
+
+    #[test]
+    fn the_embedded_build_commit_is_unknown_or_a_full_object_name() {
+        // Built from a Git checkout this is `Some`; built from a source
+        // archive it is `None`. Either way it is never a placeholder.
+        if let Some(commit) = build_commit() {
+            assert!(commit.len() == 40 || commit.len() == 64, "{commit:?}");
+            assert!(commit.bytes().all(|b| b.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
     fn run_version_returns_the_success_exit_code() {
         assert_eq!(run_version(), ExitCode::Pass);
     }
@@ -809,6 +860,7 @@ mod tests {
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         })
     }
 

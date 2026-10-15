@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- RPC fixture assertions are evaluated against the raw JSON `result` the
+  endpoint returned, not a typed projection of it (CA-01 section 4.1). A
+  field the engine does not model can now be asserted on, and `field-absent`
+  on such a field is evaluated truthfully instead of passing for the wrong
+  reason. A `result` that is not an object is an `error`, not a failed
+  assertion. The shipped Protocol 28 fixtures give the same outcome.
+
 ## [0.2.0] - 2026-10-09
 
 `0.1.1` stays published and unchanged.

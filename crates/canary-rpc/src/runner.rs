@@ -1,6 +1,13 @@
 //! The RPC compatibility runner: calls a Stellar RPC method and checks its
 //! response shape against a fixture's declared field assertions.
 //!
+//! Assertions are evaluated against the JSON `result` object exactly as the
+//! endpoint returned it (CA-01 section 4.1), not against a typed model of it,
+//! so a field the typed model does not name can still be asserted on and a
+//! `field-absent` assertion is never satisfied just because a model dropped
+//! the field. A `result` that is not an object is an `error`, not a failed
+//! assertion.
+//!
 //! A fixture declares which fields of the response are `required`,
 //! `optional`, or simply not mentioned (and therefore ignored) — an
 //! unrelated new optional field appearing in a response must never fail a
@@ -320,8 +327,8 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
         let start = Instant::now();
 
         let response_json = match fixture.method {
-            RpcMethod::GetNetwork => self.client.get_network().await.map(json_of),
-            RpcMethod::GetLatestLedger => self.client.get_latest_ledger().await.map(json_of),
+            RpcMethod::GetNetwork => self.client.get_network_raw().await,
+            RpcMethod::GetLatestLedger => self.client.get_latest_ledger_raw().await,
         };
 
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -347,10 +354,6 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
             source: canary_core::ResultSource::Live,
         })
     }
-}
-
-fn json_of<T: serde::Serialize>(value: T) -> JsonValue {
-    serde_json::to_value(value).unwrap_or(JsonValue::Null)
 }
 
 fn evaluate(fixture: &RpcFixture, response: &JsonValue) -> (Status, String, Option<String>) {
@@ -591,5 +594,168 @@ mod tests {
         });
         assert!(assertion_nested.check(&mismatch_response).is_err());
         assert!(assertion_timestamp.check(&mismatch_response).is_ok());
+    }
+
+    /// Serves `result` as the JSON-RPC result and runs a fixture with the
+    /// given assertion tables against it.
+    async fn run_against(
+        result: serde_json::Value,
+        method_name: &str,
+        assertions: &str,
+    ) -> CompatibilityResult {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": result
+            })))
+            .mount(&server)
+            .await;
+
+        let body = format!("method = \"{method_name}\"\n{assertions}");
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-raw", &body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        runner.run(&fixture, &context()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn assertions_can_name_a_field_the_typed_model_does_not() {
+        // `closeTime`, `headerXdr` and `metadataXdr` are real getLatestLedger
+        // fields that `LatestLedger` does not model, so the old typed
+        // projection dropped them before any assertion saw them.
+        let result = run_against(
+            json!({
+                "id": "e9f5c2a1",
+                "protocolVersion": 28,
+                "sequence": 1234,
+                "closeTime": "1700000000",
+                "headerXdr": "AAAA",
+                "metadataXdr": "BBBB"
+            }),
+            "get-latest-ledger",
+            r#"
+            [[assert]]
+            kind = "field-equals"
+            field = "closeTime"
+            value = "1700000000"
+
+            [[assert]]
+            kind = "field-exists"
+            field = "headerXdr"
+
+            [[assert]]
+            kind = "field-type"
+            field = "metadataXdr"
+            expected_type = "string"
+            "#,
+        )
+        .await;
+        assert_eq!(result.status, Status::Pass, "{:?}", result.details);
+    }
+
+    #[tokio::test]
+    async fn field_absent_is_not_satisfied_by_a_field_the_typed_model_drops() {
+        // On the typed projection this assertion passed for the wrong reason:
+        // the model had already dropped `closeTime`.
+        let result = run_against(
+            json!({
+                "id": "e9f5c2a1",
+                "protocolVersion": 28,
+                "sequence": 1234,
+                "closeTime": "1700000000"
+            }),
+            "get-latest-ledger",
+            r#"
+            [[assert]]
+            kind = "field-absent"
+            field = "closeTime"
+            "#,
+        )
+        .await;
+        assert_eq!(result.status, Status::Fail);
+        assert!(result
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("closeTime") && d.contains("absent")));
+    }
+
+    #[tokio::test]
+    async fn a_result_that_is_not_an_object_is_an_error_not_a_failed_assertion() {
+        let assertions = "[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n";
+        for (result, kind) in [
+            (json!([1, 2]), "an array"),
+            (json!("text"), "a string"),
+            (json!(28), "a number"),
+            (json!(true), "a boolean"),
+            (json!(null), "null"),
+        ] {
+            let outcome = run_against(result, "get-network", assertions).await;
+            assert_eq!(outcome.status, Status::Error, "{kind}");
+            let details = outcome.details.unwrap_or_default();
+            assert!(details.contains("JSON object"), "{details:?}");
+            assert!(details.contains(kind), "{details:?} should name {kind}");
+        }
+    }
+
+    /// CA-01 section 9: the shipped `p28-*` RPC fixtures must yield the same
+    /// status on the raw `result` as they did on the typed projection. The
+    /// responses below are recorded shapes of a real Testnet `getNetwork`.
+    #[test]
+    fn shipped_p28_get_network_fixture_has_the_same_outcome_on_the_raw_result() {
+        const SHIPPED: &str =
+            include_str!("../../../tests/fixtures/protocol-28/rpc/p28-rpc-get-network.toml");
+        let loaded =
+            canary_fixtures::parse_fixture_str(SHIPPED, std::path::Path::new("shipped.toml"))
+                .unwrap();
+        let fixture = RpcFixture::from_loaded(&loaded).unwrap();
+
+        let recorded = [
+            (
+                "protocol 28 with friendbotUrl",
+                json!({
+                    "friendbotUrl": "https://friendbot.stellar.org",
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28
+                }),
+                Status::Pass,
+            ),
+            (
+                "protocol 28 without friendbotUrl",
+                json!({
+                    "passphrase": "Public Global Stellar Network ; September 2015",
+                    "protocolVersion": 28
+                }),
+                Status::Pass,
+            ),
+            (
+                "protocol 29",
+                json!({
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 29
+                }),
+                Status::Fail,
+            ),
+            (
+                "an unrelated new field is ignored",
+                json!({
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28,
+                    "someNewField": 1
+                }),
+                Status::Pass,
+            ),
+        ];
+
+        for (label, raw, expected) in recorded {
+            let typed: NetworkInfo = serde_json::from_value(raw.clone()).unwrap();
+            let projection = serde_json::to_value(typed).unwrap();
+
+            let on_raw = evaluate(&fixture, &raw).0;
+            let on_projection = evaluate(&fixture, &projection).0;
+            assert_eq!(on_raw, on_projection, "{label}: raw and typed disagree");
+            assert_eq!(on_raw, expected, "{label}");
+        }
     }
 }

@@ -4,6 +4,15 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- `field-number-range` assertion kind for RPC fixtures (CA-01 section 4.2):
+  asserts that a numeric response field falls within inclusive `min`/`max`
+  bounds, either of which may be omitted for an open-ended range. The failure
+  message shows the observed value and the expected range; a missing field or a
+  non-numeric value fails the assertion without any string/number coercion, and
+  bounds or entries that cannot hold a number are an invalid fixture (exit 4).
+
 ## [0.2.0] - 2026-10-09
 
 `0.1.1` stays published and unchanged.

@@ -6,6 +6,7 @@
 //! unrelated new optional field appearing in a response must never fail a
 //! check (see [`FieldAssertion`]).
 
+use std::cmp::Ordering;
 use std::time::Instant;
 
 use serde_json::Value as JsonValue;
@@ -94,6 +95,92 @@ impl std::str::FromStr for JsonType {
     }
 }
 
+/// The inclusive bounds of a `field-number-range` assertion (CA-01
+/// section 4.2).
+///
+/// At least one bound is always set when the assertion is parsed from a
+/// fixture: an open-ended range is written with only the bound that
+/// exists (`>= min` or `<= max`), and a range with neither bound would
+/// check nothing.
+///
+/// Bounds keep the JSON number they were parsed from (integer or
+/// float), so integer bounds compare exactly and floating point is used
+/// only when a bound or an observed value is genuinely fractional.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldRangeAssertion {
+    pub field: String,
+    pub min: Option<serde_json::Number>,
+    pub max: Option<serde_json::Number>,
+}
+
+impl FieldRangeAssertion {
+    /// Checks the observed value of the field against the bounds,
+    /// returning a human-readable failure reason if it does not hold.
+    ///
+    /// A missing field or a value that is not a JSON number fails the
+    /// assertion; nothing is coerced between strings and numbers.
+    pub fn check_value(&self, found: Option<&JsonValue>) -> Result<(), String> {
+        let Some(actual) = found else {
+            return Err(format!(
+                "expected field {:?} to be present, but it was missing",
+                self.field
+            ));
+        };
+        let JsonValue::Number(value) = actual else {
+            return Err(format!(
+                "expected field {:?} to be a number within {}, but found {}",
+                self.field,
+                self.bounds_description(),
+                actual
+            ));
+        };
+        if let Some(min) = &self.min {
+            if compare_numbers(value, min) == Some(Ordering::Less) {
+                return Err(self.out_of_range(actual));
+            }
+        }
+        if let Some(max) = &self.max {
+            if compare_numbers(value, max) == Some(Ordering::Greater) {
+                return Err(self.out_of_range(actual));
+            }
+        }
+        Ok(())
+    }
+
+    /// The bounds as they appear in failure messages: `[min, max]`,
+    /// `>= min`, or `<= max`.
+    fn bounds_description(&self) -> String {
+        match (&self.min, &self.max) {
+            (Some(min), Some(max)) => format!("[{min}, {max}]"),
+            (Some(min), None) => format!(">= {min}"),
+            (None, Some(max)) => format!("<= {max}"),
+            (None, None) => "any number".to_string(),
+        }
+    }
+
+    fn out_of_range(&self, actual: &JsonValue) -> String {
+        format!(
+            "expected field {:?} to be within {}, but found {}",
+            self.field,
+            self.bounds_description(),
+            actual
+        )
+    }
+}
+
+/// Compares two JSON numbers, exactly when both sides are integers and
+/// with `f64` only when at least one side is genuinely fractional.
+/// Returns `None` when either value cannot be read as a number.
+fn compare_numbers(value: &serde_json::Number, bound: &serde_json::Number) -> Option<Ordering> {
+    if let (Some(value), Some(bound)) = (value.as_i64(), bound.as_i64()) {
+        return Some(value.cmp(&bound));
+    }
+    if let (Some(value), Some(bound)) = (value.as_u64(), bound.as_u64()) {
+        return Some(value.cmp(&bound));
+    }
+    value.as_f64()?.partial_cmp(&bound.as_f64()?)
+}
+
 /// One assertion about a field in the RPC response.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldAssertion {
@@ -101,6 +188,7 @@ pub enum FieldAssertion {
     Absent { field: String },
     Equals { field: String, value: JsonValue },
     TypeIs { field: String, expected: JsonType },
+    NumberRange(FieldRangeAssertion),
 }
 
 impl FieldAssertion {
@@ -110,6 +198,7 @@ impl FieldAssertion {
             | FieldAssertion::Absent { field }
             | FieldAssertion::Equals { field, .. }
             | FieldAssertion::TypeIs { field, .. } => field,
+            FieldAssertion::NumberRange(assertion) => &assertion.field,
         }
     }
 
@@ -145,6 +234,7 @@ impl FieldAssertion {
                     "expected field {field:?} to have type {expected:?}, but found {actual}"
                 )),
             },
+            FieldAssertion::NumberRange(assertion) => assertion.check_value(found),
         }
     }
 }
@@ -229,9 +319,10 @@ fn parse_assertion(
         .as_table()
         .ok_or_else(|| invalid("each [[assert]] entry must be a table".to_string()))?;
 
-    if let Some(message) =
-        canary_fixtures::unknown_body_keys(table, &["kind", "field", "value", "expected_type"])
-    {
+    if let Some(message) = canary_fixtures::unknown_body_keys(
+        table,
+        &["kind", "field", "value", "expected_type", "min", "max"],
+    ) {
         return Err(invalid(format!("[[assert]] entry: {message}")));
     }
 
@@ -266,10 +357,58 @@ fn parse_assertion(
                 .map_err(invalid)?;
             Ok(FieldAssertion::TypeIs { field, expected })
         }
+        "field-number-range" => {
+            let min = parse_range_bound(table, "min", &invalid)?;
+            let max = parse_range_bound(table, "max", &invalid)?;
+            if min.is_none() && max.is_none() {
+                return Err(invalid(
+                    "field-number-range assertion requires \"min\" or \"max\" (or both); a range with neither bound would check nothing"
+                        .to_string(),
+                ));
+            }
+            if let (Some(min), Some(max)) = (&min, &max) {
+                if compare_numbers(min, max) == Some(Ordering::Greater) {
+                    return Err(invalid(format!(
+                        "field-number-range assertion has min {min} greater than max {max}"
+                    )));
+                }
+            }
+            Ok(FieldAssertion::NumberRange(FieldRangeAssertion {
+                field,
+                min,
+                max,
+            }))
+        }
         other => Err(invalid(format!(
-            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\""
+            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\", \"field-number-range\""
         ))),
     }
+}
+
+/// Parses one `field-number-range` bound: a TOML integer or float.
+/// Anything else is an invalid fixture rather than a runtime surprise.
+fn parse_range_bound(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    invalid: &impl Fn(String) -> RpcFixtureError,
+) -> Result<Option<serde_json::Number>, RpcFixtureError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let number = match value {
+        toml::Value::Integer(i) => serde_json::Number::from(*i),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f).ok_or_else(|| {
+            invalid(format!(
+                "field-number-range {key:?} must be a finite number"
+            ))
+        })?,
+        other => {
+            return Err(invalid(format!(
+                "field-number-range {key:?} must be a number, but found {other}"
+            )))
+        }
+    };
+    Ok(Some(number))
 }
 
 fn toml_to_json(value: &toml::Value) -> JsonValue {
@@ -548,6 +687,217 @@ mod tests {
 
         let mismatch_response = json!({ "history": ["a", "b", "d"] });
         assert!(assertion.check(&mismatch_response).is_err());
+    }
+
+    /// Parses a single `[[assert]]` entry of the given kind into a
+    /// [`FieldAssertion`], the way a fixture author's entry reaches the
+    /// runner.
+    fn range_assertion(entry_toml: &str) -> FieldAssertion {
+        RpcFixture::from_loaded(&fixture(
+            "p28-rpc-range",
+            &format!("method = \"get-network\"\n\n[[assert]]\n{entry_toml}"),
+        ))
+        .expect("valid range assertion")
+        .assertions
+        .remove(0)
+    }
+
+    fn range_err(entry_toml: &str) -> String {
+        RpcFixture::from_loaded(&fixture(
+            "p28-rpc-range-bad",
+            &format!("method = \"get-network\"\n\n[[assert]]\n{entry_toml}"),
+        ))
+        .expect_err("invalid range assertion")
+        .to_string()
+    }
+
+    #[test]
+    fn field_number_range_passes_at_both_inclusive_boundaries() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"protocolVersion\"\nmin = 20\nmax = 30\n",
+        );
+        assert!(assertion.check(&json!({ "protocolVersion": 20 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 30 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 25 })).is_ok());
+    }
+
+    #[test]
+    fn field_number_range_reports_the_observed_value_and_the_expected_range() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 20\nmax = 30\n",
+        );
+        let below = assertion.check(&json!({ "sequence": 19 })).unwrap_err();
+        assert!(below.contains("[20, 30]"), "{below}");
+        assert!(below.contains("but found 19"), "{below}");
+        let above = assertion.check(&json!({ "sequence": 31 })).unwrap_err();
+        assert!(above.contains("[20, 30]"), "{above}");
+        assert!(above.contains("but found 31"), "{above}");
+    }
+
+    #[test]
+    fn field_number_range_fails_when_the_field_is_missing() {
+        let assertion =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\n");
+        let err = assertion.check(&json!({})).unwrap_err();
+        assert!(err.contains("\"sequence\" to be present"), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_non_numerical_values_without_coercion() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\nmax = 100\n",
+        );
+        for value in [
+            json!("30"),
+            json!(true),
+            json!(null),
+            json!([30]),
+            json!({ "sequence": 30 }),
+        ] {
+            let response = json!({ "sequence": value });
+            let err = assertion.check(&response).unwrap_err();
+            assert!(
+                err.contains("\"sequence\" to be a number within [1, 100]"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn field_number_range_supports_fractional_bounds_and_values() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"fee\"\nmin = 0.5\nmax = 2.5\n",
+        );
+        assert!(assertion.check(&json!({ "fee": 0.5 })).is_ok());
+        assert!(assertion.check(&json!({ "fee": 1.75 })).is_ok());
+        // An integer value still compares exactly against float bounds.
+        assert!(assertion.check(&json!({ "fee": 2 })).is_ok());
+        let err = assertion.check(&json!({ "fee": 3.0 })).unwrap_err();
+        assert!(err.contains("[0.5, 2.5]"), "{err}");
+        assert!(err.contains("but found 3.0"), "{err}");
+        assert!(assertion.check(&json!({ "fee": 0.25 })).is_err());
+    }
+
+    #[test]
+    fn field_number_range_accepts_integer_values_against_float_bounds_exactly() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"protocolVersion\"\nmin = 28.0\nmax = 29.0\n",
+        );
+        assert!(assertion.check(&json!({ "protocolVersion": 28 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 29 })).is_ok());
+    }
+
+    #[test]
+    fn field_number_range_supports_open_ended_bounds() {
+        let min_only =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\n");
+        assert!(min_only.check(&json!({ "sequence": 1_000_000 })).is_ok());
+        let min_err = min_only.check(&json!({ "sequence": 0 })).unwrap_err();
+        assert!(min_err.contains(">= 1"), "{min_err}");
+
+        let max_only =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmax = 10\n");
+        assert!(max_only.check(&json!({ "sequence": 0 })).is_ok());
+        let max_err = max_only.check(&json!({ "sequence": 11 })).unwrap_err();
+        assert!(max_err.contains("<= 10"), "{max_err}");
+    }
+
+    #[test]
+    fn field_number_range_requires_at_least_one_bound() {
+        let err = range_err("kind = \"field-number-range\"\nfield = \"sequence\"\n");
+        assert!(err.contains("requires \"min\" or \"max\""), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_min_greater_than_max() {
+        let err =
+            range_err("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 10\nmax = 5\n");
+        assert!(err.contains("min 10 greater than max 5"), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_non_numerical_bounds() {
+        let err =
+            range_err("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = \"twenty\"\n");
+        assert!(
+            err.contains("field-number-range \"min\" must be a number"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn field_number_range_rejects_unknown_keys_in_the_entry() {
+        let err = range_err(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\nexpect = \"x\"\n",
+        );
+        assert!(err.contains("unknown key(s) \"expect\""), "{err}");
+    }
+
+    #[tokio::test]
+    async fn field_number_range_passes_a_live_ledger_sequence_within_bounds() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "protocolVersion": 28,
+                    "sequence": 100
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let body = r#"
+        method = "get-latest-ledger"
+
+        [[assert]]
+        kind = "field-number-range"
+        field = "sequence"
+        min = 1
+        max = 200
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-range-pass", body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Pass);
+    }
+
+    #[tokio::test]
+    async fn field_number_range_out_of_bounds_is_a_fail_with_the_range_in_details() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "protocolVersion": 28,
+                    "sequence": 100
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let body = r#"
+        method = "get-latest-ledger"
+
+        [[assert]]
+        kind = "field-number-range"
+        field = "sequence"
+        min = 1
+        max = 10
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-range-fail", body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Fail);
+        let details = result.details.expect("failure details");
+        assert!(details.contains("[1, 10]"), "{details}");
+        assert!(details.contains("but found 100"), "{details}");
     }
 
     #[test]

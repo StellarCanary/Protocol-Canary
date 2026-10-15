@@ -139,6 +139,7 @@ mod tests {
             network: None,
             results,
             skipped: vec![],
+            verification: vec![],
             decision,
             git: GitContext::default(),
             verbose: false,

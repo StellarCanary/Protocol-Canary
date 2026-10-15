@@ -4,6 +4,26 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- CF-04 verification evidence (first part of #443): fixtures may carry a
+  `[verification]` table with a `verificationVersion: 1` record (`method`,
+  `checkedAt`, optional `network`/`verifier`/`endpointHost`/`evidenceRef`,
+  `outcome`). The table is validated strictly against CF-04 section 3 (unknown
+  keys, a mismatched `fixtureId`, a live method without `network`, a malformed
+  `checkedAt` are invalid fixtures, exit 4) and is lifted out of the
+  surface-specific body, so no surface runner ever sees it.
+- `stellar-canary fixtures --format json` (and the `--json` shorthand): the
+  `inventoryVersion: 1` inventory of CA-02 — counts, `otherProtocols`, fixtures
+  sorted by id with `/`-relative paths, per-surface fields, and the reserved
+  `verification` object copied as stored (issue #444, CA-02-E). The terminal
+  listing is unchanged.
+- Verification badges in the terminal report (issue #444): when a run's
+  fixtures carry evidence, each result row shows `[verified: <method>]`,
+  `[unverified: <method> record mismatched]` or `[unverified]` — the unknown
+  state is displayed, never omitted. Runs without evidence keep the compact
+  `N/N PASS` output.
+
 ## [0.2.0] - 2026-10-09
 
 `0.1.1` stays published and unchanged.

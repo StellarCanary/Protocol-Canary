@@ -334,6 +334,10 @@ impl TryFrom<JsonReport> for ReportInput {
             }),
             results,
             skipped,
+            // A stored JSON report carries no verification evidence:
+            // that lives with the fixture pack, not with a run (CF-04
+            // section 2).
+            verification: Vec::new(),
             decision,
             git: GitContext {
                 commit: report.git.commit,
@@ -397,6 +401,7 @@ mod tests {
                 observed_protocol: Some(ProtocolVersion(28)),
                 error: None,
             }),
+            verification: Vec::new(),
             results: vec![CompatibilityResult {
                 test_id: "p28-xdr-1".into(),
                 protocol: ProtocolVersion(28),

@@ -143,6 +143,20 @@ pub struct InspectArgs {
     pub config: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+/// Selects the renderer used by `fixtures`.
+///
+/// `Terminal` is today's human-readable listing, byte for byte. `Json`
+/// prints the versioned CA-02 inventory for CI pipelines and tooling.
+/// `markdown` is deliberately not accepted: `fixtures` renders no
+/// report.
+pub enum FixturesFormat {
+    /// Human-readable output for an interactive terminal.
+    Terminal,
+    /// Versioned JSON inventory (CA-02) for automation.
+    Json,
+}
+
 #[derive(Debug, Parser)]
 pub struct FixturesArgs {
     /// Protocol version to list fixtures for (default: the configured
@@ -158,6 +172,14 @@ pub struct FixturesArgs {
     /// project root).
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FixturesFormat::Terminal)]
+    pub format: FixturesFormat,
+
+    /// Shorthand for --format json.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]

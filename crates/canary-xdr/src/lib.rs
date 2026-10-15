@@ -8,6 +8,6 @@ pub mod decoder;
 pub mod encoder;
 pub mod runner;
 
-pub use decoder::{decode, DecodedValue, XdrTypeName};
-pub use encoder::encode;
+pub use decoder::{decode, decode_ledger_entry, DecodedValue, XdrDecodeError, XdrTypeName};
+pub use encoder::{encode, encode_ledger_entry};
 pub use runner::{DefaultXdrRunner, XdrAssertion, XdrError, XdrFixture, XdrRunner};

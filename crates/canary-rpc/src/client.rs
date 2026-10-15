@@ -208,6 +208,23 @@ pub trait RpcClient {
         &self,
     ) -> impl std::future::Future<Output = Result<LatestLedger, RpcError>> + Send;
 
+    /// `getNetwork`'s JSON `result` object exactly as the endpoint returned
+    /// it, including every field [`NetworkInfo`] does not model.
+    ///
+    /// Fixture assertions run against this rather than the typed projection
+    /// so that a field the model drops can still be asserted on, and so that
+    /// `field-absent` evaluates truthfully (CA-01 section 4.1). A `result`
+    /// that is not a JSON object is an [`RpcError::InvalidResponse`].
+    fn get_network_raw(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
+
+    /// `getLatestLedger`'s JSON `result` object exactly as the endpoint
+    /// returned it. See [`RpcClient::get_network_raw`].
+    fn get_latest_ledger_raw(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
+
     fn simulate_transaction(
         &self,
         request: SimulationRequest,
@@ -428,6 +445,31 @@ impl HttpRpcClient {
         }
     }
 
+    /// Like [`HttpRpcClient::call`], but returns the `result` untyped and
+    /// requires it to be a JSON object.
+    ///
+    /// Every method this client calls is documented to answer with an
+    /// object, so anything else is a malformed response rather than
+    /// something an assertion should be evaluated against.
+    async fn call_object<P: Serialize>(
+        &self,
+        method: &str,
+        params: P,
+    ) -> Result<serde_json::Value, RpcError> {
+        let result: serde_json::Value = self.call(method, params).await?;
+        if result.is_object() {
+            Ok(result)
+        } else {
+            Err(RpcError::InvalidResponse {
+                method: method.to_string(),
+                reason: format!(
+                    "expected \"result\" to be a JSON object, but found {}",
+                    json_kind(&result)
+                ),
+            })
+        }
+    }
+
     async fn try_call<R: DeserializeOwned>(
         &self,
         method: &str,
@@ -496,6 +538,17 @@ impl HttpRpcClient {
     }
 }
 
+fn json_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
+}
+
 fn classify_reqwest_error(method: &str, error: &reqwest::Error) -> RpcError {
     if error.is_timeout() {
         RpcError::Timeout {
@@ -526,6 +579,14 @@ impl RpcClient for HttpRpcClient {
         self.call("getLatestLedger", json!({})).await
     }
 
+    async fn get_network_raw(&self) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getNetwork", json!({})).await
+    }
+
+    async fn get_latest_ledger_raw(&self) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getLatestLedger", json!({})).await
+    }
+
     async fn simulate_transaction(
         &self,
         request: SimulationRequest,
@@ -539,6 +600,84 @@ mod tests {
     use super::*;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn get_network_raw_keeps_fields_the_typed_model_drops() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28,
+                    "someFutureField": { "nested": true }
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let raw = client.get_network_raw().await.expect("ok");
+        assert_eq!(raw["someFutureField"], json!({ "nested": true }));
+        assert_eq!(raw["protocolVersion"], json!(28));
+    }
+
+    #[tokio::test]
+    async fn get_latest_ledger_raw_keeps_fields_the_typed_model_drops() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "id": "abc",
+                    "protocolVersion": 28,
+                    "sequence": 7,
+                    "closeTime": "1700000000"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let raw = client.get_latest_ledger_raw().await.expect("ok");
+        assert_eq!(raw["closeTime"], json!("1700000000"));
+    }
+
+    #[tokio::test]
+    async fn raw_methods_reject_a_result_that_is_not_an_object() {
+        for (result, kind) in [
+            (json!([1, 2]), "an array"),
+            (json!("text"), "a string"),
+            (json!(28), "a number"),
+            (json!(true), "a boolean"),
+            (json!(null), "null"),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": result
+                })))
+                .mount(&server)
+                .await;
+
+            let client = HttpRpcClient::new(server.uri());
+            let err = client.get_network_raw().await.unwrap_err();
+            match err {
+                RpcError::InvalidResponse { method, reason } => {
+                    assert_eq!(method, "getNetwork");
+                    assert!(reason.contains(kind), "{reason:?} should name {kind}");
+                }
+                other => panic!("expected InvalidResponse, got {other:?}"),
+            }
+        }
+    }
 
     #[tokio::test]
     async fn get_network_parses_a_successful_response() {

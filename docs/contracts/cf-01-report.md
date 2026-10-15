@@ -79,7 +79,7 @@ implementing change lands; until then they are a plan.
 | `fixturePack` | object | `{ "digest": "sha256:<hex>", "registryVersion": 1, "source": "directory" or "release", "revision": string or null }` | CF-02 |
 | `lock` | object | `{ "path": "<relative>", "status": "absent" or "verified", "warnings": [string] }`. `warnings` carries, for example, an engine-version mismatch (D-12), because stderr is not shown to Action users on a passing run. | CF-03 |
 | `results[].verification` | object | Copy of the fixture's verification record. Never synthesized. | CF-04 |
-| `run` | object | `{ "toolBuildCommit": string or null }` | CF-01 |
+| `run` | object | `{ "toolBuildCommit": string or null }`. Written by every `check` report: the Git commit the binary was built from as a full lowercase hex object name, or `null` when it was built without Git history. Absent means *not recorded* (written before the field existed). It deliberately carries no timestamp (section 4). Implemented by E-055. | CF-01 |
 
 ## 4. Identity
 

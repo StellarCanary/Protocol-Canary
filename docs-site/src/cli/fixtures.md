@@ -10,6 +10,7 @@ Usage: stellar-canary fixtures [OPTIONS]
 Options:
       --protocol <PROTOCOL>          Protocol version to list fixtures for (default: the configured protocol, or 28 if there is no configuration file)
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
+      --project-root <PATH>          Directory to treat as the project root (default: the current directory)
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
   -h, --help                         Print help
 ```

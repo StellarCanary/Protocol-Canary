@@ -275,7 +275,9 @@ mod tests {
         CacheStore, GitContext, NetworkContext, NetworkName, ProjectContext, ProjectType,
         ProtocolVersion, RunOptions,
     };
-    use stellar_xdr::{ContractExecutable, Hash, Limits, ScVal, StellarValue, WriteXdr};
+    use stellar_xdr::{
+        ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, WriteXdr,
+    };
 
     fn valid_stellar_value_base64() -> String {
         StellarValue::default()
@@ -454,18 +456,19 @@ mod tests {
         assert!(matches!(err, XdrError::InvalidFixtureBody { .. }));
     }
 
-    /// `LedgerEntry` is a real XDR type name — just not one of the ones
-    /// this tool supports. The rejection must surface through fixture
+    /// `LiquidityPoolEntry` is a real XDR type name — just not one of the
+    /// ones this tool supports. The rejection must surface through fixture
     /// parsing with `XdrTypeName::from_str`'s supported-types list intact,
     /// so a fixture author can self-correct from the error alone.
     #[test]
     fn rejects_a_well_formed_but_unsupported_xdr_type_name_and_lists_the_supported_ones() {
-        let body = "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
+        let body =
+            "type = \"LiquidityPoolEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", body)).unwrap_err();
         match err {
             XdrError::InvalidFixtureBody { reason, .. } => {
-                assert!(reason.contains("LedgerEntry"), "reason: {reason}");
-                for supported in ["StellarValue", "ContractExecutable", "ScVal"] {
+                assert!(reason.contains("LiquidityPoolEntry"), "reason: {reason}");
+                for supported in ["StellarValue", "ContractExecutable", "ScVal", "LedgerEntry"] {
                     assert!(
                         reason.contains(supported),
                         "reason must list supported type {supported:?}: {reason}"
@@ -473,6 +476,34 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_ledger_entry() {
+        let base64 = LedgerEntry::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body =
+            format!("type = \"LedgerEntry\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n");
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-ledger-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::LedgerEntry);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "LedgerEntry round-tripped byte-for-byte");
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_ledger_entry() {
+        let base64 = LedgerEntry::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-ledger-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded LedgerEntry successfully");
     }
 
     #[test]

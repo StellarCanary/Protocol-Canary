@@ -328,6 +328,35 @@ impl FixtureStore {
         self.fixtures.iter().filter(move |f| f.surface == surface)
     }
 
+    /// Iterates over the fixtures that declare `protocol`.
+    ///
+    /// The comparison is an exact match against each fixture's `protocol`
+    /// metadata: no compatibility range is applied, so a store holding only
+    /// protocol 27 fixtures yields an empty iterator — never an error — when
+    /// asked for `ProtocolVersion(28)`, and a fixture's position in the
+    /// store is preserved. `canary-cli`'s `fixtures` command uses this to
+    /// list one target protocol's fixture ids grouped by surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = |protocol| FixtureMetadata {
+    ///     id: "p28-xdr-001".into(),
+    ///     protocol: ProtocolVersion(protocol),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "roundtrip".into(),
+    ///     source_reference: None,
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture(27), fixture(28)]);
+    ///
+    /// assert_eq!(store.for_protocol(ProtocolVersion(28)).count(), 1);
+    /// assert_eq!(store.for_protocol(ProtocolVersion(29)).count(), 0);
+    /// ```
     pub fn for_protocol(
         &self,
         protocol: ProtocolVersion,

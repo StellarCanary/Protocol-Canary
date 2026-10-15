@@ -1,6 +1,6 @@
 //! Command implementations.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use canary_core::{
     CachePolicy, CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode,
@@ -48,6 +48,88 @@ fn validated_protocol_flag(protocol: Option<u32>) -> Result<Option<u32>, CanaryE
     }
 }
 
+/// The directory a command operates on (CF-07 section 2).
+///
+/// It is the current directory unless `--project-root` is given, and it is
+/// never found by searching parent directories (D-08): a monorepo member is
+/// selected by naming it, so the engine can never silently check a different
+/// project than the one the caller pointed at.
+struct ProjectRoot {
+    path: PathBuf,
+    /// `true` when the root came from `--project-root`. Relative input paths
+    /// are then resolved against it instead of the caller's working
+    /// directory; without the flag they are left exactly as given, which is
+    /// the same file because the root is the working directory.
+    explicit: bool,
+}
+
+impl ProjectRoot {
+    fn resolve(flag: Option<&Path>) -> Result<ProjectRoot, CanaryError> {
+        let Some(requested) = flag else {
+            let path = std::env::current_dir().map_err(|e| {
+                CanaryError::Internal(format!("failed to read current directory: {e}"))
+            })?;
+            return Ok(ProjectRoot {
+                path,
+                explicit: false,
+            });
+        };
+
+        let metadata = std::fs::metadata(requested).map_err(|e| {
+            let reason = if e.kind() == std::io::ErrorKind::NotFound {
+                "does not exist".to_string()
+            } else {
+                format!("cannot be read: {e}")
+            };
+            CanaryError::Configuration(format!("--project-root {} {reason}", requested.display()))
+        })?;
+        if !metadata.is_dir() {
+            return Err(CanaryError::Configuration(format!(
+                "--project-root {} is not a directory",
+                requested.display()
+            )));
+        }
+
+        // Resolved once, here, so every later join and the reported project
+        // name agree on one absolute location.
+        let canonical = std::fs::canonicalize(requested).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "--project-root {} could not be resolved: {e}",
+                requested.display()
+            ))
+        })?;
+        Ok(ProjectRoot {
+            path: without_verbatim_prefix(canonical),
+            explicit: true,
+        })
+    }
+
+    /// Resolves a caller-supplied input path (`--config`, `--fixtures-dir`,
+    /// `--output`) against the project root when one was given explicitly.
+    fn resolve_input(&self, path: &Path) -> PathBuf {
+        if self.explicit && path.is_relative() {
+            self.path.join(path)
+        } else {
+            path.to_path_buf()
+        }
+    }
+}
+
+/// `std::fs::canonicalize` returns `\\?\C:\...` on Windows. That form is
+/// valid but is shown to users in `inspect` and is not what they typed, so
+/// plain drive paths are converted back.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            if rest.as_bytes().get(1) == Some(&b':') {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    path
+}
+
 pub async fn run_check(args: CheckArgs) -> ExitCode {
     match run_check_inner(args).await {
         Ok(exit_code) => exit_code,
@@ -59,11 +141,12 @@ pub async fn run_check(args: CheckArgs) -> ExitCode {
 }
 
 async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
+    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
     let config = match &args.config {
-        Some(path) => canary_config::load(path)?,
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
 
@@ -151,8 +234,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         )
     };
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -173,7 +256,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             &plan,
             &loaded_fixtures,
             target_protocol,
-            &args.fixtures_dir,
+            &fixtures_dir,
         );
         if !args.allow_empty {
             return Err(CanaryError::Configuration(format!(
@@ -265,7 +348,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     // before anything reaches stdout: a path that cannot be written fails
     // loudly rather than after a report has already been printed.
     if let Some(path) = &args.output {
-        write_report_file(path, &rendered)?;
+        write_report_file(&project_root.resolve_input(path), &rendered)?;
     }
     println!("{rendered}");
 
@@ -342,11 +425,12 @@ pub fn run_inspect(args: InspectArgs) -> ExitCode {
 }
 
 fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
+    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
     let config = match &args.config {
-        Some(path) => canary_config::load(path)?,
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
 
@@ -417,8 +501,8 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
         }
     );
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -432,7 +516,7 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
 
     println!();
     println!("Fixture compatibility plan (offline):");
-    println!("  Directory: {}", args.fixtures_dir.display());
+    println!("  Directory: {}", fixtures_dir.display());
     println!("  Loaded fixtures that would run:");
     if plan.applicable_count() == 0 {
         println!("    (none)");
@@ -514,22 +598,23 @@ pub fn run_fixtures(args: FixturesArgs) -> ExitCode {
 }
 
 fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
+    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
     let protocol = match validated_protocol_flag(args.protocol)? {
         Some(p) => p,
         None => {
             let config = match &args.config {
-                Some(path) => canary_config::load(path)?,
+                Some(path) => canary_config::load(&project_root.resolve_input(path))?,
                 None => canary_config::load_from_root(&root)?.unwrap_or_default(),
             };
             config.protocol
         }
     };
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -558,7 +643,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     }
 
     if !any {
-        println!("(no fixtures found in {})", args.fixtures_dir.display());
+        println!("(no fixtures found in {})", fixtures_dir.display());
     }
 
     Ok(ExitCode::Pass)
@@ -648,6 +733,7 @@ mod tests {
         FixturesArgs {
             protocol,
             fixtures_dir: PathBuf::from(fixtures_dir),
+            project_root: None,
             config: config.map(PathBuf::from),
         }
     }
@@ -660,8 +746,68 @@ mod tests {
         InspectArgs {
             protocol,
             fixtures_dir: PathBuf::from(fixtures_dir),
+            project_root: None,
             config: config.map(PathBuf::from),
         }
+    }
+
+    #[test]
+    fn without_a_flag_the_root_is_the_working_directory_and_inputs_are_untouched() {
+        let root = ProjectRoot::resolve(None).unwrap();
+        assert_eq!(root.path, std::env::current_dir().unwrap());
+        assert!(!root.explicit);
+        assert_eq!(
+            root.resolve_input(Path::new("fixtures")),
+            PathBuf::from("fixtures")
+        );
+    }
+
+    #[test]
+    fn an_explicit_root_is_canonicalized_and_resolves_relative_inputs() {
+        let dir = create_unique_temp_dir();
+        let nested = dir.join("member");
+        std::fs::create_dir_all(&nested).unwrap();
+        // A `..` segment proves the path is canonicalized, not just joined.
+        let requested = nested.join("..").join("member");
+
+        let root = ProjectRoot::resolve(Some(&requested)).unwrap();
+        assert!(root.explicit);
+        assert_eq!(
+            root.path,
+            without_verbatim_prefix(std::fs::canonicalize(&nested).unwrap())
+        );
+        assert!(root.path.is_absolute());
+        assert_eq!(
+            root.resolve_input(Path::new("fixtures")),
+            root.path.join("fixtures")
+        );
+
+        let absolute = std::env::temp_dir().join("elsewhere");
+        assert_eq!(root.resolve_input(&absolute), absolute);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_root_that_does_not_exist_is_a_configuration_error() {
+        let missing = create_unique_temp_dir().join("no-such-directory");
+        let err = ProjectRoot::resolve(Some(&missing))
+            .err()
+            .expect("an error");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert_eq!(ExitCode::from(&err), ExitCode::ConfigurationError);
+        assert!(err.to_string().contains("does not exist"), "{err}");
+        assert!(err.to_string().contains("--project-root"), "{err}");
+    }
+
+    #[test]
+    fn a_project_root_that_is_a_file_is_a_configuration_error() {
+        let dir = create_unique_temp_dir();
+        let file = dir.join("not-a-directory");
+        std::fs::write(&file, "x").unwrap();
+        let err = ProjectRoot::resolve(Some(&file)).err().expect("an error");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert!(err.to_string().contains("is not a directory"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

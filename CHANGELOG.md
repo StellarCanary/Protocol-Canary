@@ -6,6 +6,10 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `--project-root <PATH>` on `check`, `inspect` and `fixtures` (CF-07, D-08).
+  Relative `--config`, `--fixtures-dir` and `--output` paths resolve against
+  it. A path that does not exist or is not a directory exits `2`. Without the
+  flag nothing changes, and parent directories are still never searched.
 - JSON reports gain an optional `run.toolBuildCommit`: the Git commit the
   binary was built from, or `null` when it was built without Git history
   (CF-01). `schemaVersion` stays `1`. No timestamp is recorded, so two builds

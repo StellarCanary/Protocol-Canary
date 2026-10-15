@@ -39,7 +39,7 @@ verified, as of `main` at `1ff7908`, to do the following:
 
 Rules, in order:
 
-1. `--project-root <path>` (planned): the directory, canonicalized once. It must
+1. `--project-root <path>`: the directory, canonicalized once. It must
    exist and be a directory. All relative inputs (`--config`, `--fixtures-dir`,
    `--output`, lock path) resolve against it, not against the caller's working
    directory, and the choice is shown in `inspect`.

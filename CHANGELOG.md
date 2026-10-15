@@ -30,6 +30,16 @@ All notable changes to this project are documented in this file.
   only; there is no `diff` subcommand yet.
 - `viewer/`: a static, browser-local report viewer shell with a strict
   Content-Security-Policy (CF-08). Not published to GitHub Pages yet.
+- Soroban fixtures accept `bytes` (a `0x`-prefixed hex string, otherwise
+  padded base64), `address` (a `G...` account or `C...` contract strkey),
+  `vec` and `map` arguments. `vec` and `map` nest up to 8 levels deep and a
+  map is encoded with its keys sorted; a repeated key is rejected. A secret
+  seed given as an address is rejected and never echoed.
+- Cargo workspace members are detected (CF-07): `[workspace] members` and
+  `exclude` are read with `*` and `?` globs up to 4 levels deep, at most 64
+  members are scanned (a boundary diagnostic is returned beyond that), and a
+  virtual workspace whose members use `soroban-sdk` is now detected as a
+  Soroban project instead of `Unknown`. Symbolic links are not followed.
 
 ### Changed
 

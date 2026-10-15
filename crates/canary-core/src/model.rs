@@ -314,6 +314,22 @@ impl FixtureStore {
         self.fixtures.len()
     }
 
+    /// Returns `true` when the store holds no fixtures.
+    ///
+    /// Equivalent to `self.len() == 0`. An empty store means loading and
+    /// validation produced nothing for any protocol or surface, so a run
+    /// planned from it executes no checks — a configuration error (exit 2)
+    /// unless `--allow-empty` is given.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::FixtureStore;
+    ///
+    /// let store = FixtureStore::default();
+    /// assert!(store.is_empty());
+    /// assert_eq!(store.len(), 0);
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty()
     }

@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file.
   binary was built from, or `null` when it was built without Git history
   (CF-01). `schemaVersion` stays `1`. No timestamp is recorded, so two builds
   of one commit stay byte-for-byte comparable.
+- A strict parser and deterministic serializer for `.stellar-canary.lock`
+  (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
+  No command reads or writes a lockfile yet.
 
 ### Changed
 

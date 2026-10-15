@@ -4,6 +4,22 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- CA-04 project fingerprint (first part of #416): a new
+  `canary_project::compute_fingerprint` builds the deterministic, path-free
+  `sha256:<64 hex>` digest over the inputs the detector actually read
+  (`Cargo.toml`, `package.json`, the `stellar.toml` signal, found WASM
+  artifacts, the detected type and sorted capabilities, and the detector
+  revision), with symlinks, oversized (>1 MiB) and unreadable files recorded as
+  `unreadable` lines and non-UTF-8 paths counted rather than hashed.
+- CA-04 conformance vectors and the sensitivity/insensitivity tests
+  (issue #486, unit CA-04-B): five committed reference trees with pinned
+  digests under `crates/canary-project/tests/data/fingerprint/`, plus tests for
+  path- and order-independence, insensitivity to source comments/formatting,
+  READMEs, lockfiles and Git metadata, and sensitivity to dependency bumps,
+  capability changes, artifact edits, `stellar.toml` and type settings.
+
 ## [0.2.0] - 2026-10-09
 
 `0.1.1` stays published and unchanged.

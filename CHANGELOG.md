@@ -6,19 +6,26 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
-- CA-04 project fingerprint (first part of #416): a new
-  `canary_project::compute_fingerprint` builds the deterministic, path-free
-  `sha256:<64 hex>` digest over the inputs the detector actually read
-  (`Cargo.toml`, `package.json`, the `stellar.toml` signal, found WASM
-  artifacts, the detected type and sorted capabilities, and the detector
-  revision), with symlinks, oversized (>1 MiB) and unreadable files recorded as
-  `unreadable` lines and non-UTF-8 paths counted rather than hashed.
-- CA-04 conformance vectors and the sensitivity/insensitivity tests
-  (issue #486, unit CA-04-B): five committed reference trees with pinned
-  digests under `crates/canary-project/tests/data/fingerprint/`, plus tests for
-  path- and order-independence, insensitivity to source comments/formatting,
-  READMEs, lockfiles and Git metadata, and sensitivity to dependency bumps,
-  capability changes, artifact edits, `stellar.toml` and type settings.
+- `--project-root <PATH>` on `check`, `inspect` and `fixtures` (CF-07, D-08).
+  Relative `--config`, `--fixtures-dir` and `--output` paths resolve against
+  it. A path that does not exist or is not a directory exits `2`. Without the
+  flag nothing changes, and parent directories are still never searched.
+- JSON reports gain an optional `run.toolBuildCommit`: the Git commit the
+  binary was built from, or `null` when it was built without Git history
+  (CF-01). `schemaVersion` stays `1`. No timestamp is recorded, so two builds
+  of one commit stay byte-for-byte comparable.
+- A strict parser and deterministic serializer for `.stellar-canary.lock`
+  (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
+  No command reads or writes a lockfile yet.
+
+### Changed
+
+- RPC fixture assertions are evaluated against the raw JSON `result` the
+  endpoint returned, not a typed projection of it (CA-01 section 4.1). A
+  field the engine does not model can now be asserted on, and `field-absent`
+  on such a field is evaluated truthfully instead of passing for the wrong
+  reason. A `result` that is not an object is an `error`, not a failed
+  assertion. The shipped Protocol 28 fixtures give the same outcome.
 
 ## [0.2.0] - 2026-10-09
 

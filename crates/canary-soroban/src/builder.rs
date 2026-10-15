@@ -7,9 +7,10 @@
 
 use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract};
 use stellar_xdr::{
-    ContractId, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, Limits, Memo,
-    MuxedAccount, Operation, OperationBody, Preconditions, ScAddress, ScString, ScSymbol, ScVal,
-    SequenceNumber, Transaction, TransactionEnvelope, TransactionExt, TransactionV1Envelope,
+    ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts, InvokeContractArgs,
+    InvokeHostFunctionOp, Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
+    ScAddress, ScString, ScSymbol, ScVal, SequenceNumber, TimePoint, Transaction,
+    TransactionEnvelope, TransactionExt, TransactionV1Envelope, UInt128Parts, UInt256Parts,
     Uint256, VecM, WriteXdr,
 };
 
@@ -36,6 +37,11 @@ pub enum BuilderError {
     #[error("invalid argument: {0}")]
     InvalidArgument(String),
 
+    /// An integer argument string does not fit in the target integer width
+    /// (128 or 256 bits).
+    #[error("integer overflow: value {value:?} does not fit in a {bits}-bit integer")]
+    IntegerOverflowError { value: String, bits: u16 },
+
     /// The transaction envelope could not be encoded as base64 XDR.
     #[error("failed to encode transaction envelope: {0}")]
     Encode(String),
@@ -57,6 +63,26 @@ pub enum ScValInput {
     U64(u64),
     /// Maps to the XDR [`ScVal::I64`] variant.
     I64(i64),
+    /// Maps to the XDR [`ScVal::I128`] variant.
+    ///
+    /// The value is a decimal or `0x`-prefixed hexadecimal string; TOML
+    /// integers cannot express 128-bit ranges, so the raw string is parsed
+    /// when the envelope is built.
+    I128(String),
+    /// Maps to the XDR [`ScVal::U128`] variant; decimal or `0x`-prefixed hex string.
+    U128(String),
+    /// Maps to the XDR [`ScVal::I256`] variant; decimal or `0x`-prefixed hex string.
+    I256(String),
+    /// Maps to the XDR [`ScVal::U256`] variant; decimal or `0x`-prefixed hex string.
+    U256(String),
+    /// Maps to the XDR [`ScVal::Void`] variant; carries no payload.
+    Void,
+    /// Maps to the XDR [`ScVal::Duration`] variant (an unsigned 64-bit count
+    /// of seconds).
+    Duration(u64),
+    /// Maps to the XDR [`ScVal::Timepoint`] variant (an unsigned 64-bit Unix
+    /// timestamp).
+    Timepoint(u64),
     /// Maps to the XDR [`ScVal::Symbol`] variant; the symbol is limited to 32 bytes by XDR.
     Symbol(String),
     /// Maps to the XDR [`ScVal::String`] variant.
@@ -73,6 +99,180 @@ pub struct InvocationSpec {
     pub sequence_number: i64,
 }
 
+/// Splits a numeric argument literal into (negative, radix, digits).
+///
+/// Accepts an optional leading sign (`-` or `+`) and an optional `0x`/`0X`
+/// prefix (after the sign) selecting base 16; anything else is base 10.
+/// The returned `digits` carry no sign and no radix prefix, so callers parse
+/// them as a magnitude and apply `negative` themselves.
+fn split_integer_literal(value: &str) -> (bool, u32, &str) {
+    let (negative, unsigned) = match value.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, value.strip_prefix('+').unwrap_or(value)),
+    };
+    let (radix, digits) = match unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        Some(hex) => (16, hex),
+        None => (10, unsigned),
+    };
+    (negative, radix, digits)
+}
+
+/// Maps a [`std::num::ParseIntError`] onto the builder's error type,
+/// distinguishing an out-of-range value (overflow) from a malformed one.
+fn integer_parse_error(error: std::num::ParseIntError, value: &str, bits: u16) -> BuilderError {
+    match error.kind() {
+        std::num::IntErrorKind::PosOverflow | std::num::IntErrorKind::NegOverflow => {
+            BuilderError::IntegerOverflowError {
+                value: value.to_string(),
+                bits,
+            }
+        }
+        _ => BuilderError::InvalidArgument(format!(
+            "{value:?} is not a valid {bits}-bit integer: {error}"
+        )),
+    }
+}
+
+/// Parses a 128-bit unsigned decimal or `0x`-prefixed hex string.
+fn parse_u128_literal(value: &str) -> Result<u128, BuilderError> {
+    let (negative, radix, digits) = split_integer_literal(value);
+    if negative {
+        return Err(BuilderError::InvalidArgument(format!(
+            "{value:?} must not be negative"
+        )));
+    }
+    u128::from_str_radix(digits, radix).map_err(|e| integer_parse_error(e, value, 128))
+}
+
+/// Parses a 128-bit signed decimal or `0x`-prefixed hex string, rejecting
+/// magnitudes outside the `i128` range with [`BuilderError::IntegerOverflowError`].
+fn parse_i128_literal(value: &str) -> Result<i128, BuilderError> {
+    let (negative, radix, digits) = split_integer_literal(value);
+    let magnitude =
+        u128::from_str_radix(digits, radix).map_err(|e| integer_parse_error(e, value, 128))?;
+    if negative {
+        // The most negative i128 has magnitude 2^127, which does not fit in
+        // i128 itself, so it is checked (and produced) separately.
+        if magnitude > 1u128 << 127 {
+            return Err(BuilderError::IntegerOverflowError {
+                value: value.to_string(),
+                bits: 128,
+            });
+        }
+        if magnitude == 1u128 << 127 {
+            return Ok(i128::MIN);
+        }
+        Ok(-(magnitude as i128))
+    } else {
+        if magnitude > i128::MAX as u128 {
+            return Err(BuilderError::IntegerOverflowError {
+                value: value.to_string(),
+                bits: 128,
+            });
+        }
+        Ok(magnitude as i128)
+    }
+}
+
+/// Parses a magnitude of up to 256 bits into four little-endian 64-bit limbs
+/// (`[lo_lo, lo_hi, hi_lo, hi_hi]`), rejecting values with more than 256
+/// bits and characters that are not valid digits for `radix`.
+fn parse_u256_magnitude(digits: &str, radix: u32, value: &str) -> Result<[u64; 4], BuilderError> {
+    if digits.is_empty() {
+        return Err(BuilderError::InvalidArgument(format!(
+            "{value:?} is not a valid 256-bit integer"
+        )));
+    }
+    let mut limbs = [0u64; 4];
+    for character in digits.chars() {
+        let digit = character.to_digit(radix).ok_or_else(|| {
+            BuilderError::InvalidArgument(format!(
+                "{value:?} is not a valid 256-bit integer: invalid digit {character:?}"
+            ))
+        })?;
+        let mut carry = u128::from(digit);
+        for limb in &mut limbs {
+            let product = u128::from(*limb) * u128::from(radix) + carry;
+            *limb = product as u64;
+            carry = product >> 64;
+        }
+        if carry != 0 {
+            return Err(BuilderError::IntegerOverflowError {
+                value: value.to_string(),
+                bits: 256,
+            });
+        }
+    }
+    Ok(limbs)
+}
+
+/// Parses a 256-bit unsigned decimal or `0x`-prefixed hex string.
+fn parse_u256_literal(value: &str) -> Result<UInt256Parts, BuilderError> {
+    let (negative, radix, digits) = split_integer_literal(value);
+    if negative {
+        return Err(BuilderError::InvalidArgument(format!(
+            "{value:?} must not be negative"
+        )));
+    }
+    let [lo_lo, lo_hi, hi_lo, hi_hi] = parse_u256_magnitude(digits, radix, value)?;
+    Ok(UInt256Parts {
+        hi_hi,
+        hi_lo,
+        lo_hi,
+        lo_lo,
+    })
+}
+
+/// Parses a 256-bit signed decimal or `0x`-prefixed hex string. Negative
+/// magnitudes are converted to the two's-complement representation used by
+/// XDR; magnitudes above 2^255 are rejected as overflow.
+fn parse_i256_literal(value: &str) -> Result<Int256Parts, BuilderError> {
+    let (negative, radix, digits) = split_integer_literal(value);
+    let magnitude = parse_u256_magnitude(digits, radix, value)?;
+    if !negative {
+        if magnitude[3] & (1 << 63) != 0 {
+            return Err(BuilderError::IntegerOverflowError {
+                value: value.to_string(),
+                bits: 256,
+            });
+        }
+        return Ok(Int256Parts {
+            hi_hi: magnitude[3] as i64,
+            hi_lo: magnitude[2],
+            lo_hi: magnitude[1],
+            lo_lo: magnitude[0],
+        });
+    }
+    // A negative i256 can represent magnitudes up to and including 2^255
+    // (its most negative value); anything larger overflows.
+    let sign_word = 1u64 << 63;
+    if magnitude[3] > sign_word
+        || (magnitude[3] == sign_word && (magnitude[2] | magnitude[1] | magnitude[0]) != 0)
+    {
+        return Err(BuilderError::IntegerOverflowError {
+            value: value.to_string(),
+            bits: 256,
+        });
+    }
+    // Two's complement: invert all limbs and add one.
+    let mut complement = [0u64; 4];
+    let mut carry = 1u64;
+    for (out, limb) in complement.iter_mut().zip(magnitude) {
+        let (sum, overflowed) = (!limb).overflowing_add(carry);
+        *out = sum;
+        carry = u64::from(overflowed);
+    }
+    Ok(Int256Parts {
+        hi_hi: complement[3] as i64,
+        hi_lo: complement[2],
+        lo_hi: complement[1],
+        lo_lo: complement[0],
+    })
+}
+
 fn to_scval(input: &ScValInput) -> Result<ScVal, BuilderError> {
     Ok(match input {
         ScValInput::Bool(b) => ScVal::Bool(*b),
@@ -80,6 +280,25 @@ fn to_scval(input: &ScValInput) -> Result<ScVal, BuilderError> {
         ScValInput::I32(v) => ScVal::I32(*v),
         ScValInput::U64(v) => ScVal::U64(*v),
         ScValInput::I64(v) => ScVal::I64(*v),
+        ScValInput::I128(value) => {
+            let parsed = parse_i128_literal(value)?;
+            ScVal::I128(Int128Parts {
+                hi: (parsed >> 64) as i64,
+                lo: parsed as u64,
+            })
+        }
+        ScValInput::U128(value) => {
+            let parsed = parse_u128_literal(value)?;
+            ScVal::U128(UInt128Parts {
+                hi: (parsed >> 64) as u64,
+                lo: parsed as u64,
+            })
+        }
+        ScValInput::I256(value) => ScVal::I256(parse_i256_literal(value)?),
+        ScValInput::U256(value) => ScVal::U256(parse_u256_literal(value)?),
+        ScValInput::Void => ScVal::Void,
+        ScValInput::Duration(v) => ScVal::Duration(Duration(*v)),
+        ScValInput::Timepoint(v) => ScVal::Timepoint(TimePoint(*v)),
         ScValInput::Symbol(s) => {
             ScVal::Symbol(ScSymbol(s.as_str().try_into().map_err(
                 |e: stellar_xdr::Error| BuilderError::InvalidArgument(e.to_string()),

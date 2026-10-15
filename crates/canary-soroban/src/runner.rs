@@ -196,6 +196,12 @@ fn parse_arg(
         .and_then(toml::Value::as_str)
         .ok_or_else(|| invalid("arg entry missing \"kind\"".to_string()))?;
 
+    if kind == "void" {
+        // Void carries no payload, so no `value` key is required; any value
+        // that is present carries no meaning and is ignored.
+        return Ok(ScValInput::Void);
+    }
+
     let value = table
         .get("value")
         .ok_or_else(|| invalid("arg entry missing \"value\"".to_string()))?;
@@ -224,6 +230,52 @@ fn parse_arg(
             .as_integer()
             .map(ScValInput::I64)
             .ok_or_else(|| invalid("i64 arg value must be an integer".to_string())),
+        "i128" => value
+            .as_str()
+            .map(|s| ScValInput::I128(s.to_string()))
+            .ok_or_else(|| {
+                invalid(
+                    "i128 arg value must be a decimal or 0x-prefixed hex string".to_string(),
+                )
+            }),
+        "u128" => value
+            .as_str()
+            .map(|s| ScValInput::U128(s.to_string()))
+            .ok_or_else(|| {
+                invalid(
+                    "u128 arg value must be a decimal or 0x-prefixed hex string".to_string(),
+                )
+            }),
+        "i256" => value
+            .as_str()
+            .map(|s| ScValInput::I256(s.to_string()))
+            .ok_or_else(|| {
+                invalid(
+                    "i256 arg value must be a decimal or 0x-prefixed hex string".to_string(),
+                )
+            }),
+        "u256" => value
+            .as_str()
+            .map(|s| ScValInput::U256(s.to_string()))
+            .ok_or_else(|| {
+                invalid(
+                    "u256 arg value must be a decimal or 0x-prefixed hex string".to_string(),
+                )
+            }),
+        "duration" => value
+            .as_integer()
+            .and_then(|i| u64::try_from(i).ok())
+            .map(ScValInput::Duration)
+            .ok_or_else(|| {
+                invalid("duration arg value must be a non-negative integer".to_string())
+            }),
+        "timepoint" => value
+            .as_integer()
+            .and_then(|i| u64::try_from(i).ok())
+            .map(ScValInput::Timepoint)
+            .ok_or_else(|| {
+                invalid("timepoint arg value must be a non-negative integer".to_string())
+            }),
         "symbol" => value
             .as_str()
             .map(|s| ScValInput::Symbol(s.to_string()))
@@ -233,7 +285,7 @@ fn parse_arg(
             .map(|s| ScValInput::String(s.to_string()))
             .ok_or_else(|| invalid("string arg value must be a string".to_string())),
         other => Err(invalid(format!(
-            "unsupported arg kind {other:?}: expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"symbol\", \"string\""
+            "unsupported arg kind {other:?}: expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"i128\", \"u128\", \"i256\", \"u256\", \"void\", \"duration\", \"timepoint\", \"symbol\", \"string\""
         ))),
     }
 }
@@ -584,19 +636,32 @@ mod tests {
     }
 
     /// Parses a fixture whose single `[[args]]` entry has the given
-    /// `kind` and raw TOML `value`.
-    fn from_loaded_with_arg(
+    /// `kind`, including a raw TOML `value = ...` line only when `value`
+    /// is `Some` (the `void` kind carries no value).
+    fn from_loaded_with_kind(
         kind: &str,
-        value: &str,
+        value: Option<&str>,
     ) -> Result<SorobanFixture, SorobanFixtureError> {
+        let value_line = value
+            .map(|raw| format!("value = {raw}\n"))
+            .unwrap_or_default();
         let toml = format!(
-            "id = \"bad-arg\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"x\"\ndescription = \"x\"\nsource_account = \"{}\"\ncontract_id = \"{}\"\nfunction = \"f\"\nsequence_number = 1\n\n[[args]]\nkind = \"{kind}\"\nvalue = {value}\n\n[expect]\nkind = \"simulation-success\"\n",
+            "id = \"bad-arg\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"x\"\ndescription = \"x\"\nsource_account = \"{}\"\ncontract_id = \"{}\"\nfunction = \"f\"\nsequence_number = 1\n\n[[args]]\nkind = \"{kind}\"\n{value_line}\n[expect]\nkind = \"simulation-success\"\n",
             StrkeyPublicKey([0u8; 32]),
             StrkeyContract([0u8; 32]),
         );
         let loaded =
             canary_fixtures::parse_fixture_str(&toml, std::path::Path::new("t.toml")).unwrap();
         SorobanFixture::from_loaded(&loaded)
+    }
+
+    /// Parses a fixture whose single `[[args]]` entry has the given
+    /// `kind` and raw TOML `value`.
+    fn from_loaded_with_arg(
+        kind: &str,
+        value: &str,
+    ) -> Result<SorobanFixture, SorobanFixtureError> {
+        from_loaded_with_kind(kind, Some(value))
     }
 
     #[test]
@@ -621,7 +686,83 @@ mod tests {
     fn rejects_an_unsupported_arg_kind_and_lists_the_supported_ones() {
         let err = from_loaded_with_arg("map", "1").unwrap_err();
         assert!(err.to_string().contains(
-            "expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"symbol\", \"string\""
+            "expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"i128\", \"u128\", \"i256\", \"u256\", \"void\", \"duration\", \"timepoint\", \"symbol\", \"string\""
         ));
+    }
+
+    #[test]
+    fn parses_wide_integer_string_args() {
+        let fixture = from_loaded_with_arg("i128", "\"-42\"").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::I128("-42".to_string())]
+        );
+
+        let fixture = from_loaded_with_arg("u128", "\"0xff\"").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::U128("0xff".to_string())]
+        );
+
+        let fixture = from_loaded_with_arg("i256", "\"-1\"").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::I256("-1".to_string())]
+        );
+
+        let fixture = from_loaded_with_arg(
+            "u256",
+            "\"115792089237316195423570985008687907853269984665640564039457584007913129639935\"",
+        )
+        .unwrap();
+        assert_eq!(fixture.invocation.args.len(), 1);
+        let ScValInput::U256(value) = &fixture.invocation.args[0] else {
+            panic!("expected a u256 arg");
+        };
+        assert!(value.starts_with("1157920892373161"));
+    }
+
+    #[test]
+    fn parses_a_void_arg_without_a_value() {
+        let fixture = from_loaded_with_kind("void", None).unwrap();
+        assert_eq!(fixture.invocation.args, vec![ScValInput::Void]);
+    }
+
+    #[test]
+    fn parses_duration_and_timepoint_args() {
+        let fixture = from_loaded_with_arg("duration", "300").unwrap();
+        assert_eq!(fixture.invocation.args, vec![ScValInput::Duration(300)]);
+
+        let fixture = from_loaded_with_arg("timepoint", "1700000000").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::Timepoint(1_700_000_000)]
+        );
+    }
+
+    #[test]
+    fn rejects_a_toml_integer_for_a_wide_integer_string_arg() {
+        let err = from_loaded_with_arg("i128", "1").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("i128 arg value must be a decimal or 0x-prefixed hex string"));
+        assert!(matches!(
+            err,
+            SorobanFixtureError::InvalidFixtureBody { .. }
+        ));
+    }
+
+    #[test]
+    fn rejects_a_negative_duration_arg() {
+        let err = from_loaded_with_arg("duration", "-1").unwrap_err();
+        assert!(err
+            .to_string()
+            .contains("duration arg value must be a non-negative integer"));
+    }
+
+    #[test]
+    fn rejects_a_missing_value_for_a_typed_arg() {
+        let err = from_loaded_with_kind("u32", None).unwrap_err();
+        assert!(err.to_string().contains("arg entry missing \"value\""));
     }
 }

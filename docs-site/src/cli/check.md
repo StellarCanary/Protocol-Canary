@@ -12,6 +12,7 @@ Options:
       --protocol <PROTOCOL>          Target protocol version (overrides configuration)
       --network <NETWORK>            Network to run live checks against [default: testnet]
       --rpc-url <RPC_URL>            RPC endpoint to use for live checks
+      --project-root <PATH>          Directory to treat as the project root (default: the current directory)
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
       --rpc-timeout <RPC_TIMEOUT>    Request timeout for the RPC client in seconds [default: 10]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
@@ -34,7 +35,8 @@ Precedence, highest first: `--protocol` flag, then `.stellar-canary.toml`'s
 
 ## Fixture directory
 
-`--fixtures-dir` defaults to `fixtures` relative to the current directory.
+`--fixtures-dir` defaults to `fixtures` relative to the project root: the
+current directory, or the directory named by `--project-root`.
 It accepts any local path — including a checkout of
 [`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures)
 — and is loaded recursively. A directory that does not exist is loaded as

@@ -284,7 +284,7 @@ Invalid: unsupported version.
 
 | Unit | Repo | Depends on | Notes |
 |---|---|---|---|
-| CF-01-A Publish a JSON Schema for report v1 matching section 3 | Protocol-Canary | this contract | Schema must accept `0.1.1` output and ignore unknown properties. |
+| CF-01-A Publish a JSON Schema for report v1 matching section 3 | Protocol-Canary | this contract | **Done** — `docs/schemas/report-v1.schema.json` (draft 2020-12). Accepts `0.1.1` output and ignores unknown properties; conformance tests validate real rendered reports and the examples in this document. |
 | CF-01-B Conformance test: reporter output validates against the schema | Protocol-Canary | CF-01-A | |
 | CF-01-C Corpus of real `v0.1.0` and `v0.1.1` reports and parse tests | Protocol-Canary | none | Needs the tagged binaries; do not hand-write them. |
 | CF-01-D Emit `skipped[].code` | Protocol-Canary | this contract | The scheduler now records a `SkipCause` with the stable codes `protocol-mismatch`, `surface-disabled`, `missing-capability` (RH-03); only the JSON field is missing. |

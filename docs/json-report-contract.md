@@ -10,6 +10,14 @@ consumes to build its GitHub job summary and annotations.
 Compatibility, identity and failure rules for this report are defined in
 [`contracts/cf-01-report.md`](contracts/cf-01-report.md).
 
+The formal JSON Schema (draft 2020-12) for this shape at `schemaVersion` 1
+is published at [`schemas/report-v1.schema.json`](schemas/report-v1.schema.json):
+it requires exactly the fields CF-01 section 3 requires, pins the closed
+sets (`status`, `surface`, `project.type`) to their current values, and —
+like every conforming consumer — ignores properties it does not know, so
+an additively extended report still validates. The conformance tests in
+`crates/canary-report/tests/schema.rs` keep the two honest.
+
 ## Command
 
 ```bash

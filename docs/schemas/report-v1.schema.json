@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/Protocol-Canary/main/docs/schemas/report-v1.schema.json",
+  "title": "Stellar Protocol Canary report, schemaVersion 1",
+  "description": "The `stellar-canary check --format json` report contract (CF-01). Required fields follow CF-01 section 3; everything else is optional, and an absent optional field means *not recorded*, never a default. Consumers must ignore properties they do not know: schemaVersion 1 only grows additively, and this schema therefore sets no `additionalProperties` restrictions.",
+  "type": "object",
+  "required": ["schemaVersion", "toolVersion", "targetProtocol", "project", "status", "counts", "results"],
+  "properties": {
+    "schemaVersion": {
+      "description": "The report format version. This schema validates version 1 only; an unsupported version makes the whole report invalid.",
+      "const": 1
+    },
+    "toolVersion": {
+      "description": "The Canary CLI's own semver, independent of schemaVersion and targetProtocol. Informational; never use it for feature detection.",
+      "type": "string"
+    },
+    "targetProtocol": {
+      "description": "The Stellar protocol version this run checked against.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "project": {
+      "type": "object",
+      "required": ["name", "type"],
+      "properties": {
+        "name": {
+          "description": "Directory name of the project root. Arbitrary text; never render as markup.",
+          "type": "string"
+        },
+        "type": {
+          "description": "The effective project type: detected or overridden by configuration.",
+          "type": "string",
+          "enum": ["soroban", "rpc-consumer", "stellar-sdk", "generic-stellar", "unknown"]
+        }
+      }
+    },
+    "network": {
+      "description": "Live network identity, present only when a live surface (rpc or soroban) was enabled. Its absence marks a fully offline run; it is not an error.",
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "description": "testnet, mainnet, futurenet, or a custom network name.",
+          "type": "string"
+        },
+        "observedProtocol": {
+          "description": "What the endpoint reported via getNetwork. Compare it against targetProtocol rather than assuming the two match; absent when the live call failed.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "error": {
+          "description": "Why the network identity could not be observed.",
+          "type": "string"
+        }
+      }
+    },
+    "status": {
+      "description": "The single overall outcome. `error` means at least one result errored and outranks the pass/warning/fail policy decision — the same precedence as exit code 3.",
+      "type": "string",
+      "enum": ["pass", "warning", "fail", "error"]
+    },
+    "counts": {
+      "description": "Convenience aggregates over results only. Skipped fixtures are counted separately and are never included in total. Always re-derivable from results[].status.",
+      "type": "object",
+      "required": ["total", "passed", "failed", "warnings", "errors", "skipped"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "warnings": { "type": "integer", "minimum": 0 },
+        "errors": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "results": {
+      "description": "One entry per fixture that actually ran; never includes skipped fixtures. An empty array is a valid shape but is never compatibility evidence on its own (CF-01 section 7).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["testId", "protocol", "surface", "status", "summary", "durationMs"],
+        "properties": {
+          "testId": { "type": "string" },
+          "protocol": {
+            "description": "The fixture's own declared protocol; equals targetProtocol, since fixtures for other protocols are skipped before execution.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "surface": { "type": "string", "enum": ["xdr", "rpc", "soroban"] },
+          "status": {
+            "description": "`skipped` is reserved: entries in results[] are check results that ran, never skips.",
+            "type": "string",
+            "enum": ["pass", "warning", "fail", "error", "skipped"]
+          },
+          "summary": {
+            "description": "One-line human-readable outcome. Arbitrary text; never render as markup.",
+            "type": "string"
+          },
+          "details": {
+            "description": "Multi-line explanation, present when there is something further to say. Absent, not null, otherwise.",
+            "type": "string"
+          },
+          "durationMs": {
+            "description": "Wall-clock time for this fixture. Not stable; ignore it in any comparison.",
+            "type": "integer",
+            "minimum": 0
+          },
+          "fixtureId": {
+            "description": "Currently always equal to testId; may be null when not recorded.",
+            "type": ["string", "null"]
+          },
+          "source": {
+            "description": "`live` (executed in this run) or `cache` (replayed from the local result cache, so a recording of an earlier run). Absent means *not recorded* — a report written before the field existed — and a value this version does not know is read the same way, never as live.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "skipped": {
+      "description": "Fixtures the planner decided not to run, and why. Omitted entirely — not an empty array — when there are none; consumers must treat an absent list as empty.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["fixtureId", "surface", "reason"],
+        "properties": {
+          "fixtureId": { "type": "string" },
+          "surface": { "type": "string", "enum": ["xdr", "rpc", "soroban"] },
+          "reason": {
+            "description": "Free-form prose, e.g. \"fixture targets protocol 27, this run targets protocol 28\". Arbitrary text; never render as markup.",
+            "type": "string"
+          }
+        }
+      }
+    },
+    "git": {
+      "description": "Build context of the checkout under test. Always present from 0.1.1 onward, with null fields when unavailable (not a Git repository, detached HEAD, no git executable); absent in older reports, which means *not recorded*. Never an error.",
+      "type": "object",
+      "properties": {
+        "commit": { "type": ["string", "null"] },
+        "branch": { "type": ["string", "null"] },
+        "isDirty": { "type": ["boolean", "null"] }
+      }
+    },
+    "verbose": { "type": "boolean" },
+    "run": {
+      "description": "Build provenance of the engine. Absent means *not recorded* (a report written before the field existed); a recorded run whose commit is unknown carries an explicit null. Deliberately carries no timestamp, so two builds of one commit stay byte-for-byte comparable.",
+      "type": "object",
+      "required": ["toolBuildCommit"],
+      "properties": {
+        "toolBuildCommit": {
+          "description": "The Git commit the binary was built from, or null when it was built without Git history.",
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

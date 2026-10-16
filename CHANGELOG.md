@@ -44,6 +44,14 @@ All notable changes to this project are documented in this file.
 - A strict parser and deterministic serializer for `.stellar-canary.lock`
   (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
   No command reads or writes a lockfile yet.
+- The formal JSON Schema for the version 1 report (CF-01-A/CF-01-B) is
+  published at `docs/schemas/report-v1.schema.json` (draft 2020-12). It
+  requires exactly the fields CF-01 section 3 requires, pins the closed
+  sets (`status`, `surface`, `project.type`) to their current values and
+  ignores unknown properties, so an additively extended report still
+  validates. Conformance tests validate real rendered reports and the
+  CF-01 examples against it, and reject reports missing required sections
+  or carrying invalid statuses.
 - `canary_fixtures::pack_digest`: the `canary-pack-v1` digest of a fixture
   pack (CF-02), with the file list it was computed from. It is distinct from
   the engine's internal per-fixture cache key. No command uses it yet.

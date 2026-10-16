@@ -171,6 +171,50 @@ pub fn default_passphrase(name: &NetworkName) -> Option<&'static str> {
     }
 }
 
+/// The passphrase a live run verifies the endpoint's identity against and
+/// would sign transactions with.
+///
+/// - An explicit `--network-passphrase` (`flag`) always wins, for
+///   well-known *and* custom networks alike: it is how a private or
+///   standalone network gets verified and signed for at all, and it also
+///   lets a caller point `--network testnet` at a private node that uses a
+///   different passphrase deliberately.
+/// - Without the flag, the well-known passphrase for `name` is used
+///   ([`default_passphrase`]).
+/// - Without the flag *and* without a well-known passphrase (a custom
+///   network), the result is `""`, which `canary_rpc::validate_network_info`
+///   documents as "skip the passphrase comparison" — the historical
+///   behavior for custom networks, kept for runs that have no passphrase to
+///   check against.
+///
+/// The `flag` argument is the already-validated CLI value: clap rejects an
+/// empty string (see `canary_cli::cli::parse_network_passphrase`), so `Some`
+/// always carries a non-empty passphrase and can never accidentally select
+/// the skip path.
+///
+/// # Examples
+///
+/// ```
+/// # use canary_core::NetworkName;
+/// use crate::network::resolve_passphrase;
+///
+/// // The flag overrides the well-known default.
+/// assert_eq!(
+///     resolve_passphrase(&NetworkName::Testnet, Some("Private Net ; 2026")),
+///     "Private Net ; 2026"
+/// );
+/// // Without the flag, well-known networks keep their published passphrase.
+/// assert_eq!(resolve_passphrase(&NetworkName::Testnet, None), "Test SDF Network ; September 2015");
+/// // Custom networks without the flag keep the documented empty value.
+/// assert_eq!(resolve_passphrase(&NetworkName::Custom("local".into()), None), "");
+/// ```
+pub fn resolve_passphrase(name: &NetworkName, flag: Option<&str>) -> String {
+    match flag {
+        Some(custom) => custom.to_string(),
+        None => default_passphrase(name).unwrap_or("").to_string(),
+    }
+}
+
 /// The default RPC URL for a network, when one is well-known.
 ///
 /// There is deliberately no default for mainnet: the project's network
@@ -229,6 +273,51 @@ mod tests {
         assert_eq!(
             default_passphrase(&NetworkName::Custom("local".into())),
             None
+        );
+    }
+
+    #[test]
+    fn an_explicit_passphrase_flag_overrides_the_well_known_default() {
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Testnet, Some("Private Net ; 2026")),
+            "Private Net ; 2026"
+        );
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Mainnet, Some("Private Net ; 2026")),
+            "Private Net ; 2026"
+        );
+        assert_eq!(
+            resolve_passphrase(
+                &NetworkName::Custom("local".into()),
+                Some("Local Net ; 2026")
+            ),
+            "Local Net ; 2026"
+        );
+    }
+
+    #[test]
+    fn without_the_flag_well_known_networks_keep_their_published_passphrase() {
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Testnet, None),
+            TESTNET_PASSPHRASE
+        );
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Futurenet, None),
+            FUTURENET_PASSPHRASE
+        );
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Mainnet, None),
+            MAINNET_PASSPHRASE
+        );
+    }
+
+    #[test]
+    fn a_custom_network_without_the_flag_resolves_to_the_empty_passphrase() {
+        // Empty means "skip the comparison" downstream; the flag is the
+        // only way a custom network gets an identity check at all.
+        assert_eq!(
+            resolve_passphrase(&NetworkName::Custom("local".into()), None),
+            ""
         );
     }
 }

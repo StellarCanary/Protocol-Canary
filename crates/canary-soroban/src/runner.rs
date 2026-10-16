@@ -10,7 +10,9 @@ use canary_core::{
 use canary_fixtures::LoadedFixture;
 use canary_rpc::RpcClient;
 
-use crate::builder::{build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput};
+use crate::builder::{
+    build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
+};
 use crate::simulation::simulate;
 
 /// Errors raised while turning a [`LoadedFixture`] into a [`SorobanFixture`].
@@ -185,6 +187,16 @@ fn parse_arg(
     entry: &toml::Value,
     invalid: &impl Fn(String) -> SorobanFixtureError,
 ) -> Result<ScValInput, SorobanFixtureError> {
+    parse_arg_at(entry, invalid, 0)
+}
+
+/// Parses one `{ kind, value }` entry; `depth` is how many `vec`/`map`
+/// containers enclose it.
+fn parse_arg_at(
+    entry: &toml::Value,
+    invalid: &impl Fn(String) -> SorobanFixtureError,
+    depth: usize,
+) -> Result<ScValInput, SorobanFixtureError> {
     let table = entry
         .as_table()
         .ok_or_else(|| invalid("each [[args]] entry must be a table".to_string()))?;
@@ -284,10 +296,78 @@ fn parse_arg(
             .as_str()
             .map(|s| ScValInput::String(s.to_string()))
             .ok_or_else(|| invalid("string arg value must be a string".to_string())),
+        "bytes" => value
+            .as_str()
+            .map(|s| ScValInput::Bytes(s.to_string()))
+            .ok_or_else(|| {
+                invalid(
+                    "bytes arg value must be a 0x-prefixed hex string or a base64 string"
+                        .to_string(),
+                )
+            }),
+        "address" => value
+            .as_str()
+            .map(|s| ScValInput::Address(s.to_string()))
+            .ok_or_else(|| {
+                invalid("address arg value must be a G... or C... strkey string".to_string())
+            }),
+        "vec" => {
+            check_depth(depth, invalid)?;
+            let items = value.as_array().ok_or_else(|| {
+                invalid("vec arg value must be an array of { kind, value } tables".to_string())
+            })?;
+            items
+                .iter()
+                .map(|item| parse_arg_at(item, invalid, depth + 1))
+                .collect::<Result<Vec<_>, _>>()
+                .map(ScValInput::Vec)
+        }
+        "map" => {
+            check_depth(depth, invalid)?;
+            let items = value.as_array().ok_or_else(|| {
+                invalid(
+                    "map arg value must be an array of { key, value } tables, each holding { kind, value } entries"
+                        .to_string(),
+                )
+            })?;
+            let mut entries = Vec::with_capacity(items.len());
+            for item in items {
+                let pair = item
+                    .as_table()
+                    .ok_or_else(|| invalid("each map entry must be a table".to_string()))?;
+                if let Some(message) = canary_fixtures::unknown_body_keys(pair, &["key", "value"]) {
+                    return Err(invalid(format!("map entry: {message}")));
+                }
+                let key = pair
+                    .get("key")
+                    .ok_or_else(|| invalid("map entry missing \"key\"".to_string()))?;
+                let val = pair
+                    .get("value")
+                    .ok_or_else(|| invalid("map entry missing \"value\"".to_string()))?;
+                entries.push((
+                    parse_arg_at(key, invalid, depth + 1)?,
+                    parse_arg_at(val, invalid, depth + 1)?,
+                ));
+            }
+            Ok(ScValInput::Map(entries))
+        }
         other => Err(invalid(format!(
-            "unsupported arg kind {other:?}: expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"i128\", \"u128\", \"i256\", \"u256\", \"void\", \"duration\", \"timepoint\", \"symbol\", \"string\""
+            "unsupported arg kind {other:?}: expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"i128\", \"u128\", \"i256\", \"u256\", \"void\", \"duration\", \"timepoint\", \"symbol\", \"string\", \"bytes\", \"address\", \"vec\", \"map\""
         ))),
     }
+}
+
+/// Rejects a `vec`/`map` that would nest deeper than [`MAX_ARG_DEPTH`].
+fn check_depth(
+    depth: usize,
+    invalid: &impl Fn(String) -> SorobanFixtureError,
+) -> Result<(), SorobanFixtureError> {
+    if depth + 1 > MAX_ARG_DEPTH {
+        return Err(invalid(format!(
+            "vec/map arguments are nested deeper than the limit of {MAX_ARG_DEPTH} levels"
+        )));
+    }
+    Ok(())
 }
 
 /// Runs a single [`SorobanFixture`] against a live [`RpcClient`].
@@ -683,8 +763,82 @@ mod tests {
     }
 
     #[test]
+    fn parses_bytes_and_address_args() {
+        let fixture = from_loaded_with_arg("bytes", "\"0xdeadbeef\"").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::Bytes("0xdeadbeef".to_string())]
+        );
+        let fixture = from_loaded_with_arg("address", "\"GABC\"").unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::Address("GABC".to_string())]
+        );
+        assert!(from_loaded_with_arg("bytes", "7").is_err());
+        assert!(from_loaded_with_arg("address", "true").is_err());
+    }
+
+    #[test]
+    fn parses_nested_vec_and_map_args() {
+        let fixture = from_loaded_with_arg(
+            "vec",
+            "[{ kind = \"u32\", value = 1 }, { kind = \"vec\", value = [{ kind = \"bool\", value = true }] }]",
+        )
+        .unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::Vec(vec![
+                ScValInput::U32(1),
+                ScValInput::Vec(vec![ScValInput::Bool(true)]),
+            ])]
+        );
+
+        let fixture = from_loaded_with_arg(
+            "map",
+            "[{ key = { kind = \"symbol\", value = \"a\" }, value = { kind = \"u32\", value = 1 } }]",
+        )
+        .unwrap();
+        assert_eq!(
+            fixture.invocation.args,
+            vec![ScValInput::Map(vec![(
+                ScValInput::Symbol("a".to_string()),
+                ScValInput::U32(1)
+            )])]
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_vec_and_map_args() {
+        assert!(from_loaded_with_arg("vec", "1").is_err());
+        assert!(from_loaded_with_arg("map", "[{ key = { kind = \"u32\", value = 1 } }]").is_err());
+        assert!(from_loaded_with_arg(
+            "map",
+            "[{ key = { kind = \"u32\", value = 1 }, value = { kind = \"u32\", value = 1 }, extra = 1 }]"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn rejects_vec_nesting_deeper_than_the_limit() {
+        // Nine nested vecs: one more than MAX_ARG_DEPTH.
+        let mut value = "[]".to_string();
+        for _ in 0..MAX_ARG_DEPTH {
+            value = format!("[{{ kind = \"vec\", value = {value} }}]");
+        }
+        let err = from_loaded_with_arg("vec", &value).unwrap_err();
+        assert!(err.to_string().contains("nested deeper"), "{err}");
+
+        // Eight nested vecs are accepted.
+        let mut value = "[]".to_string();
+        for _ in 0..MAX_ARG_DEPTH - 1 {
+            value = format!("[{{ kind = \"vec\", value = {value} }}]");
+        }
+        assert!(from_loaded_with_arg("vec", &value).is_ok());
+    }
+
+    #[test]
     fn rejects_an_unsupported_arg_kind_and_lists_the_supported_ones() {
-        let err = from_loaded_with_arg("map", "1").unwrap_err();
+        let err = from_loaded_with_arg("enum", "1").unwrap_err();
         assert!(err.to_string().contains(
             "expected one of \"bool\", \"u32\", \"i32\", \"u64\", \"i64\", \"i128\", \"u128\", \"i256\", \"u256\", \"void\", \"duration\", \"timepoint\", \"symbol\", \"string\""
         ));

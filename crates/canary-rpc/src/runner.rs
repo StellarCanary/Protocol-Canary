@@ -251,6 +251,9 @@ impl FieldAssertion {
 pub struct RpcFixture {
     pub metadata: FixtureMetadata,
     pub method: RpcMethod,
+    /// Validated `[request]` parameters, as the named-params object to
+    /// send. `None` when the fixture has no `[request]` table.
+    pub request: Option<serde_json::Map<String, serde_json::Value>>,
     pub assertions: Vec<FieldAssertion>,
 }
 
@@ -271,6 +274,9 @@ impl RpcFixture {
     /// kind = "field-exists"
     /// field = "passphrase"
     /// ```
+    ///
+    /// A `[request]` table, for methods that take parameters, is validated
+    /// against the CA-01 parameter table (see [`crate::request`]).
     pub fn from_loaded(loaded: &LoadedFixture) -> Result<RpcFixture, RpcFixtureError> {
         let invalid = |reason: String| RpcFixtureError::InvalidFixtureBody {
             source_path: loaded.source_path.clone(),
@@ -282,16 +288,24 @@ impl RpcFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
-        if let Some(message) = canary_fixtures::unknown_body_keys(table, &["method", "assert"]) {
+        if let Some(message) =
+            canary_fixtures::unknown_body_keys(table, &["method", "request", "assert"])
+        {
             return Err(invalid(message));
         }
 
-        let method: RpcMethod = table
+        let method_name = table
             .get("method")
             .and_then(toml::Value::as_str)
-            .ok_or_else(|| invalid("missing required string field \"method\"".to_string()))?
-            .parse()
-            .map_err(invalid)?;
+            .ok_or_else(|| invalid("missing required string field \"method\"".to_string()))?;
+        // A bad `[request]` is reported even for a method the engine does
+        // not run yet, so the author sees it before the method is wired up.
+        let request = if crate::request::is_known_method(method_name) {
+            crate::request::validate_request(method_name, table.get("request")).map_err(&invalid)?
+        } else {
+            None
+        };
+        let method: RpcMethod = method_name.parse().map_err(invalid)?;
 
         let assert_entries = table
             .get("assert")
@@ -313,6 +327,7 @@ impl RpcFixture {
         Ok(RpcFixture {
             metadata: loaded.metadata.clone(),
             method,
+            request,
             assertions,
         })
     }
@@ -451,6 +466,13 @@ pub struct DefaultRpcRunner<C: RpcClient> {
     client: C,
 }
 
+/// Summary reported when the endpoint says the fixture's RPC method does
+/// not exist (JSON-RPC `-32601`): the check is skipped rather than marked
+/// as an error, because an optional or unsupported method says nothing
+/// about the endpoint's health — it is not a connection failure.
+const SKIP_METHOD_NOT_AVAILABLE: &str =
+    "method not available on this endpoint, check skipped (JSON-RPC -32601)";
+
 impl<C: RpcClient> DefaultRpcRunner<C> {
     pub fn new(client: C) -> Self {
         DefaultRpcRunner { client }
@@ -473,11 +495,20 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (status, summary, details) = match response_json {
-            Err(rpc_error) => (
-                Status::Error,
-                format!("failed to call {:?}", fixture.method),
-                Some(rpc_error.to_string()),
-            ),
+            Err(rpc_error) => match &rpc_error {
+                // The endpoint answered and does not implement this method:
+                // skip the check instead of reporting an endpoint failure.
+                RpcError::MethodNotAvailable { method } => (
+                    Status::Skipped,
+                    format!("{SKIP_METHOD_NOT_AVAILABLE}: {method}"),
+                    Some(rpc_error.to_string()),
+                ),
+                _ => (
+                    Status::Error,
+                    format!("failed to call {:?}", fixture.method),
+                    Some(rpc_error.to_string()),
+                ),
+            },
             Ok(response) => evaluate(fixture, &response),
         };
 
@@ -658,6 +689,57 @@ mod tests {
             RpcFixture::from_loaded(&fixture("p28-rpc-3", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
         let result = runner.run(&fixture, &context()).await.unwrap();
         assert_eq!(result.status, Status::Error);
+    }
+
+    #[tokio::test]
+    async fn method_not_available_skips_the_check_instead_of_erroring() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": { "code": -32601, "message": "Method not found" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture =
+            RpcFixture::from_loaded(&fixture("p28-rpc-method-missing", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Skipped);
+        assert!(
+            result.summary.contains(SKIP_METHOD_NOT_AVAILABLE),
+            "{}",
+            result.summary
+        );
+        assert!(result.summary.contains("getNetwork"), "{}", result.summary);
+        let details = result.details.expect("skip carries the diagnostic");
+        assert!(details.contains("-32601"), "{details}");
+    }
+
+    #[tokio::test]
+    async fn other_json_rpc_errors_stay_errors_rather_than_skips() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": { "code": -32602, "message": "invalid params" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture =
+            RpcFixture::from_loaded(&fixture("p28-rpc-bad-params", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Error);
+        assert!(result.summary.starts_with("failed to call"));
+        let details = result.details.expect("error carries the diagnostic");
+        assert!(details.contains("code -32602"), "{details}");
     }
 
     #[test]

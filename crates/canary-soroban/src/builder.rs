@@ -5,14 +5,20 @@
 //! never submits a transaction (see the project's no-private-key and
 //! no-transaction-submission rules).
 
-use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract};
+use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract, Strkey};
 use stellar_xdr::{
-    ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts, InvokeContractArgs,
-    InvokeHostFunctionOp, Limits, Memo, MuxedAccount, Operation, OperationBody, Preconditions,
-    ScAddress, ScString, ScSymbol, ScVal, SequenceNumber, TimePoint, Transaction,
-    TransactionEnvelope, TransactionExt, TransactionV1Envelope, UInt128Parts, UInt256Parts,
-    Uint256, VecM, WriteXdr,
+    AccountId, ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts,
+    InvokeContractArgs, InvokeHostFunctionOp, Limits, Memo, MuxedAccount, Operation, OperationBody,
+    Preconditions, PublicKey, ScAddress, ScBytes, ScMap, ScMapEntry, ScString, ScSymbol, ScVal,
+    ScVec, SequenceNumber, TimePoint, Transaction, TransactionEnvelope, TransactionExt,
+    TransactionV1Envelope, UInt128Parts, UInt256Parts, Uint256, VecM, WriteXdr,
 };
+
+/// Deepest nesting of `Vec`/`Map` containers an argument may have.
+///
+/// The limit bounds the recursion of the builder, so a hostile or mistaken
+/// fixture cannot overflow the stack. A top-level `Vec` is at depth 1.
+pub const MAX_ARG_DEPTH: usize = 8;
 
 /// Errors returned while building an unsigned Soroban invocation envelope.
 ///
@@ -41,6 +47,21 @@ pub enum BuilderError {
     /// (128 or 256 bits).
     #[error("integer overflow: value {value:?} does not fit in a {bits}-bit integer")]
     IntegerOverflowError { value: String, bits: u16 },
+
+    /// A `Bytes` or `Address` argument could not be converted: malformed
+    /// hex or base64, or a string that is not a `G...` account or `C...`
+    /// contract address (including a bad strkey checksum).
+    #[error("argument conversion error ({kind}): {reason}")]
+    ArgumentConversionError { kind: &'static str, reason: String },
+
+    /// `Vec`/`Map` arguments are nested more deeply than [`MAX_ARG_DEPTH`].
+    #[error("argument nesting is deeper than the limit of {limit} levels")]
+    RecursionDepthExceeded { limit: usize },
+
+    /// A `Map` argument has two entries with the same key. Soroban maps are
+    /// keyed collections, so a repeated key is ambiguous.
+    #[error("duplicate key in map argument")]
+    DuplicateMapKey,
 
     /// The transaction envelope could not be encoded as base64 XDR.
     #[error("failed to encode transaction envelope: {0}")]
@@ -87,6 +108,25 @@ pub enum ScValInput {
     Symbol(String),
     /// Maps to the XDR [`ScVal::String`] variant.
     String(String),
+    /// Maps to the XDR [`ScVal::Bytes`] variant.
+    ///
+    /// The value is hexadecimal when it starts with `0x` or `0X`, and
+    /// standard padded base64 otherwise. The prefix removes the ambiguity of
+    /// a string such as `abcd`, which is valid in both alphabets.
+    Bytes(String),
+    /// Maps to the XDR [`ScVal::Address`] variant. A `G...` account strkey
+    /// becomes an account address and a `C...` strkey a contract address.
+    /// Secret seeds and other strkey kinds are rejected.
+    Address(String),
+    /// Maps to the XDR [`ScVal::Vec`] variant. Nesting is limited to
+    /// [`MAX_ARG_DEPTH`] levels.
+    Vec(Vec<ScValInput>),
+    /// Maps to the XDR [`ScVal::Map`] variant, as `(key, value)` pairs.
+    ///
+    /// Soroban requires map keys to be unique and in ascending order. The
+    /// builder sorts the entries, so the order given here does not matter,
+    /// and rejects a repeated key. Nesting is limited to [`MAX_ARG_DEPTH`].
+    Map(Vec<(ScValInput, ScValInput)>),
 }
 
 /// Everything needed to build an unsigned `InvokeHostFunction` transaction.
@@ -273,7 +313,183 @@ fn parse_i256_literal(value: &str) -> Result<Int256Parts, BuilderError> {
     })
 }
 
+fn conversion_error(kind: &'static str, reason: impl Into<String>) -> BuilderError {
+    BuilderError::ArgumentConversionError {
+        kind,
+        reason: reason.into(),
+    }
+}
+
+/// Decodes a hex string (digits only, even length).
+fn decode_hex(digits: &str) -> Result<Vec<u8>, BuilderError> {
+    if !digits.len().is_multiple_of(2) {
+        return Err(conversion_error(
+            "bytes",
+            "hex string has an odd number of digits",
+        ));
+    }
+    let mut out = Vec::with_capacity(digits.len() / 2);
+    for pair in digits.as_bytes().chunks(2) {
+        let high = hex_value(pair[0])?;
+        let low = hex_value(pair[1])?;
+        out.push(high << 4 | low);
+    }
+    Ok(out)
+}
+
+fn hex_value(byte: u8) -> Result<u8, BuilderError> {
+    match byte {
+        b'0'..=b'9' => Ok(byte - b'0'),
+        b'a'..=b'f' => Ok(byte - b'a' + 10),
+        b'A'..=b'F' => Ok(byte - b'A' + 10),
+        _ => Err(conversion_error(
+            "bytes",
+            format!("{:?} is not a hex digit", char::from(byte)),
+        )),
+    }
+}
+
+/// Decodes standard-alphabet base64 with canonical `=` padding.
+fn decode_base64(text: &str) -> Result<Vec<u8>, BuilderError> {
+    let bytes = text.as_bytes();
+    if !bytes.len().is_multiple_of(4) {
+        return Err(conversion_error(
+            "bytes",
+            "base64 string length must be a multiple of 4 (use `=` padding)",
+        ));
+    }
+    let padding = bytes.iter().rev().take_while(|b| **b == b'=').count();
+    if padding > 2 {
+        return Err(conversion_error(
+            "bytes",
+            "base64 string has too much padding",
+        ));
+    }
+    let body = &bytes[..bytes.len() - padding];
+    let mut out = Vec::with_capacity(bytes.len() / 4 * 3);
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for &byte in body {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => {
+                return Err(conversion_error(
+                    "bytes",
+                    format!("{:?} is not a base64 character", char::from(byte)),
+                ))
+            }
+        };
+        buffer = buffer << 6 | u32::from(value);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buffer >> bits) as u8);
+            buffer &= (1 << bits) - 1;
+        }
+    }
+    // Canonical form: the unused trailing bits must be zero.
+    if buffer != 0 {
+        return Err(conversion_error(
+            "bytes",
+            "base64 string has non-zero trailing bits",
+        ));
+    }
+    Ok(out)
+}
+
+fn parse_bytes(value: &str) -> Result<ScBytes, BuilderError> {
+    let decoded = match value
+        .strip_prefix("0x")
+        .or_else(|| value.strip_prefix("0X"))
+    {
+        Some(digits) => decode_hex(digits)?,
+        None => decode_base64(value)?,
+    };
+    decoded
+        .try_into()
+        .map(ScBytes)
+        .map_err(|e: stellar_xdr::Error| conversion_error("bytes", e.to_string()))
+}
+
+fn parse_address(value: &str) -> Result<ScAddress, BuilderError> {
+    // A string starting with `S` may be a secret seed. It is never echoed,
+    // whether or not it is valid: this project never handles secret keys.
+    if value.starts_with('S') {
+        return Err(conversion_error(
+            "address",
+            "a secret seed is not an address; expected a G... account or C... contract address (value not shown)",
+        ));
+    }
+    match Strkey::from_string(value) {
+        Ok(Strkey::PublicKeyEd25519(key)) => Ok(ScAddress::Account(AccountId(
+            PublicKey::PublicKeyTypeEd25519(Uint256(key.0)),
+        ))),
+        Ok(Strkey::Contract(contract)) => Ok(ScAddress::Contract(ContractId(Hash(contract.0)))),
+        Ok(_) => Err(conversion_error(
+            "address",
+            format!("{value:?} is not a G... account or C... contract address"),
+        )),
+        Err(error) => Err(conversion_error(
+            "address",
+            format!("{value:?} is not a valid address: {error}"),
+        )),
+    }
+}
+
 fn to_scval(input: &ScValInput) -> Result<ScVal, BuilderError> {
+    to_scval_nested(input, 0)
+}
+
+/// Converts one argument; `depth` is how many `Vec`/`Map` containers
+/// enclose it.
+fn to_scval_nested(input: &ScValInput, depth: usize) -> Result<ScVal, BuilderError> {
+    Ok(match input {
+        ScValInput::Bytes(value) => ScVal::Bytes(parse_bytes(value)?),
+        ScValInput::Address(value) => ScVal::Address(parse_address(value)?),
+        ScValInput::Vec(items) => {
+            if depth + 1 > MAX_ARG_DEPTH {
+                return Err(BuilderError::RecursionDepthExceeded {
+                    limit: MAX_ARG_DEPTH,
+                });
+            }
+            let converted = items
+                .iter()
+                .map(|item| to_scval_nested(item, depth + 1))
+                .collect::<Result<Vec<_>, _>>()?;
+            let vec = VecM::try_from(converted)
+                .map_err(|e| BuilderError::InvalidArgument(e.to_string()))?;
+            ScVal::Vec(Some(ScVec(vec)))
+        }
+        ScValInput::Map(entries) => {
+            if depth + 1 > MAX_ARG_DEPTH {
+                return Err(BuilderError::RecursionDepthExceeded {
+                    limit: MAX_ARG_DEPTH,
+                });
+            }
+            let mut converted = Vec::with_capacity(entries.len());
+            for (key, value) in entries {
+                converted.push(ScMapEntry {
+                    key: to_scval_nested(key, depth + 1)?,
+                    val: to_scval_nested(value, depth + 1)?,
+                });
+            }
+            converted.sort_by(|a, b| a.key.cmp(&b.key));
+            if converted.windows(2).any(|pair| pair[0].key == pair[1].key) {
+                return Err(BuilderError::DuplicateMapKey);
+            }
+            let map = VecM::try_from(converted)
+                .map_err(|e| BuilderError::InvalidArgument(e.to_string()))?;
+            ScVal::Map(Some(ScMap(map)))
+        }
+        _ => to_scalar(input)?,
+    })
+}
+
+fn to_scalar(input: &ScValInput) -> Result<ScVal, BuilderError> {
     Ok(match input {
         ScValInput::Bool(b) => ScVal::Bool(*b),
         ScValInput::U32(v) => ScVal::U32(*v),
@@ -308,6 +524,12 @@ fn to_scval(input: &ScValInput) -> Result<ScVal, BuilderError> {
             ScVal::String(ScString(s.as_str().try_into().map_err(
                 |e: stellar_xdr::Error| BuilderError::InvalidArgument(e.to_string()),
             )?))
+        }
+        // Handled by `to_scval_nested`; not reachable through `to_scval`.
+        ScValInput::Bytes(_) | ScValInput::Address(_) | ScValInput::Vec(_) | ScValInput::Map(_) => {
+            return Err(BuilderError::InvalidArgument(
+                "composite argument reached the scalar converter".to_string(),
+            ))
         }
     })
 }

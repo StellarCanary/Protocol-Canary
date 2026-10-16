@@ -74,6 +74,35 @@ pub fn run_in(dir: &std::path::Path, args: &[&str]) -> Output {
         .expect("failed to execute stellar-canary binary")
 }
 
+/// Like [`run_in`], but feeds `input` to the process's standard input and
+/// closes it once written, so the binary sees a real EOF.
+///
+/// Write failures are deliberately ignored: a test that streams more input
+/// than the binary is willing to consume expects the child to exit first,
+/// which surfaces as a broken pipe here rather than as a test failure.
+pub fn run_in_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellar-canary"))
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute stellar-canary binary");
+
+    {
+        let mut stdin = child.stdin.take().expect("child stdin was piped");
+        let _ = stdin.write_all(input);
+    }
+
+    child
+        .wait_with_output()
+        .expect("failed to wait for stellar-canary binary")
+}
+
 pub fn stdout(output: &Output) -> String {
     String::from_utf8_lossy(&output.stdout).into_owned()
 }

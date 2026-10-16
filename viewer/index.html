@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'none'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Stellar Protocol Canary report viewer</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Stellar Protocol Canary report viewer</h1>
+    <button id="theme" type="button">Toggle theme</button>
+  </header>
+
+  <main>
+    <p>Open a <code>stellar-canary</code> JSON report. It is read in this browser tab and is not uploaded anywhere.</p>
+
+    <div id="drop" class="drop">
+      <label for="file">Choose a report file, or drop it here</label>
+      <input id="file" type="file" accept=".json,application/json">
+    </div>
+
+    <section id="result" hidden aria-live="polite">
+      <h2 id="heading"></h2>
+      <p id="status-line"></p>
+      <p id="invalid-reason" hidden></p>
+      <ul id="warnings" hidden></ul>
+      <dl id="facts" hidden></dl>
+    </section>
+
+    <aside>
+      <h2>Before you share a report</h2>
+      <p>A report can contain the project directory name and the Git branch name. Check it before posting it publicly. This page has no upload, copy or print feature.</p>
+    </aside>
+  </main>
+
+  <script src="report.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

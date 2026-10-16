@@ -213,9 +213,11 @@ impl From<&ReportInput> for JsonReport {
 /// The variants separate input this version cannot even decode
 /// ([`JsonReportError::Parse`]) from input that is well-formed but was
 /// produced by a different version of the tool
-/// ([`JsonReportError::UnsupportedSchemaVersion`]) or carries an enum
+/// ([`JsonReportError::UnsupportedSchemaVersion`]), carries an enum
 /// spelling introduced after this version was built
-/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]).
+/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]),
+/// or repeats a `(surface, id)` result identity that CF-01 section 4
+/// requires to be unique ([`JsonReportError::DuplicateResultIdentity`]).
 #[derive(Debug, thiserror::Error)]
 pub enum JsonReportError {
     /// The text is not valid JSON, or it does not match the report
@@ -239,6 +241,17 @@ pub enum JsonReportError {
     /// offending spelling is carried for the error message.
     #[error("unrecognized status {0:?} in JSON report")]
     UnknownStatus(String),
+
+    /// Two entries in `results` share the same `(surface, id)` identity.
+    ///
+    /// CF-01 section 4 requires every check result to be identified by its
+    /// surface and fixture id; a report that repeats one is corrupted or
+    /// manipulated, so it is rejected outright rather than silently
+    /// truncating or merging the conflicting entries. `surface` is the
+    /// spelling as it appears in the document and `id` is the duplicated
+    /// `testId`.
+    #[error("duplicate result identity in JSON report: surface {surface:?}, id {id:?}")]
+    DuplicateResultIdentity { surface: String, id: String },
 }
 
 fn parse_surface(value: &str) -> Result<Surface, JsonReportError> {
@@ -294,10 +307,21 @@ impl TryFrom<JsonReport> for ReportInput {
     type Error = JsonReportError;
 
     fn try_from(report: JsonReport) -> Result<Self, Self::Error> {
+        // CF-01 section 4: each (surface, id) identity may appear at most
+        // once among the check results. The spelling is tracked before any
+        // conversion so a duplicate is rejected with the identity as it
+        // appears in the document.
+        let mut seen_identities = std::collections::HashSet::new();
         let results = report
             .results
             .into_iter()
             .map(|r| {
+                if !seen_identities.insert((r.surface.clone(), r.test_id.clone())) {
+                    return Err(JsonReportError::DuplicateResultIdentity {
+                        surface: r.surface,
+                        id: r.test_id,
+                    });
+                }
                 Ok(CompatibilityResult {
                     test_id: r.test_id,
                     protocol: ProtocolVersion(r.protocol),

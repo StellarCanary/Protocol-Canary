@@ -4,8 +4,9 @@ pub mod loader;
 pub mod schema;
 
 pub use loader::{
-    load, load_from_root, load_lock, parse_lock, serialize_lock, ConfigError, LockError,
-    CONFIG_FILE_NAME, LOCK_FILE_NAME,
+    load, load_from_root, load_lock, parse_lock, resolve_settings, serialize_lock, CliOverrides,
+    ConfigError, LockError, ResolvedSettings, CONFIG_FILE_NAME, DEFAULT_FIXTURES_DIR,
+    DEFAULT_NETWORK, LOCK_FILE_NAME,
 };
 pub use schema::{
     ConfigFile, LockFile, LockFixtures, LockSource, LockTool, PolicySection, ProjectSection,

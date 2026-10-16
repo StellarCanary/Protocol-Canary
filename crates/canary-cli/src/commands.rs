@@ -14,7 +14,7 @@ use canary_rpc::{validate_network_info, HttpRpcClient, RpcClient, RpcError};
 use canary_runner::EnabledSurfaces;
 
 use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat, ReportArgs};
-use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
+use crate::network::{default_rpc_url, parse_network_name, resolve_passphrase};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
 
@@ -143,12 +143,24 @@ pub async fn run_check(args: CheckArgs) -> ExitCode {
 async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
     let root = project_root.path.clone();
-    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
     let config = match &args.config {
         Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
+
+    // Cascade per key: an explicitly passed CLI flag beats the matching
+    // `.stellar-canary.toml` setting, which beats the built-in default
+    // (issue #474).
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            network: args.network.clone(),
+            rpc_url: args.rpc_url.clone(),
+            fixtures_dir: args.fixtures_dir.clone(),
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
@@ -163,18 +175,18 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         canary_project::resolve_project_type(project.project_type, explicit_type);
 
     let live_checks_needed = config.tests.rpc || config.tests.soroban;
-    let network_name = parse_network_name(&args.network);
+    let network_name = parse_network_name(&settings.network);
     let (network_context, network_summary) = if live_checks_needed {
-        let rpc_url = args
+        let rpc_url = settings
             .rpc_url
             .clone()
             .or_else(|| default_rpc_url(&network_name).map(str::to_string))
             .ok_or_else(|| {
                 CanaryError::Configuration(format!(
-                    "--rpc-url is required for network {network_name} (no built-in default)"
+                    "no RPC URL for network {network_name}: pass --rpc-url or set rpc_url in .stellar-canary.toml (no built-in default)"
                 ))
             })?;
-        let passphrase = default_passphrase(&network_name).unwrap_or("").to_string();
+        let passphrase = resolve_passphrase(&network_name, args.network_passphrase.as_deref());
 
         // Fetch the endpoint's network identity and compare it against
         // what this run assumed (see `canary_rpc::validate_network_info`,
@@ -184,14 +196,19 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         //   (rendered as "protocol not observed"); it does not block the
         //   run — individual RPC/Soroban fixtures still report the outage
         //   as execution errors.
-        // - A passphrase mismatch means `--network` and `--rpc-url` refer
-        //   to different networks: abort as a configuration error rather
+        // - A passphrase mismatch means `--network` (or an explicit
+        //   `--network-passphrase`) and `--rpc-url` refer to different
+        //   networks: abort as a configuration error rather
         //   than attribute results to the wrong network.
         // - A protocol mismatch is a warning, not a failure: running a
         //   target-protocol run against a not-yet-upgraded network is a
         //   core upgrade-rehearsal use case, but it must be visible
         //   rather than only an annotation in the report.
-        let client = HttpRpcClient::new(rpc_url.clone());
+        // In --verbose mode every attempt of this probe (and, through
+        // `RunOptions`, of every fixture call) is logged to stderr with
+        // its attempt number and duration; the endpoint URL is scrubbed
+        // inside the client, so credentials never reach the log.
+        let client = HttpRpcClient::new(rpc_url.clone()).with_verbose(args.verbose);
         let (observed_protocol, network_error) = match client.get_network().await {
             Ok(info) => {
                 if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
@@ -427,12 +444,22 @@ pub fn run_inspect(args: InspectArgs) -> ExitCode {
 fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
     let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
     let root = project_root.path.clone();
-    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
     let config = match &args.config {
         Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
+
+    // `--fixtures-dir` overrides the configured `fixtures_dir`, which
+    // overrides the built-in default (issue #474).
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            fixtures_dir: args.fixtures_dir.clone(),
+            ..canary_config::CliOverrides::default()
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
     let detected = canary_project::detect(&root);
     let explicit_type = match config.project.project_type {
@@ -600,18 +627,26 @@ pub fn run_fixtures(args: FixturesArgs) -> ExitCode {
 fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
     let root = project_root.path.clone();
-    let fixtures_dir = project_root.resolve_input(&args.fixtures_dir);
 
-    let protocol = match validated_protocol_flag(args.protocol)? {
-        Some(p) => p,
-        None => {
-            let config = match &args.config {
-                Some(path) => canary_config::load(&project_root.resolve_input(path))?,
-                None => canary_config::load_from_root(&root)?.unwrap_or_default(),
-            };
-            config.protocol
-        }
+    let config = match &args.config {
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
+        None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
+
+    // `--fixtures-dir` overrides the configured `fixtures_dir`, which
+    // overrides the built-in default (issue #474). The configuration file
+    // is read even when `--protocol` is passed so the cascade always has
+    // the file to fall back to.
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            fixtures_dir: args.fixtures_dir.clone(),
+            ..canary_config::CliOverrides::default()
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
+
+    let protocol = validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol);
 
     let loaded_fixtures = if fixtures_dir.is_dir() {
         canary_fixtures::load_directory(&fixtures_dir)?
@@ -654,7 +689,12 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 /// Reads the report file named by [`ReportArgs::path`] — the JSON written by
 /// `stellar-canary check --json`, as described in
 /// `docs/json-report-contract.md` — re-renders it in [`ReportArgs::format`],
-/// and prints the result to stdout. Unlike [`run_check`], it never touches the
+/// and prints the result to stdout. When the path is `"-"`, the report is
+/// read from standard input until EOF instead, which chains it onto another
+/// command without touching disk:
+/// `stellar-canary check --format json | stellar-canary report -`.
+/// Standard input is capped at 10 MiB (D-06); a larger stream is rejected
+/// rather than truncated. Unlike [`run_check`], it never touches the
 /// network or re-runs any fixture, so it is safe to call offline, on CI, or
 /// against a report produced by another machine.
 ///
@@ -675,11 +715,14 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 ///
 /// ```text
 /// # Render a stored report as Markdown (the default format).
-/// stellar-canary report --path results.json
+/// stellar-canary report results.json
 ///
 /// # Re-render the same report for a terminal or as JSON.
-/// stellar-canary report --path results.json --format terminal
-/// stellar-canary report --path results.json --format json
+/// stellar-canary report results.json --format terminal
+/// stellar-canary report results.json --format json
+///
+/// # Read the report from standard input instead of a file.
+/// stellar-canary check --format json | stellar-canary report -
 /// ```
 pub fn run_report(args: ReportArgs) -> ExitCode {
     match run_report_inner(args) {
@@ -692,12 +735,20 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 }
 
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
-    let json_text = std::fs::read_to_string(&args.path).map_err(|e| {
-        CanaryError::Configuration(format!(
-            "failed to read report file {}: {e}",
-            args.path.display()
-        ))
-    })?;
+    // `report -` reads the report from standard input until EOF (E-053),
+    // so a report can be piped straight through without a temporary file.
+    let json_text = if args.path == Path::new("-") {
+        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+            CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
+        })?
+    } else {
+        std::fs::read_to_string(&args.path).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "failed to read report file {}: {e}",
+                args.path.display()
+            ))
+        })?
+    };
     let report_input = canary_report::JsonReporter::parse(&json_text)
         .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
 
@@ -732,7 +783,7 @@ mod tests {
     ) -> FixturesArgs {
         FixturesArgs {
             protocol,
-            fixtures_dir: PathBuf::from(fixtures_dir),
+            fixtures_dir: Some(PathBuf::from(fixtures_dir)),
             project_root: None,
             config: config.map(PathBuf::from),
         }
@@ -745,7 +796,7 @@ mod tests {
     ) -> InspectArgs {
         InspectArgs {
             protocol,
-            fixtures_dir: PathBuf::from(fixtures_dir),
+            fixtures_dir: Some(PathBuf::from(fixtures_dir)),
             project_root: None,
             config: config.map(PathBuf::from),
         }

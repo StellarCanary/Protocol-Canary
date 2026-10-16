@@ -3,6 +3,7 @@
 
 pub mod client;
 pub mod models;
+pub mod request;
 pub mod runner;
 
 pub use client::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};

@@ -1,5 +1,7 @@
 //! Typed representation of `.stellar-canary.toml`.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use canary_core::ProjectType;
@@ -24,6 +26,22 @@ pub const DEFAULT_PROTOCOL: u32 = 28;
 pub struct ConfigFile {
     pub version: u32,
     pub protocol: u32,
+    /// `network` — the network to run live checks against (`testnet`,
+    /// `mainnet`, `futurenet`, or a custom name). Optional: absent means
+    /// the CLI decides (its `--network`, else the built-in `testnet`
+    /// default; see `crate::loader::resolve_settings`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// `rpc_url` — the Stellar RPC endpoint for live checks. Optional:
+    /// absent means the CLI decides (its `--rpc-url`, else the network's
+    /// built-in default, if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_url: Option<String>,
+    /// `fixtures_dir` — the directory containing fixture files, relative to
+    /// the project root. Optional: absent means the CLI decides (its
+    /// `--fixtures-dir`, else the built-in `fixtures` default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixtures_dir: Option<PathBuf>,
     #[serde(default)]
     pub project: ProjectSection,
     #[serde(default)]
@@ -37,6 +55,9 @@ impl Default for ConfigFile {
         ConfigFile {
             version: SUPPORTED_CONFIG_VERSION,
             protocol: DEFAULT_PROTOCOL,
+            network: None,
+            rpc_url: None,
+            fixtures_dir: None,
             project: ProjectSection::default(),
             tests: TestsSection::default(),
             policy: PolicySection::default(),
@@ -297,6 +318,11 @@ mod tests {
         assert_eq!(config.project.project_type, ProjectTypeSetting::Auto);
         assert!(config.tests.xdr && config.tests.rpc && config.tests.soroban);
         assert!(!config.policy.warnings_are_failures);
+        // The run settings are optional and unset by default so the CLI can
+        // cascade over them (issue #474).
+        assert_eq!(config.network, None);
+        assert_eq!(config.rpc_url, None);
+        assert_eq!(config.fixtures_dir, None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod detector;
 pub mod fingerprint;
 pub mod manifest;
+pub mod workspace;
 
 pub use capabilities::{detect_capabilities, DetectionSignals};
 pub use detector::{detect, find_wasm_artifacts, resolve_project_type};
@@ -11,6 +12,10 @@ pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
 };
 pub use manifest::{read_cargo_manifest, read_package_json, ProjectManifest};
+pub use workspace::{
+    scan_cargo_workspace, Diagnostic, DiagnosticCode, WorkspaceMember, WorkspaceScan,
+    MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
+};
 
 /// Test-only temp-directory helper shared by this crate's unit tests, so no
 /// crate needs a `tempfile` dev-dependency for simple filesystem fixtures.

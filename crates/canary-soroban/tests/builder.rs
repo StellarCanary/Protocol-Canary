@@ -1,15 +1,19 @@
-//! Soroban argument builder tests (issue #488): 128-bit, 256-bit, Void,
-//! Duration, and Timepoint simulation arguments.
+//! Soroban argument builder tests: 128-bit, 256-bit, Void, Duration and
+//! Timepoint (issue #488), Bytes and Address (issue #427), and Vec and Map
+//! (issue #428) simulation arguments.
 //!
 //! Every encoding test round-trips through `TransactionEnvelope::from_xdr_base64`
 //! so a passing assertion proves the argument survived as real XDR, not just
 //! that a string was produced.
 
-use canary_soroban::{build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput};
+use canary_soroban::{
+    build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
+};
 use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract};
 use stellar_xdr::{
-    Duration, HostFunction, Int128Parts, Int256Parts, Limits, OperationBody, ReadXdr, ScVal,
-    TimePoint, TransactionEnvelope, UInt128Parts, UInt256Parts,
+    AccountId, ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts, Limits,
+    OperationBody, PublicKey, ReadXdr, ScAddress, ScBytes, ScMap, ScMapEntry, ScVal, ScVec,
+    TimePoint, TransactionEnvelope, UInt128Parts, UInt256Parts, Uint256,
 };
 
 /// A well-formed but arbitrary account/contract pair (all-zero payload bytes)
@@ -428,4 +432,238 @@ fn rejects_negative_values_for_unsigned_integer_kinds() {
         BuilderError::InvalidArgument(message) => assert!(message.contains("must not be negative")),
         other => panic!("expected InvalidArgument, got {other:?}"),
     }
+}
+
+fn account_strkey(byte: u8) -> String {
+    StrkeyPublicKey([byte; 32]).to_string().to_string()
+}
+
+fn contract_strkey(byte: u8) -> String {
+    StrkeyContract([byte; 32]).to_string().to_string()
+}
+
+fn conversion_message(error: BuilderError) -> String {
+    match error {
+        BuilderError::ArgumentConversionError { reason, .. } => reason,
+        other => panic!("expected ArgumentConversionError, got {other:?}"),
+    }
+}
+
+#[test]
+fn encodes_an_account_address() {
+    let values = encode(vec![ScValInput::Address(account_strkey(7))]);
+    assert_eq!(
+        values,
+        vec![ScVal::Address(ScAddress::Account(AccountId(
+            PublicKey::PublicKeyTypeEd25519(Uint256([7; 32]))
+        )))]
+    );
+}
+
+#[test]
+fn encodes_a_contract_address() {
+    let values = encode(vec![ScValInput::Address(contract_strkey(9))]);
+    assert_eq!(
+        values,
+        vec![ScVal::Address(ScAddress::Contract(ContractId(Hash(
+            [9; 32]
+        ))))]
+    );
+}
+
+#[test]
+fn rejects_a_g_address_with_a_bad_checksum() {
+    let mut address = account_strkey(7);
+    let last = address.pop().unwrap();
+    address.push(if last == 'A' { 'B' } else { 'A' });
+    let message = conversion_message(build_err(vec![ScValInput::Address(address)]));
+    assert!(message.contains("not a valid address"), "{message}");
+}
+
+#[test]
+fn rejects_malformed_and_wrong_kind_addresses() {
+    for bad in ["", "G", "not-an-address", "CABC", "gaaaa"] {
+        let err = build_err(vec![ScValInput::Address(bad.to_string())]);
+        assert!(
+            matches!(err, BuilderError::ArgumentConversionError { .. }),
+            "{bad:?}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn a_secret_seed_is_rejected_and_never_echoed() {
+    let seed = format!("S{}", "B".repeat(55));
+    let err = build_err(vec![ScValInput::Address(seed.clone())]);
+    let message = conversion_message(err);
+    assert!(!message.contains(&seed));
+    assert!(message.contains("secret seed"));
+}
+
+#[test]
+fn encodes_hex_bytes_with_either_prefix_case() {
+    let values = encode(vec![
+        ScValInput::Bytes("0xdeadBEEF".to_string()),
+        ScValInput::Bytes("0X00ff".to_string()),
+        ScValInput::Bytes("0x".to_string()),
+    ]);
+    let bytes = |data: &[u8]| ScVal::Bytes(ScBytes(data.to_vec().try_into().unwrap()));
+    assert_eq!(
+        values,
+        vec![
+            bytes(&[0xde, 0xad, 0xbe, 0xef]),
+            bytes(&[0x00, 0xff]),
+            bytes(&[])
+        ]
+    );
+}
+
+#[test]
+fn encodes_base64_bytes_and_distinguishes_hex_by_prefix() {
+    let values = encode(vec![
+        ScValInput::Bytes("3q2+7w==".to_string()),
+        // Valid in both alphabets; without `0x` it is base64.
+        ScValInput::Bytes("abcd".to_string()),
+        ScValInput::Bytes(String::new()),
+    ]);
+    let bytes = |data: &[u8]| ScVal::Bytes(ScBytes(data.to_vec().try_into().unwrap()));
+    assert_eq!(
+        values,
+        vec![
+            bytes(&[0xde, 0xad, 0xbe, 0xef]),
+            bytes(&[0x69, 0xb7, 0x1d]),
+            bytes(&[]),
+        ]
+    );
+}
+
+#[test]
+fn rejects_malformed_bytes() {
+    for bad in [
+        "0xzz",
+        "0xabc",
+        "3q2+7w=",
+        "3q2+7w===",
+        "3q2+7w==x",
+        "3q2+7x==",
+        "a b c d",
+    ] {
+        let err = build_err(vec![ScValInput::Bytes(bad.to_string())]);
+        assert!(
+            matches!(err, BuilderError::ArgumentConversionError { .. }),
+            "{bad:?}: {err:?}"
+        );
+    }
+}
+
+#[test]
+fn encodes_nested_vectors() {
+    let values = encode(vec![ScValInput::Vec(vec![
+        ScValInput::U32(1),
+        ScValInput::Vec(vec![
+            ScValInput::Bool(true),
+            ScValInput::Symbol("x".to_string()),
+        ]),
+        ScValInput::Vec(vec![]),
+    ])]);
+    let ScVal::Vec(Some(ScVec(outer))) = &values[0] else {
+        panic!("expected a vec");
+    };
+    assert_eq!(outer.len(), 3);
+    assert_eq!(outer[0], ScVal::U32(1));
+    let ScVal::Vec(Some(ScVec(inner))) = &outer[1] else {
+        panic!("expected a nested vec");
+    };
+    assert_eq!(inner[0], ScVal::Bool(true));
+    assert_eq!(
+        outer[2],
+        ScVal::Vec(Some(ScVec(vec![].try_into().unwrap())))
+    );
+}
+
+#[test]
+fn map_entries_are_sorted_by_key() {
+    let values = encode(vec![ScValInput::Map(vec![
+        (ScValInput::U32(3), ScValInput::Symbol("c".to_string())),
+        (ScValInput::U32(1), ScValInput::Symbol("a".to_string())),
+        (ScValInput::U32(2), ScValInput::Symbol("b".to_string())),
+    ])]);
+    let ScVal::Map(Some(ScMap(entries))) = &values[0] else {
+        panic!("expected a map");
+    };
+    let keys: Vec<&ScVal> = entries.iter().map(|ScMapEntry { key, .. }| key).collect();
+    assert_eq!(keys, [&ScVal::U32(1), &ScVal::U32(2), &ScVal::U32(3)]);
+}
+
+#[test]
+fn input_order_does_not_change_the_encoding() {
+    let one = vec![
+        (ScValInput::Symbol("b".to_string()), ScValInput::U32(2)),
+        (ScValInput::Symbol("a".to_string()), ScValInput::U32(1)),
+    ];
+    let mut two = one.clone();
+    two.reverse();
+    assert_eq!(
+        encode(vec![ScValInput::Map(one)]),
+        encode(vec![ScValInput::Map(two)])
+    );
+}
+
+#[test]
+fn duplicate_map_keys_are_rejected() {
+    let err = build_err(vec![ScValInput::Map(vec![
+        (ScValInput::U32(1), ScValInput::U32(1)),
+        (ScValInput::U32(1), ScValInput::U32(2)),
+    ])]);
+    assert!(matches!(err, BuilderError::DuplicateMapKey), "{err:?}");
+}
+
+#[test]
+fn maps_may_hold_vectors_and_maps() {
+    let values = encode(vec![ScValInput::Map(vec![(
+        ScValInput::Symbol("list".to_string()),
+        ScValInput::Vec(vec![ScValInput::Map(vec![(
+            ScValInput::U32(1),
+            ScValInput::Address(contract_strkey(1)),
+        )])]),
+    )])]);
+    assert!(matches!(values[0], ScVal::Map(Some(_))));
+}
+
+fn nested_vec(levels: usize) -> ScValInput {
+    let mut value = ScValInput::U32(0);
+    for _ in 0..levels {
+        value = ScValInput::Vec(vec![value]);
+    }
+    value
+}
+
+#[test]
+fn depth_of_exactly_the_limit_is_accepted() {
+    assert_eq!(encode(vec![nested_vec(MAX_ARG_DEPTH)]).len(), 1);
+}
+
+#[test]
+fn depth_over_the_limit_is_rejected_for_vec_and_map() {
+    let err = build_err(vec![nested_vec(MAX_ARG_DEPTH + 1)]);
+    assert!(
+        matches!(err, BuilderError::RecursionDepthExceeded { limit: 8 }),
+        "{err:?}"
+    );
+
+    let mut map = ScValInput::U32(0);
+    for _ in 0..=MAX_ARG_DEPTH {
+        map = ScValInput::Map(vec![(ScValInput::U32(0), map)]);
+    }
+    assert!(matches!(
+        build_err(vec![map]),
+        BuilderError::RecursionDepthExceeded { .. }
+    ));
+}
+
+#[test]
+fn a_deeply_nested_input_does_not_overflow_the_stack() {
+    // Far past the limit: the depth check must stop the recursion early.
+    let err = build_err(vec![nested_vec(50)]);
+    assert!(matches!(err, BuilderError::RecursionDepthExceeded { .. }));
 }

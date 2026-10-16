@@ -16,6 +16,14 @@ pub const CONFIG_FILE_NAME: &str = ".stellar-canary.toml";
 /// (CF-03 section 2).
 pub const LOCK_FILE_NAME: &str = ".stellar-canary.lock";
 
+/// The network used when neither the CLI nor `.stellar-canary.toml` names
+/// one (see [`resolve_settings`]).
+pub const DEFAULT_NETWORK: &str = "testnet";
+
+/// The fixture directory used when neither the CLI nor
+/// `.stellar-canary.toml` names one (see [`resolve_settings`]).
+pub const DEFAULT_FIXTURES_DIR: &str = "fixtures";
+
 #[derive(Debug, thiserror::Error)]
 /// Errors returned while reading, parsing, or validating a Canary configuration.
 ///
@@ -102,6 +110,55 @@ fn validate(config: &ConfigFile, path: &Path) -> Result<(), ConfigError> {
         });
     }
     Ok(())
+}
+
+/// The CLI values a user explicitly passed, for cascading over
+/// `.stellar-canary.toml` (issue #474).
+///
+/// `None` means "not passed": the configuration file, then the built-in
+/// default, supplies the value. Commands keep `--network` and
+/// `--fixtures-dir` as `Option`s on the argument parser precisely so an
+/// explicit override stays distinguishable from a clap default.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CliOverrides {
+    pub network: Option<String>,
+    pub rpc_url: Option<String>,
+    pub fixtures_dir: Option<PathBuf>,
+}
+
+/// A run's settings after cascading CLI > `.stellar-canary.toml` >
+/// built-in defaults, resolved per key (issue #474).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedSettings {
+    pub network: String,
+    /// `None` when neither source names an endpoint. Whether the resolved
+    /// network then has a built-in default RPC URL is decided by the
+    /// caller — in `canary-cli`, only `testnet` does.
+    pub rpc_url: Option<String>,
+    pub fixtures_dir: PathBuf,
+}
+
+/// Resolves `network`, `rpc_url` and `fixtures_dir` by cascading the
+/// explicitly passed CLI values over the configuration file's settings,
+/// and those over the built-in defaults (`"testnet"`, none, `"fixtures"`).
+///
+/// Precedence is applied per key, so passing only `--network` still lets
+/// `rpc_url` and `fixtures_dir` come from the configuration file. Values
+/// are taken verbatim: an unusable `rpc_url` recorded in the
+/// configuration file does not stop a valid `--rpc-url` from winning, and
+/// is never validated here.
+pub fn resolve_settings(config: &ConfigFile, cli: CliOverrides) -> ResolvedSettings {
+    ResolvedSettings {
+        network: cli
+            .network
+            .or_else(|| config.network.clone())
+            .unwrap_or_else(|| DEFAULT_NETWORK.to_string()),
+        rpc_url: cli.rpc_url.or_else(|| config.rpc_url.clone()),
+        fixtures_dir: cli
+            .fixtures_dir
+            .or_else(|| config.fixtures_dir.clone())
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_FIXTURES_DIR)),
+    }
 }
 
 /// Why a lockfile could not be read, parsed, validated or written.
@@ -489,8 +546,15 @@ mod tests {
 
     #[test]
     fn rejects_an_unknown_top_level_key() {
-        let (_dir, path) = write_temp_config("version = 1\nprotocol = 28\nnetwork = \"mainnet\"\n");
-        assert!(load(&path).is_err());
+        // `networks` is a misspelling of the now-supported `network` key:
+        // deny_unknown_fields must still reject it outright.
+        let (_dir, path) =
+            write_temp_config("version = 1\nprotocol = 28\nnetworks = \"mainnet\"\n");
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `networks`"),
+            "{err}"
+        );
     }
 
     #[test]

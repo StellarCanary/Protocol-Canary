@@ -59,13 +59,25 @@ pub struct CheckArgs {
     #[arg(long)]
     pub protocol: Option<u32>,
 
-    /// Network to run live checks against.
-    #[arg(long, default_value = "testnet")]
-    pub network: String,
+    /// Network to run live checks against (overrides `network` in
+    /// .stellar-canary.toml; default: testnet).
+    #[arg(long)]
+    pub network: Option<String>,
 
     /// RPC endpoint to use for live checks.
     #[arg(long = "rpc-url")]
     pub rpc_url: Option<String>,
+
+    /// Network passphrase used to verify the endpoint's identity and to
+    /// sign transactions for this run. Defaults to the well-known
+    /// passphrase for --network; custom networks are only verified when
+    /// this flag is given. Empty values are rejected.
+    #[arg(
+        long = "network-passphrase",
+        value_name = "PASSPHRASE",
+        value_parser = parse_network_passphrase,
+    )]
+    pub network_passphrase: Option<String>,
 
     /// Directory to treat as the project root (default: the current
     /// directory). Relative `--config`, `--fixtures-dir` and `--output`
@@ -83,9 +95,10 @@ pub struct CheckArgs {
     #[arg(long = "rpc-timeout", default_value = "10")]
     pub rpc_timeout: u64,
 
-    /// Directory containing fixture files.
-    #[arg(long = "fixtures-dir", default_value = "fixtures")]
-    pub fixtures_dir: PathBuf,
+    /// Directory containing fixture files (overrides `fixtures_dir` in
+    /// .stellar-canary.toml; default: fixtures).
+    #[arg(long = "fixtures-dir", value_name = "PATH")]
+    pub fixtures_dir: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
@@ -134,15 +147,31 @@ pub struct CheckArgs {
     pub live_cache_ttl: Option<u64>,
 }
 
+/// Rejects `--network-passphrase ""` at parse time.
+///
+/// An empty expected passphrase is how `canary_rpc::validate_network_info`
+/// *skips* the network-identity comparison, so an empty flag value would
+/// silently disable the very check the flag exists to strengthen. Failing
+/// the argument instead makes the mistake loud: clap reports an argument
+/// validation error (exit code 2) before anything runs.
+fn parse_network_passphrase(value: &str) -> Result<String, String> {
+    if value.is_empty() {
+        Err("the passphrase cannot be empty".to_string())
+    } else {
+        Ok(value.to_string())
+    }
+}
+
 #[derive(Debug, Parser)]
 pub struct InspectArgs {
     /// Target protocol version (overrides configuration).
     #[arg(long)]
     pub protocol: Option<u32>,
 
-    /// Directory containing fixture files to inspect.
-    #[arg(long = "fixtures-dir", default_value = "fixtures")]
-    pub fixtures_dir: PathBuf,
+    /// Directory containing fixture files to inspect (overrides
+    /// `fixtures_dir` in .stellar-canary.toml; default: fixtures).
+    #[arg(long = "fixtures-dir", value_name = "PATH")]
+    pub fixtures_dir: Option<PathBuf>,
 
     /// Directory to treat as the project root (default: the current
     /// directory). Relative `--config`, `--fixtures-dir` and `--output`
@@ -164,9 +193,10 @@ pub struct FixturesArgs {
     #[arg(long)]
     pub protocol: Option<u32>,
 
-    /// Directory containing fixture files.
-    #[arg(long = "fixtures-dir", default_value = "fixtures")]
-    pub fixtures_dir: PathBuf,
+    /// Directory containing fixture files (overrides `fixtures_dir` in
+    /// .stellar-canary.toml; default: fixtures).
+    #[arg(long = "fixtures-dir", value_name = "PATH")]
+    pub fixtures_dir: Option<PathBuf>,
 
     /// Directory to treat as the project root (default: the current
     /// directory). Relative `--config`, `--fixtures-dir` and `--output`
@@ -183,7 +213,8 @@ pub struct FixturesArgs {
 
 #[derive(Debug, Parser)]
 pub struct ReportArgs {
-    /// Path to a JSON report produced by `stellar-canary check --json`.
+    /// Path to a JSON report produced by `stellar-canary check --json`, or
+    /// `-` to read the report from standard input until EOF (10 MiB max).
     pub path: PathBuf,
 
     /// Output format to render the stored report as.
@@ -268,5 +299,46 @@ mod tests {
         } else {
             panic!("Expected Check command");
         }
+    }
+
+    #[test]
+    fn network_passphrase_flag_is_absent_by_default() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.network_passphrase, None);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn network_passphrase_flag_accepts_a_custom_value() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--network-passphrase",
+            "Local Standalone Network ; October 2026",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(
+                args.network_passphrase.as_deref(),
+                Some("Local Standalone Network ; October 2026")
+            );
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    /// An empty passphrase is not "skip the check" — it is a mistake, so
+    /// clap must reject it as an argument validation error (exit code 2)
+    /// rather than let it parse.
+    #[test]
+    fn network_passphrase_flag_rejects_an_empty_value() {
+        let err = Cli::try_parse_from(["stellar-canary", "check", "--network-passphrase", ""])
+            .expect_err("an empty passphrase must fail argument validation");
+        assert_eq!(err.kind(), clap::error::ErrorKind::ValueValidation);
+        let text = err.to_string();
+        assert!(text.contains("--network-passphrase"), "{text}");
+        assert!(text.contains("the passphrase cannot be empty"), "{text}");
     }
 }

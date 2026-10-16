@@ -6,6 +6,7 @@ use canary_core::{ProjectContext, ProjectType};
 
 use crate::capabilities::{detect_capabilities, DetectionSignals};
 use crate::manifest::read_cargo_manifest;
+use crate::workspace::scan_cargo_workspace;
 
 /// Directories that are never worth descending into while looking for a
 /// checked-in or built WASM artifact.
@@ -28,6 +29,11 @@ pub fn detect(root: &Path) -> ProjectContext {
     let mut manifests = Vec::new();
     if let Some(m) = read_cargo_manifest(root) {
         manifests.push(m);
+    }
+    // A virtual workspace root declares no dependencies itself; its members
+    // do. Their dependency names are aggregated into the root's signals.
+    for member in scan_cargo_workspace(root).members {
+        manifests.push(member.manifest);
     }
     if let Some(m) = crate::manifest::read_package_json(root) {
         manifests.push(m);

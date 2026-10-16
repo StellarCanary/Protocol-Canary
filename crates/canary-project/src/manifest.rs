@@ -71,7 +71,14 @@ impl ProjectManifest {
 /// hard failure.
 pub fn read_cargo_manifest(root: &Path) -> Option<ProjectManifest> {
     let raw = std::fs::read_to_string(root.join("Cargo.toml")).ok()?;
-    let value: toml::Value = toml::from_str(&raw).ok()?;
+    parse_cargo_manifest(&raw)
+}
+
+/// Parses `Cargo.toml` text into the dependency names it declares, or
+/// `None` when it is not valid TOML. Shared by the root and workspace-member
+/// readers so both see the same sections.
+pub(crate) fn parse_cargo_manifest(raw: &str) -> Option<ProjectManifest> {
+    let value: toml::Value = toml::from_str(raw).ok()?;
 
     let mut dependency_names = Vec::new();
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {

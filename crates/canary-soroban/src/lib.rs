@@ -7,7 +7,9 @@ pub mod builder;
 pub mod runner;
 pub mod simulation;
 
-pub use builder::{build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput};
+pub use builder::{
+    build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
+};
 pub use runner::{
     DefaultSorobanRunner, SorobanAssertion, SorobanFixture, SorobanFixtureError, SorobanRunner,
 };

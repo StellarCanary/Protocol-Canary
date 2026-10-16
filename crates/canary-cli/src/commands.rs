@@ -1,6 +1,6 @@
 //! Command implementations.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use canary_core::{
     CachePolicy, CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode,
@@ -15,9 +15,28 @@ use canary_runner::EnabledSurfaces;
 
 use crate::cli::{CheckArgs, FixturesArgs, FixturesFormat, InspectArgs, OutputFormat, ReportArgs};
 use crate::fixtures_json;
-use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
+use crate::network::{default_rpc_url, parse_network_name, resolve_passphrase};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
+
+/// The Git commit this binary was built from, captured by `build.rs`, or
+/// `None` when the build had no usable Git history.
+///
+/// The value is validated here as well as in `build.rs`: the compile-time
+/// variable is the only input, and anything that is not a full lowercase hex
+/// object name is treated as unknown rather than copied into a report.
+fn build_commit() -> Option<String> {
+    normalized_commit(option_env!("CANARY_BUILD_COMMIT").unwrap_or(""))
+}
+
+fn normalized_commit(raw: &str) -> Option<String> {
+    let commit = raw.trim();
+    let full_length = commit.len() == 40 || commit.len() == 64;
+    let lower_hex = commit
+        .bytes()
+        .all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    (full_length && lower_hex).then(|| commit.to_string())
+}
 
 /// Rejects `--protocol 0` the same way the config loader rejects
 /// `protocol = 0`, so the flag can't bypass that validation.
@@ -28,6 +47,88 @@ fn validated_protocol_flag(protocol: Option<u32>) -> Result<Option<u32>, CanaryE
         )),
         other => Ok(other),
     }
+}
+
+/// The directory a command operates on (CF-07 section 2).
+///
+/// It is the current directory unless `--project-root` is given, and it is
+/// never found by searching parent directories (D-08): a monorepo member is
+/// selected by naming it, so the engine can never silently check a different
+/// project than the one the caller pointed at.
+struct ProjectRoot {
+    path: PathBuf,
+    /// `true` when the root came from `--project-root`. Relative input paths
+    /// are then resolved against it instead of the caller's working
+    /// directory; without the flag they are left exactly as given, which is
+    /// the same file because the root is the working directory.
+    explicit: bool,
+}
+
+impl ProjectRoot {
+    fn resolve(flag: Option<&Path>) -> Result<ProjectRoot, CanaryError> {
+        let Some(requested) = flag else {
+            let path = std::env::current_dir().map_err(|e| {
+                CanaryError::Internal(format!("failed to read current directory: {e}"))
+            })?;
+            return Ok(ProjectRoot {
+                path,
+                explicit: false,
+            });
+        };
+
+        let metadata = std::fs::metadata(requested).map_err(|e| {
+            let reason = if e.kind() == std::io::ErrorKind::NotFound {
+                "does not exist".to_string()
+            } else {
+                format!("cannot be read: {e}")
+            };
+            CanaryError::Configuration(format!("--project-root {} {reason}", requested.display()))
+        })?;
+        if !metadata.is_dir() {
+            return Err(CanaryError::Configuration(format!(
+                "--project-root {} is not a directory",
+                requested.display()
+            )));
+        }
+
+        // Resolved once, here, so every later join and the reported project
+        // name agree on one absolute location.
+        let canonical = std::fs::canonicalize(requested).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "--project-root {} could not be resolved: {e}",
+                requested.display()
+            ))
+        })?;
+        Ok(ProjectRoot {
+            path: without_verbatim_prefix(canonical),
+            explicit: true,
+        })
+    }
+
+    /// Resolves a caller-supplied input path (`--config`, `--fixtures-dir`,
+    /// `--output`) against the project root when one was given explicitly.
+    fn resolve_input(&self, path: &Path) -> PathBuf {
+        if self.explicit && path.is_relative() {
+            self.path.join(path)
+        } else {
+            path.to_path_buf()
+        }
+    }
+}
+
+/// `std::fs::canonicalize` returns `\\?\C:\...` on Windows. That form is
+/// valid but is shown to users in `inspect` and is not what they typed, so
+/// plain drive paths are converted back.
+fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.to_str().and_then(|s| s.strip_prefix(r"\\?\")) {
+            if rest.as_bytes().get(1) == Some(&b':') {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    path
 }
 
 pub async fn run_check(args: CheckArgs) -> ExitCode {
@@ -41,13 +142,26 @@ pub async fn run_check(args: CheckArgs) -> ExitCode {
 }
 
 async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
 
     let config = match &args.config {
-        Some(path) => canary_config::load(path)?,
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
+
+    // Cascade per key: an explicitly passed CLI flag beats the matching
+    // `.stellar-canary.toml` setting, which beats the built-in default
+    // (issue #474).
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            network: args.network.clone(),
+            rpc_url: args.rpc_url.clone(),
+            fixtures_dir: args.fixtures_dir.clone(),
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
@@ -62,18 +176,18 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         canary_project::resolve_project_type(project.project_type, explicit_type);
 
     let live_checks_needed = config.tests.rpc || config.tests.soroban;
-    let network_name = parse_network_name(&args.network);
+    let network_name = parse_network_name(&settings.network);
     let (network_context, network_summary) = if live_checks_needed {
-        let rpc_url = args
+        let rpc_url = settings
             .rpc_url
             .clone()
             .or_else(|| default_rpc_url(&network_name).map(str::to_string))
             .ok_or_else(|| {
                 CanaryError::Configuration(format!(
-                    "--rpc-url is required for network {network_name} (no built-in default)"
+                    "no RPC URL for network {network_name}: pass --rpc-url or set rpc_url in .stellar-canary.toml (no built-in default)"
                 ))
             })?;
-        let passphrase = default_passphrase(&network_name).unwrap_or("").to_string();
+        let passphrase = resolve_passphrase(&network_name, args.network_passphrase.as_deref());
 
         // Fetch the endpoint's network identity and compare it against
         // what this run assumed (see `canary_rpc::validate_network_info`,
@@ -83,14 +197,19 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         //   (rendered as "protocol not observed"); it does not block the
         //   run — individual RPC/Soroban fixtures still report the outage
         //   as execution errors.
-        // - A passphrase mismatch means `--network` and `--rpc-url` refer
-        //   to different networks: abort as a configuration error rather
+        // - A passphrase mismatch means `--network` (or an explicit
+        //   `--network-passphrase`) and `--rpc-url` refer to different
+        //   networks: abort as a configuration error rather
         //   than attribute results to the wrong network.
         // - A protocol mismatch is a warning, not a failure: running a
         //   target-protocol run against a not-yet-upgraded network is a
         //   core upgrade-rehearsal use case, but it must be visible
         //   rather than only an annotation in the report.
-        let client = HttpRpcClient::new(rpc_url.clone());
+        // In --verbose mode every attempt of this probe (and, through
+        // `RunOptions`, of every fixture call) is logged to stderr with
+        // its attempt number and duration; the endpoint URL is scrubbed
+        // inside the client, so credentials never reach the log.
+        let client = HttpRpcClient::new(rpc_url.clone()).with_verbose(args.verbose);
         let (observed_protocol, network_error) = match client.get_network().await {
             Ok(info) => {
                 if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
@@ -133,8 +252,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         )
     };
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -155,7 +274,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             &plan,
             &loaded_fixtures,
             target_protocol,
-            &args.fixtures_dir,
+            &fixtures_dir,
         );
         if !args.allow_empty {
             return Err(CanaryError::Configuration(format!(
@@ -234,6 +353,9 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         decision,
         git,
         verbose: args.verbose,
+        run: Some(canary_report::RunSummary {
+            tool_build_commit: build_commit(),
+        }),
     };
 
     let format = if args.json {
@@ -264,7 +386,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     // before anything reaches stdout: a path that cannot be written fails
     // loudly rather than after a report has already been printed.
     if let Some(path) = &args.output {
-        write_report_file(path, &rendered)?;
+        write_report_file(&project_root.resolve_input(path), &rendered)?;
     }
     println!("{rendered}");
 
@@ -341,13 +463,24 @@ pub fn run_inspect(args: InspectArgs) -> ExitCode {
 }
 
 fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
 
     let config = match &args.config {
-        Some(path) => canary_config::load(path)?,
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
         None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
+
+    // `--fixtures-dir` overrides the configured `fixtures_dir`, which
+    // overrides the built-in default (issue #474).
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            fixtures_dir: args.fixtures_dir.clone(),
+            ..canary_config::CliOverrides::default()
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
     let detected = canary_project::detect(&root);
     let explicit_type = match config.project.project_type {
@@ -416,8 +549,8 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
         }
     );
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -431,7 +564,7 @@ fn run_inspect_inner(args: InspectArgs) -> Result<ExitCode, CanaryError> {
 
     println!();
     println!("Fixture compatibility plan (offline):");
-    println!("  Directory: {}", args.fixtures_dir.display());
+    println!("  Directory: {}", fixtures_dir.display());
     println!("  Loaded fixtures that would run:");
     if plan.applicable_count() == 0 {
         println!("    (none)");
@@ -513,22 +646,31 @@ pub fn run_fixtures(args: FixturesArgs) -> ExitCode {
 }
 
 fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
-    let root = std::env::current_dir()
-        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
 
-    let protocol = match validated_protocol_flag(args.protocol)? {
-        Some(p) => p,
-        None => {
-            let config = match &args.config {
-                Some(path) => canary_config::load(path)?,
-                None => canary_config::load_from_root(&root)?.unwrap_or_default(),
-            };
-            config.protocol
-        }
+    let config = match &args.config {
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
+        None => canary_config::load_from_root(&root)?.unwrap_or_default(),
     };
 
-    let loaded_fixtures = if args.fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&args.fixtures_dir)?
+    // `--fixtures-dir` overrides the configured `fixtures_dir`, which
+    // overrides the built-in default (issue #474). The configuration file
+    // is read even when `--protocol` is passed so the cascade always has
+    // the file to fall back to.
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            fixtures_dir: args.fixtures_dir.clone(),
+            ..canary_config::CliOverrides::default()
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
+
+    let protocol = validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol);
+
+    let loaded_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
     } else {
         Vec::new()
     };
@@ -564,14 +706,14 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
             }
 
             if !any {
-                println!("(no fixtures found in {})", args.fixtures_dir.display());
+                println!("(no fixtures found in {})", fixtures_dir.display());
             }
         }
         FixturesFormat::Json => {
             let inventory = fixtures_json::build(
                 protocol,
-                args.fixtures_dir.is_dir(),
-                &args.fixtures_dir,
+                fixtures_dir.is_dir(),
+                &fixtures_dir,
                 &loaded_fixtures,
             );
             println!("{}", fixtures_json::render(&inventory));
@@ -586,7 +728,12 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 /// Reads the report file named by [`ReportArgs::path`] — the JSON written by
 /// `stellar-canary check --json`, as described in
 /// `docs/json-report-contract.md` — re-renders it in [`ReportArgs::format`],
-/// and prints the result to stdout. Unlike [`run_check`], it never touches the
+/// and prints the result to stdout. When the path is `"-"`, the report is
+/// read from standard input until EOF instead, which chains it onto another
+/// command without touching disk:
+/// `stellar-canary check --format json | stellar-canary report -`.
+/// Standard input is capped at 10 MiB (D-06); a larger stream is rejected
+/// rather than truncated. Unlike [`run_check`], it never touches the
 /// network or re-runs any fixture, so it is safe to call offline, on CI, or
 /// against a report produced by another machine.
 ///
@@ -607,11 +754,14 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 ///
 /// ```text
 /// # Render a stored report as Markdown (the default format).
-/// stellar-canary report --path results.json
+/// stellar-canary report results.json
 ///
 /// # Re-render the same report for a terminal or as JSON.
-/// stellar-canary report --path results.json --format terminal
-/// stellar-canary report --path results.json --format json
+/// stellar-canary report results.json --format terminal
+/// stellar-canary report results.json --format json
+///
+/// # Read the report from standard input instead of a file.
+/// stellar-canary check --format json | stellar-canary report -
 /// ```
 pub fn run_report(args: ReportArgs) -> ExitCode {
     match run_report_inner(args) {
@@ -624,12 +774,20 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 }
 
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
-    let json_text = std::fs::read_to_string(&args.path).map_err(|e| {
-        CanaryError::Configuration(format!(
-            "failed to read report file {}: {e}",
-            args.path.display()
-        ))
-    })?;
+    // `report -` reads the report from standard input until EOF (E-053),
+    // so a report can be piped straight through without a temporary file.
+    let json_text = if args.path == Path::new("-") {
+        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+            CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
+        })?
+    } else {
+        std::fs::read_to_string(&args.path).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "failed to read report file {}: {e}",
+                args.path.display()
+            ))
+        })?
+    };
     let report_input = canary_report::JsonReporter::parse(&json_text)
         .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
 
@@ -664,7 +822,8 @@ mod tests {
     ) -> FixturesArgs {
         FixturesArgs {
             protocol,
-            fixtures_dir: PathBuf::from(fixtures_dir),
+            fixtures_dir: Some(PathBuf::from(fixtures_dir)),
+            project_root: None,
             config: config.map(PathBuf::from),
             format: crate::cli::FixturesFormat::Terminal,
             json: false,
@@ -678,8 +837,97 @@ mod tests {
     ) -> InspectArgs {
         InspectArgs {
             protocol,
-            fixtures_dir: PathBuf::from(fixtures_dir),
+            fixtures_dir: Some(PathBuf::from(fixtures_dir)),
+            project_root: None,
             config: config.map(PathBuf::from),
+        }
+    }
+
+    #[test]
+    fn without_a_flag_the_root_is_the_working_directory_and_inputs_are_untouched() {
+        let root = ProjectRoot::resolve(None).unwrap();
+        assert_eq!(root.path, std::env::current_dir().unwrap());
+        assert!(!root.explicit);
+        assert_eq!(
+            root.resolve_input(Path::new("fixtures")),
+            PathBuf::from("fixtures")
+        );
+    }
+
+    #[test]
+    fn an_explicit_root_is_canonicalized_and_resolves_relative_inputs() {
+        let dir = create_unique_temp_dir();
+        let nested = dir.join("member");
+        std::fs::create_dir_all(&nested).unwrap();
+        // A `..` segment proves the path is canonicalized, not just joined.
+        let requested = nested.join("..").join("member");
+
+        let root = ProjectRoot::resolve(Some(&requested)).unwrap();
+        assert!(root.explicit);
+        assert_eq!(
+            root.path,
+            without_verbatim_prefix(std::fs::canonicalize(&nested).unwrap())
+        );
+        assert!(root.path.is_absolute());
+        assert_eq!(
+            root.resolve_input(Path::new("fixtures")),
+            root.path.join("fixtures")
+        );
+
+        let absolute = std::env::temp_dir().join("elsewhere");
+        assert_eq!(root.resolve_input(&absolute), absolute);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_project_root_that_does_not_exist_is_a_configuration_error() {
+        let missing = create_unique_temp_dir().join("no-such-directory");
+        let err = ProjectRoot::resolve(Some(&missing))
+            .err()
+            .expect("an error");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert_eq!(ExitCode::from(&err), ExitCode::ConfigurationError);
+        assert!(err.to_string().contains("does not exist"), "{err}");
+        assert!(err.to_string().contains("--project-root"), "{err}");
+    }
+
+    #[test]
+    fn a_project_root_that_is_a_file_is_a_configuration_error() {
+        let dir = create_unique_temp_dir();
+        let file = dir.join("not-a-directory");
+        std::fs::write(&file, "x").unwrap();
+        let err = ProjectRoot::resolve(Some(&file)).err().expect("an error");
+        assert!(matches!(err, CanaryError::Configuration(_)));
+        assert!(err.to_string().contains("is not a directory"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn normalized_commit_accepts_only_full_lowercase_hex_object_names() {
+        let sha1 = "0123456789abcdef0123456789abcdef01234567";
+        let sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+        assert_eq!(normalized_commit(sha1).as_deref(), Some(sha1));
+        assert_eq!(normalized_commit(sha256).as_deref(), Some(sha256));
+        assert_eq!(
+            normalized_commit(&format!("{sha1}\n")).as_deref(),
+            Some(sha1)
+        );
+
+        assert_eq!(normalized_commit(""), None);
+        assert_eq!(normalized_commit("unknown"), None);
+        assert_eq!(normalized_commit(&sha1[..39]), None);
+        assert_eq!(normalized_commit(&sha1.to_uppercase()), None);
+        assert_eq!(normalized_commit(&sha1.replace('0', "g")), None);
+        assert_eq!(normalized_commit(&format!("{sha1}0")), None);
+    }
+
+    #[test]
+    fn the_embedded_build_commit_is_unknown_or_a_full_object_name() {
+        // Built from a Git checkout this is `Some`; built from a source
+        // archive it is `None`. Either way it is never a placeholder.
+        if let Some(commit) = build_commit() {
+            assert!(commit.len() == 40 || commit.len() == 64, "{commit:?}");
+            assert!(commit.bytes().all(|b| b.is_ascii_hexdigit()));
         }
     }
 
@@ -853,6 +1101,7 @@ mod tests {
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         })
     }
 

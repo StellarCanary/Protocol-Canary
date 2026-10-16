@@ -143,6 +143,7 @@ mod tests {
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         }
     }
 

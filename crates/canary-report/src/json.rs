@@ -13,7 +13,7 @@ use canary_core::{
     ResultSource, Status, Surface,
 };
 
-use crate::{NetworkSummary, ProjectSummary, ReportInput, SkipSummary};
+use crate::{NetworkSummary, ProjectSummary, ReportInput, RunSummary, SkipSummary};
 
 /// The current JSON report schema version. Bump this, and keep the old
 /// shape available if practical, whenever a change here would not be
@@ -42,6 +42,19 @@ struct JsonReport {
     git: JsonGit,
     #[serde(default)]
     verbose: bool,
+    /// Build provenance of the engine (CF-01 `run`). Absent in reports
+    /// written before the field existed, which means *not recorded*.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    run: Option<JsonRun>,
+}
+
+/// `run` in the report. `toolBuildCommit` is always written when `run` is,
+/// as a string or an explicit `null`, so "recorded, unknown" is
+/// distinguishable from "not recorded" (no `run` at all).
+#[derive(Debug, Serialize, Deserialize)]
+struct JsonRun {
+    #[serde(rename = "toolBuildCommit", default)]
+    tool_build_commit: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -187,6 +200,9 @@ impl From<&ReportInput> for JsonReport {
                 is_dirty: input.git.is_dirty,
             },
             verbose: input.verbose,
+            run: input.run.as_ref().map(|run| JsonRun {
+                tool_build_commit: run.tool_build_commit.clone(),
+            }),
         }
     }
 }
@@ -197,9 +213,11 @@ impl From<&ReportInput> for JsonReport {
 /// The variants separate input this version cannot even decode
 /// ([`JsonReportError::Parse`]) from input that is well-formed but was
 /// produced by a different version of the tool
-/// ([`JsonReportError::UnsupportedSchemaVersion`]) or carries an enum
+/// ([`JsonReportError::UnsupportedSchemaVersion`]), carries an enum
 /// spelling introduced after this version was built
-/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]).
+/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]),
+/// or repeats a `(surface, id)` result identity that CF-01 section 4
+/// requires to be unique ([`JsonReportError::DuplicateResultIdentity`]).
 #[derive(Debug, thiserror::Error)]
 pub enum JsonReportError {
     /// The text is not valid JSON, or it does not match the report
@@ -223,6 +241,17 @@ pub enum JsonReportError {
     /// offending spelling is carried for the error message.
     #[error("unrecognized status {0:?} in JSON report")]
     UnknownStatus(String),
+
+    /// Two entries in `results` share the same `(surface, id)` identity.
+    ///
+    /// CF-01 section 4 requires every check result to be identified by its
+    /// surface and fixture id; a report that repeats one is corrupted or
+    /// manipulated, so it is rejected outright rather than silently
+    /// truncating or merging the conflicting entries. `surface` is the
+    /// spelling as it appears in the document and `id` is the duplicated
+    /// `testId`.
+    #[error("duplicate result identity in JSON report: surface {surface:?}, id {id:?}")]
+    DuplicateResultIdentity { surface: String, id: String },
 }
 
 fn parse_surface(value: &str) -> Result<Surface, JsonReportError> {
@@ -278,10 +307,21 @@ impl TryFrom<JsonReport> for ReportInput {
     type Error = JsonReportError;
 
     fn try_from(report: JsonReport) -> Result<Self, Self::Error> {
+        // CF-01 section 4: each (surface, id) identity may appear at most
+        // once among the check results. The spelling is tracked before any
+        // conversion so a duplicate is rejected with the identity as it
+        // appears in the document.
+        let mut seen_identities = std::collections::HashSet::new();
         let results = report
             .results
             .into_iter()
             .map(|r| {
+                if !seen_identities.insert((r.surface.clone(), r.test_id.clone())) {
+                    return Err(JsonReportError::DuplicateResultIdentity {
+                        surface: r.surface,
+                        id: r.test_id,
+                    });
+                }
                 Ok(CompatibilityResult {
                     test_id: r.test_id,
                     protocol: ProtocolVersion(r.protocol),
@@ -345,6 +385,9 @@ impl TryFrom<JsonReport> for ReportInput {
                 is_dirty: report.git.is_dirty,
             },
             verbose: report.verbose,
+            run: report.run.map(|run| RunSummary {
+                tool_build_commit: run.tool_build_commit,
+            }),
         })
     }
 }
@@ -421,7 +464,80 @@ mod tests {
             decision: PolicyDecision::Pass,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         }
+    }
+
+    fn rendered_value(input: &ReportInput) -> serde_json::Value {
+        serde_json::from_str(&JsonReporter::render(input)).expect("rendered JSON parses")
+    }
+
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn run_is_absent_when_the_build_commit_was_not_recorded() {
+        let value = rendered_value(&input());
+        assert!(value.get("run").is_none());
+    }
+
+    #[test]
+    fn run_records_the_tool_build_commit() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: Some(COMMIT.to_string()),
+        });
+        let value = rendered_value(&report);
+        assert_eq!(value["run"]["toolBuildCommit"], COMMIT);
+        // The additive field must not disturb the fields CF-01 already fixes.
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["toolVersion"], "0.1.0");
+    }
+
+    #[test]
+    fn run_records_an_unknown_commit_as_an_explicit_null() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: None,
+        });
+        let value = rendered_value(&report);
+        let run = value["run"].as_object().expect("run is an object");
+        assert!(run.contains_key("toolBuildCommit"));
+        assert!(run["toolBuildCommit"].is_null());
+        assert!(!JsonReporter::render(&report).contains("unknown"));
+    }
+
+    #[test]
+    fn run_survives_a_render_and_parse_round_trip() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: Some(COMMIT.to_string()),
+        });
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(
+            parsed.run,
+            Some(RunSummary {
+                tool_build_commit: Some(COMMIT.to_string())
+            })
+        );
+
+        report.run = Some(RunSummary::default());
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(parsed.run, Some(RunSummary::default()));
+    }
+
+    #[test]
+    fn a_report_without_run_parses_as_not_recorded() {
+        // A report written before the field existed has no `run` at all.
+        let parsed = JsonReporter::parse(&JsonReporter::render(&input())).unwrap();
+        assert_eq!(parsed.run, None);
+    }
+
+    #[test]
+    fn a_run_object_without_the_commit_key_parses_as_unknown() {
+        let mut value = rendered_value(&input());
+        value["run"] = serde_json::json!({});
+        let parsed = JsonReporter::parse(&value.to_string()).unwrap();
+        assert_eq!(parsed.run, Some(RunSummary::default()));
     }
 
     #[test]

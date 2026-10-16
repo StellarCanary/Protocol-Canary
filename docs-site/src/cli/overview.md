@@ -30,6 +30,18 @@ Options:
 | [`report`](./report.md) | Re-render a previously saved JSON report in another format, without touching the network. |
 | `version` | Print the tool's own version. See [version](./version.md). |
 
+## Project root
+
+`check`, `inspect` and `fixtures` work on the current directory by default.
+`--project-root <PATH>` names a different directory instead, for example one
+member of a monorepo. The path must exist and be a directory; otherwise the
+command exits with code `2`.
+
+With `--project-root`, a relative `--config`, `--fixtures-dir` or `--output`
+is resolved against that directory, not against where the command was run.
+The engine never searches parent directories for a project root, so a
+manifest in a parent directory is never picked up.
+
 Every command accepts `-h`/`--help` for the exact, current flag list. If
 this page and your installed binary's `--help` output ever disagree,
 trust `--help` — it is generated directly from the CLI's own argument

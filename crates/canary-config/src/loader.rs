@@ -1,13 +1,28 @@
 //! Loading and validating `.stellar-canary.toml`.
 
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use canary_core::CanaryError;
 
-use crate::schema::{ConfigFile, SUPPORTED_CONFIG_VERSION};
+use crate::schema::{
+    ConfigFile, LockFile, MAX_LOCK_FILE_BYTES, SUPPORTED_CONFIG_VERSION, SUPPORTED_LOCK_VERSION,
+};
 
 /// The default configuration file name looked for in a project root.
 pub const CONFIG_FILE_NAME: &str = ".stellar-canary.toml";
+
+/// The lockfile name, next to the configuration file in a project root
+/// (CF-03 section 2).
+pub const LOCK_FILE_NAME: &str = ".stellar-canary.lock";
+
+/// The network used when neither the CLI nor `.stellar-canary.toml` names
+/// one (see [`resolve_settings`]).
+pub const DEFAULT_NETWORK: &str = "testnet";
+
+/// The fixture directory used when neither the CLI nor
+/// `.stellar-canary.toml` names one (see [`resolve_settings`]).
+pub const DEFAULT_FIXTURES_DIR: &str = "fixtures";
 
 #[derive(Debug, thiserror::Error)]
 /// Errors returned while reading, parsing, or validating a Canary configuration.
@@ -95,6 +110,294 @@ fn validate(config: &ConfigFile, path: &Path) -> Result<(), ConfigError> {
         });
     }
     Ok(())
+}
+
+/// The CLI values a user explicitly passed, for cascading over
+/// `.stellar-canary.toml` (issue #474).
+///
+/// `None` means "not passed": the configuration file, then the built-in
+/// default, supplies the value. Commands keep `--network` and
+/// `--fixtures-dir` as `Option`s on the argument parser precisely so an
+/// explicit override stays distinguishable from a clap default.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CliOverrides {
+    pub network: Option<String>,
+    pub rpc_url: Option<String>,
+    pub fixtures_dir: Option<PathBuf>,
+}
+
+/// A run's settings after cascading CLI > `.stellar-canary.toml` >
+/// built-in defaults, resolved per key (issue #474).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedSettings {
+    pub network: String,
+    /// `None` when neither source names an endpoint. Whether the resolved
+    /// network then has a built-in default RPC URL is decided by the
+    /// caller — in `canary-cli`, only `testnet` does.
+    pub rpc_url: Option<String>,
+    pub fixtures_dir: PathBuf,
+}
+
+/// Resolves `network`, `rpc_url` and `fixtures_dir` by cascading the
+/// explicitly passed CLI values over the configuration file's settings,
+/// and those over the built-in defaults (`"testnet"`, none, `"fixtures"`).
+///
+/// Precedence is applied per key, so passing only `--network` still lets
+/// `rpc_url` and `fixtures_dir` come from the configuration file. Values
+/// are taken verbatim: an unusable `rpc_url` recorded in the
+/// configuration file does not stop a valid `--rpc-url` from winning, and
+/// is never validated here.
+pub fn resolve_settings(config: &ConfigFile, cli: CliOverrides) -> ResolvedSettings {
+    ResolvedSettings {
+        network: cli
+            .network
+            .or_else(|| config.network.clone())
+            .unwrap_or_else(|| DEFAULT_NETWORK.to_string()),
+        rpc_url: cli.rpc_url.or_else(|| config.rpc_url.clone()),
+        fixtures_dir: cli
+            .fixtures_dir
+            .or_else(|| config.fixtures_dir.clone())
+            .unwrap_or_else(|| PathBuf::from(DEFAULT_FIXTURES_DIR)),
+    }
+}
+
+/// Why a lockfile could not be read, parsed, validated or written.
+///
+/// Every variant is a configuration problem: a lock is a pin supplied by the
+/// project, so a bad one stops the run with exit code 2 before anything
+/// executes, and is never repaired or ignored.
+#[derive(Debug, thiserror::Error)]
+pub enum LockError {
+    #[error("failed to read lockfile {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("lockfile {path} is a symbolic link; a lockfile must be a regular file")]
+    Symlink { path: PathBuf },
+
+    #[error("lockfile {path} is not a regular file")]
+    NotRegularFile { path: PathBuf },
+
+    #[error("lockfile {path} is {size} bytes, which exceeds the {limit} byte limit")]
+    TooLarge {
+        path: PathBuf,
+        size: u64,
+        limit: u64,
+    },
+
+    #[error("lockfile {path} is not valid UTF-8")]
+    NotUtf8 { path: PathBuf },
+
+    #[error("failed to parse lockfile {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: Box<toml::de::Error>,
+    },
+
+    #[error("unsupported lockVersion {found} in {path}: this build supports version {supported}")]
+    UnsupportedVersion {
+        path: PathBuf,
+        found: i64,
+        supported: u32,
+    },
+
+    #[error("invalid lockfile {path}: {reason}")]
+    Invalid { path: PathBuf, reason: String },
+}
+
+impl From<LockError> for CanaryError {
+    fn from(error: LockError) -> Self {
+        CanaryError::Configuration(error.to_string())
+    }
+}
+
+/// Reads and validates the lockfile at `path` (CF-03 sections 2 and 3).
+///
+/// Rejected before any parsing: a symbolic link, anything that is not a
+/// regular file, a file over 64 KiB, and non-UTF-8 content. The size limit is
+/// enforced on the bytes actually read as well as on the reported length, so
+/// a file that grows while it is being read cannot exceed it.
+pub fn load_lock(path: &Path) -> Result<LockFile, LockError> {
+    let read_error = |source| LockError::Read {
+        path: path.to_path_buf(),
+        source,
+    };
+
+    let metadata = std::fs::symlink_metadata(path).map_err(read_error)?;
+    if metadata.file_type().is_symlink() {
+        return Err(LockError::Symlink {
+            path: path.to_path_buf(),
+        });
+    }
+    if !metadata.is_file() {
+        return Err(LockError::NotRegularFile {
+            path: path.to_path_buf(),
+        });
+    }
+    if metadata.len() > MAX_LOCK_FILE_BYTES {
+        return Err(LockError::TooLarge {
+            path: path.to_path_buf(),
+            size: metadata.len(),
+            limit: MAX_LOCK_FILE_BYTES,
+        });
+    }
+
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .map_err(read_error)?
+        .take(MAX_LOCK_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|source| LockError::Read {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    if bytes.len() as u64 > MAX_LOCK_FILE_BYTES {
+        return Err(LockError::TooLarge {
+            path: path.to_path_buf(),
+            size: bytes.len() as u64,
+            limit: MAX_LOCK_FILE_BYTES,
+        });
+    }
+
+    let text = String::from_utf8(bytes).map_err(|_| LockError::NotUtf8 {
+        path: path.to_path_buf(),
+    })?;
+    parse_lock(&text, path)
+}
+
+/// Parses and validates lockfile text. `path` is only used in diagnostics.
+///
+/// `lockVersion` is checked first, on its own, so a file written by a newer
+/// version is reported as an unsupported version rather than as whichever of
+/// its other keys this build happens not to know.
+pub fn parse_lock(raw: &str, path: &Path) -> Result<LockFile, LockError> {
+    if raw.len() as u64 > MAX_LOCK_FILE_BYTES {
+        return Err(LockError::TooLarge {
+            path: path.to_path_buf(),
+            size: raw.len() as u64,
+            limit: MAX_LOCK_FILE_BYTES,
+        });
+    }
+
+    let table: toml::Table = toml::from_str(raw).map_err(|source| LockError::Parse {
+        path: path.to_path_buf(),
+        source: Box::new(source),
+    })?;
+
+    let invalid = |reason: String| LockError::Invalid {
+        path: path.to_path_buf(),
+        reason,
+    };
+    match table.get("lockVersion") {
+        Some(toml::Value::Integer(found)) if *found == i64::from(SUPPORTED_LOCK_VERSION) => {}
+        Some(toml::Value::Integer(found)) => {
+            return Err(LockError::UnsupportedVersion {
+                path: path.to_path_buf(),
+                found: *found,
+                supported: SUPPORTED_LOCK_VERSION,
+            });
+        }
+        Some(other) => {
+            return Err(invalid(format!(
+                "lockVersion must be the integer {SUPPORTED_LOCK_VERSION}, found {}",
+                toml_kind(other)
+            )));
+        }
+        None => return Err(invalid("missing required key \"lockVersion\"".to_string())),
+    }
+
+    let lock: LockFile =
+        toml::Value::Table(table)
+            .try_into()
+            .map_err(|source| LockError::Parse {
+                path: path.to_path_buf(),
+                source: Box::new(source),
+            })?;
+    lock.validate().map_err(invalid)?;
+    Ok(lock)
+}
+
+/// Renders a lock in its one canonical form (CF-03 section 3).
+///
+/// Keys are written in the order of the contract, strings are always
+/// double-quoted, lines end in `\n` with one trailing newline, and nothing
+/// else is emitted: no comments, no header, no trailing whitespace. Identical
+/// inputs give byte-identical output, and `parse_lock` of the output
+/// reproduces the input.
+///
+/// The lock is validated first, so a value that would be rejected on read is
+/// an error here instead of a file nobody can load.
+pub fn serialize_lock(lock: &LockFile) -> Result<String, LockError> {
+    lock.validate().map_err(|reason| LockError::Invalid {
+        path: PathBuf::from(LOCK_FILE_NAME),
+        reason,
+    })?;
+
+    let mut lines = vec![
+        format!("lockVersion = {}", lock.lock_version),
+        String::new(),
+    ];
+    if let Some(tool) = &lock.tool {
+        lines.push("[tool]".to_string());
+        lines.push(format!("version = {}", toml_string(&tool.version)));
+        lines.push(String::new());
+    }
+    let fixtures = &lock.fixtures;
+    lines.push("[fixtures]".to_string());
+    lines.push(format!("protocol = {}", fixtures.protocol));
+    lines.push(format!(
+        "packDigest = {}",
+        toml_string(&fixtures.pack_digest)
+    ));
+    lines.push(format!("registryVersion = {}", fixtures.registry_version));
+    if let Some(source) = fixtures.source {
+        lines.push(format!("source = {}", toml_string(source.as_str())));
+    }
+    if let Some(revision) = &fixtures.revision {
+        lines.push(format!("revision = {}", toml_string(revision)));
+    }
+
+    let mut out = lines.join("\n");
+    out.push('\n');
+    Ok(out)
+}
+
+/// A TOML basic string. Always double-quoted, so the writer never switches
+/// quoting style depending on the content.
+fn toml_string(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for ch in value.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{8}' => out.push_str("\\b"),
+            '\u{c}' => out.push_str("\\f"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04X}", u32::from(c))),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+fn toml_kind(value: &toml::Value) -> &'static str {
+    match value {
+        toml::Value::String(_) => "a string",
+        toml::Value::Integer(_) => "an integer",
+        toml::Value::Float(_) => "a float",
+        toml::Value::Boolean(_) => "a boolean",
+        toml::Value::Datetime(_) => "a datetime",
+        toml::Value::Array(_) => "an array",
+        toml::Value::Table(_) => "a table",
+    }
 }
 
 #[cfg(test)]
@@ -243,8 +546,15 @@ mod tests {
 
     #[test]
     fn rejects_an_unknown_top_level_key() {
-        let (_dir, path) = write_temp_config("version = 1\nprotocol = 28\nnetwork = \"mainnet\"\n");
-        assert!(load(&path).is_err());
+        // `networks` is a misspelling of the now-supported `network` key:
+        // deny_unknown_fields must still reject it outright.
+        let (_dir, path) =
+            write_temp_config("version = 1\nprotocol = 28\nnetworks = \"mainnet\"\n");
+        let err = load(&path).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown field `networks`"),
+            "{err}"
+        );
     }
 
     #[test]

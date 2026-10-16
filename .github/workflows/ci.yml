@@ -79,7 +79,7 @@ jobs:
         run: cargo build --locked
 
       - name: Load the pack and run its offline fixtures
-        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack ${{ matrix.min_xdr }}
+        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack/protocol-28 ${{ matrix.min_xdr }}
 
   audit:
     name: cargo audit

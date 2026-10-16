@@ -494,6 +494,7 @@ mod tests {
             decision: PolicyDecision::Pass,
             git: GitContext::default(),
             verbose: false,
+            verification: Vec::new(),
             run: None,
         }
     }

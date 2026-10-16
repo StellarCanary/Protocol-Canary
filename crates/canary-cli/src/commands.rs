@@ -13,8 +13,9 @@ use canary_report::{
 use canary_rpc::{validate_network_info, HttpRpcClient, RpcClient, RpcError};
 use canary_runner::EnabledSurfaces;
 
-use crate::cli::{CheckArgs, FixturesArgs, InspectArgs, OutputFormat, ReportArgs};
-use crate::network::{default_passphrase, default_rpc_url, parse_network_name};
+use crate::cli::{CheckArgs, FixturesArgs, FixturesFormat, InspectArgs, OutputFormat, ReportArgs};
+use crate::fixtures_json;
+use crate::network::{default_rpc_url, parse_network_name, resolve_passphrase};
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
 
@@ -186,7 +187,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
                     "no RPC URL for network {network_name}: pass --rpc-url or set rpc_url in .stellar-canary.toml (no built-in default)"
                 ))
             })?;
-        let passphrase = default_passphrase(&network_name).unwrap_or("").to_string();
+        let passphrase = resolve_passphrase(&network_name, args.network_passphrase.as_deref());
 
         // Fetch the endpoint's network identity and compare it against
         // what this run assumed (see `canary_rpc::validate_network_info`,
@@ -196,14 +197,19 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         //   (rendered as "protocol not observed"); it does not block the
         //   run — individual RPC/Soroban fixtures still report the outage
         //   as execution errors.
-        // - A passphrase mismatch means `--network` and `--rpc-url` refer
-        //   to different networks: abort as a configuration error rather
+        // - A passphrase mismatch means `--network` (or an explicit
+        //   `--network-passphrase`) and `--rpc-url` refer to different
+        //   networks: abort as a configuration error rather
         //   than attribute results to the wrong network.
         // - A protocol mismatch is a warning, not a failure: running a
         //   target-protocol run against a not-yet-upgraded network is a
         //   core upgrade-rehearsal use case, but it must be visible
         //   rather than only an annotation in the report.
-        let client = HttpRpcClient::new(rpc_url.clone());
+        // In --verbose mode every attempt of this probe (and, through
+        // `RunOptions`, of every fixture call) is logged to stderr with
+        // its attempt number and duration; the endpoint URL is scrubbed
+        // inside the client, so credentials never reach the log.
+        let client = HttpRpcClient::new(rpc_url.clone()).with_verbose(args.verbose);
         let (observed_protocol, network_error) = match client.get_network().await {
             Ok(info) => {
                 if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
@@ -306,6 +312,25 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     let decision = DefaultPolicyEvaluator.evaluate(&results, &policy);
     let exit_code = canary_core::exit_code_for_run(&results, decision);
 
+    // The fixtures' own CF-04 evidence, so the terminal report can show
+    // which results are backed by a verification record. A fixture with
+    // no record is simply absent here, which reporters render as
+    // `[unverified]`.
+    let verification: Vec<canary_report::VerificationSummary> = loaded_fixtures
+        .iter()
+        .filter_map(|fixture| {
+            fixture
+                .verification
+                .as_ref()
+                .map(|record| canary_report::VerificationSummary {
+                    fixture_id: fixture.metadata.id.clone(),
+                    method: record.method.as_str().to_string(),
+                    outcome: record.outcome.as_str().to_string(),
+                    checked_at: record.checked_at.clone(),
+                })
+        })
+        .collect();
+
     let report_input = ReportInput {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         target_protocol,
@@ -324,6 +349,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
                 reason: s.reason.clone(),
             })
             .collect(),
+        verification,
         decision,
         git,
         verbose: args.verbose,
@@ -650,30 +676,48 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     };
     let store = canary_fixtures::validate(&loaded_fixtures)?;
 
-    println!("Protocol {protocol} fixtures");
-    println!();
+    let format = if args.json {
+        FixturesFormat::Json
+    } else {
+        args.format
+    };
+    match format {
+        FixturesFormat::Terminal => {
+            println!("Protocol {protocol} fixtures");
+            println!();
 
-    let target = canary_core::ProtocolVersion(protocol);
-    let mut any = false;
-    for surface in canary_report::SURFACE_ORDER {
-        let ids: Vec<&str> = store
-            .for_protocol(target)
-            .filter(|f| f.surface == surface)
-            .map(|f| f.id.as_str())
-            .collect();
-        if ids.is_empty() {
-            continue;
-        }
-        any = true;
-        println!("{}", canary_report::surface_heading(surface));
-        for id in ids {
-            println!("  {id}");
-        }
-        println!();
-    }
+            let target = canary_core::ProtocolVersion(protocol);
+            let mut any = false;
+            for surface in canary_report::SURFACE_ORDER {
+                let ids: Vec<&str> = store
+                    .for_protocol(target)
+                    .filter(|f| f.surface == surface)
+                    .map(|f| f.id.as_str())
+                    .collect();
+                if ids.is_empty() {
+                    continue;
+                }
+                any = true;
+                println!("{}", canary_report::surface_heading(surface));
+                for id in ids {
+                    println!("  {id}");
+                }
+                println!();
+            }
 
-    if !any {
-        println!("(no fixtures found in {})", fixtures_dir.display());
+            if !any {
+                println!("(no fixtures found in {})", fixtures_dir.display());
+            }
+        }
+        FixturesFormat::Json => {
+            let inventory = fixtures_json::build(
+                protocol,
+                fixtures_dir.is_dir(),
+                &fixtures_dir,
+                &loaded_fixtures,
+            );
+            println!("{}", fixtures_json::render(&inventory));
+        }
     }
 
     Ok(ExitCode::Pass)
@@ -684,7 +728,12 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 /// Reads the report file named by [`ReportArgs::path`] — the JSON written by
 /// `stellar-canary check --json`, as described in
 /// `docs/json-report-contract.md` — re-renders it in [`ReportArgs::format`],
-/// and prints the result to stdout. Unlike [`run_check`], it never touches the
+/// and prints the result to stdout. When the path is `"-"`, the report is
+/// read from standard input until EOF instead, which chains it onto another
+/// command without touching disk:
+/// `stellar-canary check --format json | stellar-canary report -`.
+/// Standard input is capped at 10 MiB (D-06); a larger stream is rejected
+/// rather than truncated. Unlike [`run_check`], it never touches the
 /// network or re-runs any fixture, so it is safe to call offline, on CI, or
 /// against a report produced by another machine.
 ///
@@ -705,11 +754,14 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
 ///
 /// ```text
 /// # Render a stored report as Markdown (the default format).
-/// stellar-canary report --path results.json
+/// stellar-canary report results.json
 ///
 /// # Re-render the same report for a terminal or as JSON.
-/// stellar-canary report --path results.json --format terminal
-/// stellar-canary report --path results.json --format json
+/// stellar-canary report results.json --format terminal
+/// stellar-canary report results.json --format json
+///
+/// # Read the report from standard input instead of a file.
+/// stellar-canary check --format json | stellar-canary report -
 /// ```
 pub fn run_report(args: ReportArgs) -> ExitCode {
     match run_report_inner(args) {
@@ -722,12 +774,20 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 }
 
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
-    let json_text = std::fs::read_to_string(&args.path).map_err(|e| {
-        CanaryError::Configuration(format!(
-            "failed to read report file {}: {e}",
-            args.path.display()
-        ))
-    })?;
+    // `report -` reads the report from standard input until EOF (E-053),
+    // so a report can be piped straight through without a temporary file.
+    let json_text = if args.path == Path::new("-") {
+        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+            CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
+        })?
+    } else {
+        std::fs::read_to_string(&args.path).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "failed to read report file {}: {e}",
+                args.path.display()
+            ))
+        })?
+    };
     let report_input = canary_report::JsonReporter::parse(&json_text)
         .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
 
@@ -765,6 +825,8 @@ mod tests {
             fixtures_dir: Some(PathBuf::from(fixtures_dir)),
             project_root: None,
             config: config.map(PathBuf::from),
+            format: crate::cli::FixturesFormat::Terminal,
+            json: false,
         }
     }
 
@@ -1033,6 +1095,9 @@ mod tests {
             network: None,
             results,
             skipped: Vec::new(),
+            // Verification evidence lives with the fixture pack, not
+            // with a stored run.
+            verification: Vec::new(),
             decision,
             git: GitContext::default(),
             verbose: false,

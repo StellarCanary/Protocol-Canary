@@ -29,6 +29,11 @@ struct RawFixtureFile {
     input_file: Option<String>,
     #[serde(default)]
     expected_file: Option<String>,
+    /// The CF-04 verification evidence table. Declared here so it is
+    /// lifted out of the surface-specific `body`: a surface runner never
+    /// sees it (and so never rejects it as an unknown body key).
+    #[serde(default)]
+    verification: Option<toml::Value>,
     #[serde(flatten)]
     body: toml::Value,
 }
@@ -48,6 +53,10 @@ pub struct LoadedFixture {
     /// Everything in the fixture file other than the common metadata keys,
     /// for the surface-specific runner to interpret.
     pub body: toml::Value,
+    /// The fixture's CF-04 verification evidence record, if it has one.
+    /// A fixture without a record is unverified, which is the unknown
+    /// state.
+    pub verification: Option<crate::verification::VerificationRecord>,
 }
 
 /// Parses one fixture file at `path`.
@@ -208,6 +217,10 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
         input_file.as_deref(),
         expected_file.as_deref(),
     );
+    let verification = match raw.verification {
+        None => None,
+        Some(table) => Some(parse_verification(table, &raw.id, path)?),
+    };
 
     Ok(LoadedFixture {
         metadata: FixtureMetadata {
@@ -224,7 +237,31 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
         input_file,
         expected_file,
         body: raw.body,
+        verification,
     })
+}
+
+/// Parses the optional `[verification]` table into a CF-04 record.
+///
+/// The table is read strictly — an unknown key, a missing required key or
+/// a value that breaks a CF-04 section 3 rule is an invalid fixture
+/// (exit 4), never a silently dropped verification claim.
+fn parse_verification(
+    table: toml::Value,
+    fixture_id: &str,
+    source_path: &Path,
+) -> Result<crate::verification::VerificationRecord, FixtureError> {
+    let invalid = |reason: String| FixtureError::InvalidVerification {
+        source_path: source_path.to_path_buf(),
+        reason,
+    };
+    let record: crate::verification::VerificationRecord = table
+        .try_into()
+        .map_err(|err: toml::de::Error| invalid(err.to_string()))?;
+    record
+        .check(fixture_id)
+        .map_err(|reason| invalid(reason.to_string()))?;
+    Ok(record)
 }
 
 #[cfg(test)]
@@ -316,6 +353,118 @@ mod tests {
         );
         let err = parse_fixture_file(&path).unwrap_err();
         assert!(matches!(err, FixtureError::Parse { .. }));
+    }
+
+    const VERIFICATION_TOML: &str = r#"
+        [verification]
+        verificationVersion = 1
+        fixtureId = "p28-verify"
+        method = "live-read-only"
+        checkedAt = "2026-09-28T07:20:00Z"
+        outcome = "matched"
+
+        [verification.network]
+        name = "testnet"
+        passphrase = "Test SDF Network ; September 2015"
+        observedProtocol = 28
+        "#;
+
+    fn verified_fixture(extra: &str) -> String {
+        format!(
+            "id = \"p28-verify\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n{VERIFICATION_TOML}\n{extra}\n"
+        )
+    }
+
+    #[test]
+    fn parses_a_verification_table_into_a_record() {
+        let dir = crate::test_support::temp_dir("manifest-verification");
+        let path = write(&dir.path, "fixture.toml", &verified_fixture(""));
+
+        let loaded = parse_fixture_file(&path).expect("parses");
+        let record = loaded.verification.expect("a verification record");
+        assert_eq!(
+            record.method,
+            crate::verification::VerificationMethod::LiveReadOnly
+        );
+        assert_eq!(
+            record.outcome,
+            crate::verification::VerificationOutcome::Matched
+        );
+        assert_eq!(record.checked_at, "2026-09-28T07:20:00Z");
+        assert_eq!(record.fixture_id, "p28-verify");
+        assert_eq!(
+            record.network.as_ref().map(|n| n.observed_protocol),
+            Some(28)
+        );
+    }
+
+    #[test]
+    fn the_verification_table_is_lifted_out_of_the_surface_body() {
+        // A surface runner must never see `[verification]`: it would
+        // reject it as an unknown body key.
+        let dir = crate::test_support::temp_dir("manifest-verification-body");
+        let path = write(&dir.path, "fixture.toml", &verified_fixture(""));
+        let loaded = parse_fixture_file(&path).expect("parses");
+        assert!(loaded
+            .body
+            .as_table()
+            .unwrap()
+            .get("verification")
+            .is_none());
+        assert!(loaded.body.get("method").is_some());
+    }
+
+    #[test]
+    fn a_fixture_without_a_verification_table_is_unverified() {
+        let dir = crate::test_support::temp_dir("manifest-verification-none");
+        let path = write(
+            &dir.path,
+            "fixture.toml",
+            "id = \"p28-plain\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n",
+        );
+        let loaded = parse_fixture_file(&path).expect("parses");
+        assert!(loaded.verification.is_none());
+    }
+
+    #[test]
+    fn a_verification_table_for_another_fixture_id_is_rejected() {
+        let dir = crate::test_support::temp_dir("manifest-verification-mismatch");
+        let body = verified_fixture("").replace("p28-verify\"\nprotocol", "p28-other\"\nprotocol");
+        let path = write(&dir.path, "fixture.toml", &body);
+        let err = parse_fixture_file(&path).unwrap_err();
+        assert!(matches!(err, FixtureError::InvalidVerification { .. }));
+        assert!(
+            err.to_string().contains("fixtureId does not match"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_live_verification_record_without_a_network_is_rejected() {
+        let dir = crate::test_support::temp_dir("manifest-verification-live");
+        let body = verified_fixture("").replace(
+            "name = \"testnet\"\npassphrase",
+            "name = \"testnetx\"\npassphrase",
+        );
+        // Drop the whole network table instead of renaming it.
+        let body = &body[..body.find("[verification.network]").unwrap()];
+        let path = write(&dir.path, "fixture.toml", body);
+        let err = parse_fixture_file(&path).unwrap_err();
+        assert!(err.to_string().contains("network is required"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_key_in_the_verification_table_is_rejected() {
+        let dir = crate::test_support::temp_dir("manifest-verification-unknown");
+        let path = write(
+            &dir.path,
+            "fixture.toml",
+            &verified_fixture("[verification]\nmethodx = \"typo\""),
+        );
+        // The second `[verification]` header re-opens the table, adding
+        // the typo key to the one above.
+        let err = parse_fixture_file(&path).unwrap_err();
+        assert!(err.to_string().contains("verification"), "{err}");
     }
 
     const DIGEST_FIXTURE: &str = "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ninput_file = \"in.bin\"\n";

@@ -38,6 +38,7 @@ fn report_with(results: Vec<CompatibilityResult>, skipped: Vec<SkipSummary>) -> 
         decision: PolicyDecision::Pass,
         git: GitContext::default(),
         verbose: false,
+        verification: Vec::new(),
         run: None,
     }
 }

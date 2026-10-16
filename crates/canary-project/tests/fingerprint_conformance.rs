@@ -408,7 +408,15 @@ fn a_non_utf8_artifact_path_is_counted_not_hashed() {
     odd.write("Cargo.toml", CARGO_MANIFEST);
     odd.write("contract.wasm", b"\0asm\x01\x00\x00\x00");
     let odd_name = OsString::from_vec(vec![0xFF, b'.', b'w', b'a', b's', b'm']);
-    std::fs::write(odd.path.join(odd_name), b"\0asm\x01\x00\x00\x00").unwrap();
+    // Not every filesystem can hold such a name: APFS (macOS) rejects
+    // one at creation with `EILSEQ` (illegal byte sequence). Where the
+    // name cannot exist there is no behaviour to observe, so the test
+    // stops here; on filesystems that accept it (CI's Linux runners) it
+    // runs to the assertions below.
+    if let Err(error) = std::fs::write(odd.path.join(&odd_name), b"\0asm\x01\x00\x00\x00") {
+        eprintln!("skipping: this filesystem cannot store a non-UTF-8 file name: {error}");
+        return;
+    }
 
     // The non-UTF-8 artifact cannot be normalized: it is counted, which
     // still changes the digest, but it is never hashed under a lossy

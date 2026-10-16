@@ -12,6 +12,7 @@ Options:
       --protocol <PROTOCOL>          Target protocol version (overrides configuration)
       --network <NETWORK>            Network to run live checks against [default: testnet]
       --rpc-url <RPC_URL>            RPC endpoint to use for live checks
+      --network-passphrase <PASSPHRASE>  Network passphrase used to verify the endpoint's identity and to sign transactions for this run (empty values are rejected)
       --project-root <PATH>          Directory to treat as the project root (default: the current directory)
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
       --rpc-timeout <RPC_TIMEOUT>    Request timeout for the RPC client in seconds [default: 10]
@@ -54,7 +55,7 @@ fails with exit code `2` (see [No applicable fixtures](#no-applicable-fixtures))
 - `--format markdown` — a Markdown table, suitable for a PR comment or job
   summary.
 
-> **Note on verbosity:** The `--quiet` flag only affects the `terminal` output format, condensing the output to a single `Status:` line instead of a full report. The `--verbose` flag affects the detail included: it adds skip reasons to both `markdown` and `terminal` outputs, and is passed through into the `json` report's `verbose` field.
+> **Note on verbosity:** The `--quiet` flag only affects the `terminal` output format, condensing the output to a single `Status:` line instead of a full report. The `--verbose` flag affects the detail included: it adds skip reasons to both `markdown` and `terminal` outputs, and is passed through into the `json` report's `verbose` field. `--verbose` also logs every RPC attempt to stderr as one line — e.g. `[RPC attempt 1/3: 124ms] getNetwork <url>` — with basic-auth userinfo masked as `***:***@` and query values masked as `***` before printing (CF-08), so endpoint credentials never reach a CI log. Without `--verbose` no attempt lines are emitted at all.
 
 The report is printed to stdout **regardless of exit code**, including on
 a compatibility failure — a caller does not need to inspect stderr to get
@@ -112,6 +113,17 @@ Not every check requires the network:
   observing a not-yet-upgraded network while rehearsing the next protocol
   is a legitimate use case, but it must be visible rather than only an
   `(observed protocol N)` annotation in the report.
+- **Custom networks are verified with `--network-passphrase`.**
+  `testnet`, `mainnet` and `futurenet` have published passphrases that are
+  used automatically; a custom `--network` name has none, so the
+  passphrase comparison is skipped unless you supply one with
+  `--network-passphrase <PASSPHRASE>`. The flag also *overrides* the
+  well-known default — for example when you deliberately point
+  `--network testnet` at a private node that uses a different passphrase.
+  An empty value is rejected as an argument validation error (exit `2`),
+  because an empty passphrase would silently disable the very comparison
+  the flag exists to enable. The same value is the one a signing consumer
+  would use for this run.
 
 Disable a surface in `.stellar-canary.toml` (`[tests] rpc = false` /
 `soroban = false`) to run fully offline.

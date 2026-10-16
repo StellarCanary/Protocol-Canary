@@ -44,6 +44,37 @@ pub struct NetworkSummary {
     pub error: Option<String>,
 }
 
+/// What is known about a fixture's CF-04 verification evidence, for
+/// display. Verification is a separate, dated, attributed event — a
+/// passing run is not a verification (CF-04 section 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationSummary {
+    pub fixture_id: String,
+    /// The CF-04 method: `structural`, `source-checked`, `live-read-only`
+    /// or `live-simulation`.
+    pub method: String,
+    /// `matched` or `mismatched`.
+    pub outcome: String,
+    /// The RFC 3339 UTC instant the record was checked at.
+    pub checked_at: String,
+}
+
+impl VerificationSummary {
+    /// The badge shown next to a result, e.g. `[verified: live-simulation]`.
+    ///
+    /// A `matched` record is `[verified: <method>]`; a `mismatched`
+    /// record is reported as unverified and names its method, because a
+    /// mismatched record is retained precisely to explain why the
+    /// fixture is not trusted (CF-04 section 3).
+    pub fn badge(&self) -> String {
+        if self.outcome == "matched" {
+            format!("[verified: {}]", self.method)
+        } else {
+            format!("[unverified: {} record {}]", self.method, self.outcome)
+        }
+    }
+}
+
 /// Facts about the engine run that produced a report (CF-01 `run`).
 ///
 /// Deliberately limited to values that are the same for every run of one
@@ -69,6 +100,11 @@ pub struct ReportInput {
     pub network: Option<NetworkSummary>,
     pub results: Vec<CompatibilityResult>,
     pub skipped: Vec<SkipSummary>,
+    /// Verification evidence for the fixtures of this run, by fixture
+    /// id. A fixture missing from this list is unverified, which is the
+    /// unknown state; the terminal reporter shows that rather than
+    /// omitting it.
+    pub verification: Vec<VerificationSummary>,
     pub decision: PolicyDecision,
     pub git: GitContext,
     pub verbose: bool,
@@ -79,6 +115,26 @@ pub struct ReportInput {
 }
 
 impl ReportInput {
+    /// The verification evidence recorded for `fixture_id`, if any.
+    pub fn verification_for(&self, fixture_id: &str) -> Option<&VerificationSummary> {
+        self.verification
+            .iter()
+            .find(|record| record.fixture_id == fixture_id)
+    }
+
+    /// The verification badge for one result: the fixture's recorded
+    /// evidence, or `[unverified]` when there is none. Never empty — the
+    /// unknown state is shown, not hidden.
+    pub fn verification_badge(&self, result: &CompatibilityResult) -> String {
+        match result
+            .fixture_id
+            .as_deref()
+            .and_then(|id| self.verification_for(id))
+        {
+            Some(record) => record.badge(),
+            None => "[unverified]".to_string(),
+        }
+    }
     /// How many results were replayed from the local result cache instead of
     /// being executed in this run.
     pub fn cached_count(&self) -> usize {
@@ -142,6 +198,7 @@ impl ReportInput {
     ///     network: None,
     ///     results: vec![xdr_pass.clone(), rpc_pass, xdr_pass],
     ///     skipped: Vec::new(),
+    ///     verification: Vec::new(),
     ///     decision: canary_core::PolicyDecision::Pass,
     ///     git: canary_core::GitContext::default(),
     ///     verbose: false,
@@ -228,6 +285,71 @@ pub fn surface_heading(surface: Surface) -> &'static str {
     }
 }
 
+/// Maximum size, in bytes, of report JSON accepted from a stream such as
+/// standard input (10 MiB — the report input cap approved under D-06 in
+/// `docs/contracts/cf-05-report-comparison.md`).
+pub const MAX_REPORT_JSON_BYTES: usize = 10 * 1024 * 1024;
+
+/// Errors produced while reading report JSON from a stream.
+#[derive(Debug, thiserror::Error)]
+pub enum ReportReadError {
+    /// The stream delivered more than [`MAX_REPORT_JSON_BYTES`] bytes.
+    /// Reading stops at the limit instead of truncating the input, so the
+    /// caller can never mistake a partial report for a complete one.
+    #[error("report input exceeds the 10 MiB limit")]
+    InputTooLarge,
+
+    /// The stream could not be read to EOF, or its bytes were not UTF-8.
+    #[error("failed to read report input: {0}")]
+    Io(#[from] std::io::Error),
+}
+
+/// Reads report JSON from `reader` until EOF, enforcing
+/// [`MAX_REPORT_JSON_BYTES`].
+///
+/// The limit is checked *before* buffering the overflowing chunk, so no
+/// more than [`MAX_REPORT_JSON_BYTES`] bytes are ever held in memory and
+/// an oversized stream fails fast with [`ReportReadError::InputTooLarge`]
+/// instead of being accepted or silently cut short. The returned text is
+/// exactly the bytes read (as UTF-8), ready for
+/// [`JsonReporter::parse`].
+///
+/// # Examples
+///
+/// ```
+/// use canary_report::read_report_json;
+///
+/// let json = read_report_json(&b"{\"a\": 1}"[..]).unwrap();
+/// assert_eq!(json, "{\"a\": 1}");
+///
+/// let oversized = vec![b' '; 10 * 1024 * 1024 + 1];
+/// let err = read_report_json(&oversized[..]).unwrap_err();
+/// assert!(matches!(err, canary_report::ReportReadError::InputTooLarge));
+/// ```
+pub fn read_report_json<R: std::io::Read>(mut reader: R) -> Result<String, ReportReadError> {
+    const CHUNK_BYTES: usize = 64 * 1024;
+
+    let mut bytes: Vec<u8> = Vec::new();
+    let mut chunk = [0_u8; CHUNK_BYTES];
+    loop {
+        let read = reader.read(&mut chunk)?;
+        if read == 0 {
+            break;
+        }
+        if bytes.len() + read > MAX_REPORT_JSON_BYTES {
+            return Err(ReportReadError::InputTooLarge);
+        }
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+
+    String::from_utf8(bytes).map_err(|err| {
+        ReportReadError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("input is not valid UTF-8: {err}"),
+        ))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use canary_core::{ProjectType, Status, Surface};
@@ -259,6 +381,7 @@ mod tests {
             network: None,
             results,
             skipped: Vec::new(),
+            verification: Vec::new(),
             decision,
             git: GitContext::default(),
             verbose: false,
@@ -318,5 +441,60 @@ mod tests {
         assert_eq!(xdr.len(), 1);
         assert_eq!(rpc.len(), 1);
         assert_eq!(rpc[0].surface, Surface::Rpc);
+    }
+
+    #[test]
+    fn read_report_json_reads_a_stream_to_eof() {
+        // Larger than one internal read chunk, so this exercises the loop
+        // that stitches chunks together rather than a single-read path.
+        let mut payload = String::from("{\"schemaVersion\":1");
+        payload.push_str(&" ".repeat(200_000));
+        payload.push('}');
+
+        let read = read_report_json(payload.as_bytes()).unwrap();
+        assert_eq!(read, payload);
+    }
+
+    #[test]
+    fn read_report_json_accepts_input_of_exactly_the_limit() {
+        let exact = vec![b' '; MAX_REPORT_JSON_BYTES];
+        let read = read_report_json(&exact[..]).unwrap();
+        assert_eq!(read.len(), MAX_REPORT_JSON_BYTES);
+    }
+
+    #[test]
+    fn read_report_json_rejects_input_larger_than_the_limit() {
+        // One byte past the D-06 cap must abort with InputTooLarge rather
+        // than being buffered whole or silently truncated.
+        let oversized = vec![b' '; MAX_REPORT_JSON_BYTES + 1];
+        let err = read_report_json(&oversized[..]).unwrap_err();
+        assert!(
+            matches!(err, ReportReadError::InputTooLarge),
+            "unexpected error: {err}"
+        );
+        assert!(err.to_string().contains("10 MiB"), "{err}");
+    }
+
+    #[test]
+    fn read_report_json_rejects_non_utf8_input() {
+        let err = read_report_json(&[0xff, 0xfe, 0xfd][..]).unwrap_err();
+        assert!(matches!(err, ReportReadError::Io(_)), "unexpected: {err}");
+        assert!(err.to_string().contains("UTF-8"), "{err}");
+    }
+
+    #[test]
+    fn read_report_json_propagates_reader_failures() {
+        struct Failing;
+        impl std::io::Read for Failing {
+            fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::ConnectionReset,
+                    "reset",
+                ))
+            }
+        }
+
+        let err = read_report_json(Failing).unwrap_err();
+        assert!(matches!(err, ReportReadError::Io(_)), "unexpected: {err}");
     }
 }

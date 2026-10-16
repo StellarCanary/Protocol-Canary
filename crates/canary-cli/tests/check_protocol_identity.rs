@@ -214,6 +214,10 @@ fn a_fixture_for_another_protocol_is_skipped_with_both_protocols_named() {
     assert_eq!(report["counts"]["skipped"], 1);
     let skip = &report["skipped"][0];
     assert_eq!(skip["fixtureId"], "p29-y");
+    assert_eq!(
+        skip["code"], "UNSUPPORTED_PROTOCOL",
+        "a skip carries its machine-readable code"
+    );
     let reason = skip["reason"].as_str().unwrap();
     assert!(
         reason.contains("targets protocol 29") && reason.contains("this run targets protocol 28"),

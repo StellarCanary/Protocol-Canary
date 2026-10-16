@@ -5,7 +5,8 @@
 //! malformed document fails the suite rather than a lucky `contains`.
 
 use canary_core::{
-    CompatibilityResult, GitContext, PolicyDecision, ProjectType, ProtocolVersion, Status, Surface,
+    CompatibilityResult, GitContext, PolicyDecision, ProjectType, ProtocolVersion, SkipCode,
+    Status, Surface,
 };
 use canary_report::{JUnitReporter, ProjectSummary, ReportInput, SkipSummary, SURFACE_ORDER};
 use quick_xml::events::Event;
@@ -190,11 +191,13 @@ fn counts_accurately_reflect_tests_failures_errors_and_skips() {
                 fixture_id: "p28-rpc-1".into(),
                 surface: Surface::Rpc,
                 reason: "surface disabled".into(),
+                code: SkipCode::SurfaceDisabled,
             },
             SkipSummary {
                 fixture_id: "p28-soroban-1".into(),
                 surface: Surface::Soroban,
                 reason: "protocol mismatch".into(),
+                code: SkipCode::UnsupportedProtocol,
             },
         ],
     ));
@@ -283,6 +286,7 @@ fn skipped_fixtures_render_as_skipped_testcases_with_their_reason() {
             fixture_id: "p28-rpc-1".into(),
             surface: Surface::Rpc,
             reason: "requires network access; skipped because --offline was given".into(),
+            code: SkipCode::Unknown,
         }],
     ));
 
@@ -319,6 +323,7 @@ fn special_characters_in_diagnostics_are_escaped_and_still_parse() {
             fixture_id: "p28-rpc-1".into(),
             surface: Surface::Rpc,
             reason: "a < b & c > d \"e\"".into(),
+            code: SkipCode::Unknown,
         }],
     ));
 
@@ -354,6 +359,7 @@ fn output_is_deterministic_for_the_same_input() {
             fixture_id: "p28-rpc-1".into(),
             surface: Surface::Rpc,
             reason: "r".into(),
+            code: SkipCode::Unknown,
         }],
     );
     assert_eq!(

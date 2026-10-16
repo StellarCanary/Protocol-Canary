@@ -12,6 +12,7 @@ pub mod engine;
 pub mod errors;
 pub mod model;
 pub mod policy;
+pub mod report;
 
 pub use cache::{CacheKey, CachePolicy, CacheStore};
 pub use digest::sha256_hex;
@@ -25,3 +26,4 @@ pub use model::{
 pub use policy::{
     exit_code_for_run, DefaultPolicyEvaluator, Policy, PolicyDecision, PolicyEvaluator,
 };
+pub use report::SkipCode;

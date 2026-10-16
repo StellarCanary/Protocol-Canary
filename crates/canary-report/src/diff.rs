@@ -694,6 +694,7 @@ mod tests {
                 fixture_id: "a".into(),
                 surface: Surface::Rpc,
                 reason: "r".into(),
+                code: canary_core::SkipCode::Unknown,
             }],
         );
         assert!(compare(&both, &one("a", Status::Pass), CompareOptions::default()).is_err());
@@ -756,6 +757,7 @@ mod tests {
                 fixture_id: "a".into(),
                 surface: Surface::Rpc,
                 reason: "no network".into(),
+                code: canary_core::SkipCode::Unknown,
             }],
         );
         let cmp = compare(&one("a", Status::Fail), &skipped, CompareOptions::default()).unwrap();

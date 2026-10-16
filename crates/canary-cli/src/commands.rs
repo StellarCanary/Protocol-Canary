@@ -351,6 +351,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
                 fixture_id: s.fixture_id.clone(),
                 surface: s.surface,
                 reason: s.reason.clone(),
+                code: s.cause.code(),
             })
             .collect(),
         verification,

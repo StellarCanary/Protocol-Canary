@@ -1,6 +1,6 @@
 //! Deciding which loaded fixtures apply to a run, and why others don't.
 
-use canary_core::{CanaryError, Capability, ProjectContext, ProtocolVersion, Surface};
+use canary_core::{CanaryError, Capability, ProjectContext, ProtocolVersion, SkipCode, Surface};
 use canary_fixtures::LoadedFixture;
 use canary_rpc::RpcFixture;
 use canary_soroban::SorobanFixture;
@@ -37,12 +37,15 @@ pub enum SkipCause {
 }
 
 impl SkipCause {
-    /// Stable lowercase identifier, for example `protocol-mismatch`.
-    pub fn code(self) -> &'static str {
+    /// The stable machine-readable reason this fixture was skipped,
+    /// carried into the report as `skipped[].code` (CF-01).
+    ///
+    /// The free-form `reason` stays prose; this is what tooling keys off.
+    pub fn code(self) -> SkipCode {
         match self {
-            SkipCause::ProtocolMismatch => "protocol-mismatch",
-            SkipCause::SurfaceDisabled => "surface-disabled",
-            SkipCause::MissingCapability => "missing-capability",
+            SkipCause::ProtocolMismatch => SkipCode::UnsupportedProtocol,
+            SkipCause::SurfaceDisabled => SkipCode::SurfaceDisabled,
+            SkipCause::MissingCapability => SkipCode::MissingCapability,
         }
     }
 }
@@ -378,8 +381,32 @@ mod tests {
         };
         let plan = build_plan(&fixtures, ProtocolVersion(28), off, &project()).unwrap();
         let codes: Vec<_> = plan.skipped.iter().map(|s| s.cause.code()).collect();
-        assert_eq!(codes, ["protocol-mismatch", "surface-disabled"]);
-        assert_eq!(SkipCause::MissingCapability.code(), "missing-capability");
+        assert_eq!(
+            codes,
+            [SkipCode::UnsupportedProtocol, SkipCode::SurfaceDisabled]
+        );
+        assert_eq!(
+            SkipCause::MissingCapability.code(),
+            SkipCode::MissingCapability
+        );
+    }
+
+    #[test]
+    fn every_skip_cause_maps_to_a_standard_report_code() {
+        // The three causes the planner can produce; NETWORK_MISMATCH and
+        // UNKNOWN are reserved/derived and never produced by a cause.
+        assert_eq!(
+            SkipCause::ProtocolMismatch.code().as_str(),
+            "UNSUPPORTED_PROTOCOL"
+        );
+        assert_eq!(
+            SkipCause::SurfaceDisabled.code().as_str(),
+            "SURFACE_DISABLED"
+        );
+        assert_eq!(
+            SkipCause::MissingCapability.code().as_str(),
+            "MISSING_CAPABILITY"
+        );
     }
 
     #[test]

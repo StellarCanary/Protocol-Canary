@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use canary_core::{
     CompatibilityResult, GitContext, NetworkName, PolicyDecision, ProjectType, ProtocolVersion,
-    ResultSource, Status, Surface,
+    ResultSource, SkipCode, Status, Surface,
 };
 
 use crate::{NetworkSummary, ProjectSummary, ReportInput, RunSummary, SkipSummary};
@@ -100,6 +100,13 @@ struct JsonSkip {
     fixture_id: String,
     surface: String,
     reason: String,
+    /// The stable machine-readable skip code (CF-01). Always written by
+    /// this version. It is absent only in reports written before the field
+    /// existed, and an unrecognized spelling reads back as
+    /// [`SkipCode::Unknown`] — like `results[].source`, a value this build
+    /// does not know is tolerated rather than rejected.
+    #[serde(default)]
+    code: String,
 }
 
 /// Aggregate counts over `results` (never over `skipped`, which is
@@ -192,6 +199,7 @@ impl From<&ReportInput> for JsonReport {
                     fixture_id: s.fixture_id.clone(),
                     surface: s.surface.to_string(),
                     reason: s.reason.clone(),
+                    code: s.code.as_str().to_string(),
                 })
                 .collect(),
             git: JsonGit {
@@ -344,6 +352,10 @@ impl TryFrom<JsonReport> for ReportInput {
                     fixture_id: s.fixture_id,
                     surface: parse_surface(&s.surface)?,
                     reason: s.reason,
+                    // An absent or unrecognized code (a report from a newer
+                    // build, or one written before the field existed) reads
+                    // back as the safe fallback, never as an empty string.
+                    code: SkipCode::parse(&s.code),
                 })
             })
             .collect::<Result<Vec<_>, JsonReportError>>()?;
@@ -460,6 +472,7 @@ mod tests {
                 fixture_id: "p28-soroban-1".into(),
                 surface: Surface::Soroban,
                 reason: "requires a capability not declared by this project".into(),
+                code: SkipCode::MissingCapability,
             }],
             decision: PolicyDecision::Pass,
             git: GitContext::default(),
@@ -785,5 +798,73 @@ mod tests {
         assert!(text.contains("from-the-future"));
         let parsed = JsonReporter::parse(&text).unwrap();
         assert_eq!(parsed.results[0].source, ResultSource::Unknown);
+    }
+
+    #[test]
+    fn every_skipped_entry_carries_a_standard_code_string() {
+        let value = rendered_value(&input());
+        let entry = &value["skipped"][0];
+        assert_eq!(entry["code"], "MISSING_CAPABILITY");
+        // The free-form prose is still there beside the code.
+        assert!(entry["reason"].is_string());
+
+        // No skipped entry may ever omit `code` or emit an empty string.
+        let mut report = input();
+        report.skipped.push(SkipSummary {
+            fixture_id: "p27-xdr-1".into(),
+            surface: Surface::Xdr,
+            reason: "fixture targets protocol 27, this run targets protocol 28".into(),
+            code: SkipCode::UnsupportedProtocol,
+        });
+        let value = rendered_value(&report);
+        let entries = value["skipped"].as_array().expect("skipped is an array");
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            let code = entry["code"].as_str().expect("code is a string");
+            assert!(!code.is_empty(), "code must never be empty: {entry}");
+        }
+        assert_eq!(entries[1]["code"], "UNSUPPORTED_PROTOCOL");
+    }
+
+    #[test]
+    fn the_skip_code_survives_a_render_and_parse_round_trip() {
+        let original = input();
+        let parsed = JsonReporter::parse(&JsonReporter::render(&original)).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::MissingCapability);
+        assert_eq!(parsed.skipped, original.skipped);
+    }
+
+    #[test]
+    fn an_unrecognized_skip_code_falls_back_to_unknown_rather_than_empty() {
+        // A code written by a newer build: tolerated, read as unknown.
+        let text =
+            JsonReporter::render(&input()).replace("\"MISSING_CAPABILITY\"", "\"FROM_THE_FUTURE\"");
+        assert!(text.contains("FROM_THE_FUTURE"));
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
+
+        // An empty string is equally unusable, so it must fall back too —
+        // never surface as an empty `code` to a consumer.
+        let text = JsonReporter::render(&input()).replace("\"MISSING_CAPABILITY\"", "\"\"");
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
+
+        // And re-rendering the fallback writes a real, non-empty code.
+        let rerendered = rendered_value(&parsed);
+        assert_eq!(rerendered["skipped"][0]["code"], "UNKNOWN");
+    }
+
+    #[test]
+    fn a_report_written_before_the_code_field_parses_as_unknown() {
+        let mut value = rendered_value(&input());
+        let entry = &mut value["skipped"][0];
+        entry
+            .as_object_mut()
+            .expect("skip is an object")
+            .remove("code");
+        assert!(entry.get("code").is_none());
+
+        let parsed = JsonReporter::parse(&value.to_string()).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
     }
 }

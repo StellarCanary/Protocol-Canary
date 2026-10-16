@@ -81,7 +81,7 @@ Illustrative, not real data:
       {
         "id": "example-old-protocol",
         "surface": "xdr",
-        "code": "protocol-mismatch",
+        "code": "UNSUPPORTED_PROTOCOL",
         "reason": "fixture targets protocol 27, this run targets protocol 28"
       }
     ],
@@ -119,7 +119,7 @@ Illustrative, not real data:
 | `fixtures.directoryFound` | boolean | yes | |
 | `fixtures.loaded` | integer | yes | Fixtures found in the directory, all protocols. |
 | `plan.wouldRun` | array | yes | `{id, surface}` for every fixture `check` would execute. Sorted by surface (`xdr`, `rpc`, `soroban`) then `id` (UTF-8 bytes). |
-| `plan.skipped` | array | yes | `{id, surface, code, reason}` for every fixture left out. `code` is `protocol-mismatch`, `surface-disabled` or `missing-capability`; `reason` is the same free text `check` records. Sorted by `id`. |
+| `plan.skipped` | array | yes | `{id, surface, code, reason}` for every fixture left out. `code` is the same CF-01 skip code `check`'s report emits: `UNSUPPORTED_PROTOCOL`, `SURFACE_DISABLED` or `MISSING_CAPABILITY` (plus the `UNKNOWN` fallback); `reason` is the same free text `check` records. Sorted by `id`. |
 | `plan.checkWouldRefuse` | boolean | yes | `true` exactly when `plan.wouldRun` is empty, that is, when `check` would exit 2 under D-02 unless `--allow-empty` is given. |
 | `plan.refusal` | string or null | yes | The same explanation text `check` prints, or `null`. This lets a script find out why before running. |
 | `fingerprint` | object | when CA-04 exists | `fingerprintVersion`, `detector`, `digest`, `inputs` (count). With `--verbose` also `inputList` (CA-04). |

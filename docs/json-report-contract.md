@@ -99,6 +99,7 @@ a compatibility failure.
 | `skipped[].fixtureId` | string | yes | |
 | `skipped[].surface` | string | yes | |
 | `skipped[].reason` | string | yes | Human-readable, e.g. `"fixture targets protocol 27, this run targets protocol 28"` or `"rpc checks are disabled in configuration"`. |
+| `skipped[].code` | string | yes (absent only in reports written before the field existed) | The stable machine-readable skip reason, so CI summaries can group skips without parsing prose: `"UNSUPPORTED_PROTOCOL"`, `"SURFACE_DISABLED"`, `"MISSING_CAPABILITY"`, or `"UNKNOWN"` when the reason is not recognized. `"NETWORK_MISMATCH"` is reserved for a network-identity skip and is not emitted by the planner yet. An absent or unrecognized value reads back as `"UNKNOWN"` — never an empty string — and consumers must ignore codes they do not know. Added without a `schemaVersion` change because it is optional and additive. |
 | `git` | object | yes | Always present, with `null` fields when unavailable (not a Git repository, detached HEAD, etc.) — never omitted, never an error. |
 | `git.commit` / `.branch` | string \| null | yes | |
 | `git.isDirty` | boolean \| null | yes | |
@@ -115,6 +116,9 @@ a compatibility failure.
   (this project's own reporters deliberately never do).
 - **Protocol mismatch detection**: compare `targetProtocol` to
   `network.observedProtocol` when both are present.
+- **Grouping skipped fixtures in a CI summary**: iterate `skipped` and key
+  off `code`, not the free-form `reason` (that is what the field exists
+  for); group unknown codes under `UNKNOWN`.
 
 ### Verified failure-case example
 

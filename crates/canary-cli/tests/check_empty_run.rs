@@ -164,6 +164,10 @@ fn allow_empty_runs_and_warns_that_the_result_is_not_evidence() {
     assert_eq!(report["counts"]["total"], 0);
     assert_eq!(report["counts"]["skipped"], 1);
     assert_eq!(report["results"].as_array().unwrap().len(), 0);
+    assert_eq!(
+        report["skipped"][0]["code"], "UNSUPPORTED_PROTOCOL",
+        "the skipped fixture targeted another protocol"
+    );
 }
 
 #[test]

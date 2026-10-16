@@ -44,6 +44,13 @@ All notable changes to this project are documented in this file.
 - A strict parser and deterministic serializer for `.stellar-canary.lock`
   (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
   No command reads or writes a lockfile yet.
+- JSON reports gain an optional `skipped[].code` (CF-01-D): the stable
+  machine-readable skip reason beside the free-form `reason` —
+  `UNSUPPORTED_PROTOCOL`, `SURFACE_DISABLED`, `MISSING_CAPABILITY`, or
+  `UNKNOWN` when the reason is not recognized (`NETWORK_MISMATCH` is
+  reserved for a future network-identity skip). `schemaVersion` stays `1`;
+  older reports lack the field, which reads back as `UNKNOWN`, and
+  consumers must ignore codes they do not know.
 - `canary_fixtures::pack_digest`: the `canary-pack-v1` digest of a fixture
   pack (CF-02), with the file list it was computed from. It is distinct from
   the engine's internal per-fixture cache key. No command uses it yet.

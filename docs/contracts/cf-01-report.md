@@ -75,7 +75,7 @@ implementing change lands; until then they are a plan.
 | Field | Type | Meaning | Owner contract |
 |---|---|---|---|
 | `results[].source` | `"live"` or `"cache"` | Whether this result was executed in this run or replayed from the local result cache. Absent means *not recorded* (a report from `0.1.1` or earlier), never live. A value a consumer does not know is read as not recorded. The engine never writes `"unknown"`. Implemented by RH-02 as an optional field under the additive rule. | CF-01 |
-| `skipped[].code` | string, lowercase kebab | Stable machine identifier for the skip reason. `reason` stays free text. Initial codes: `protocol-mismatch`, `surface-disabled`, `missing-capability`. | CF-01 |
+| `skipped[].code` | string, `SCREAMING_SNAKE_CASE` | Stable machine identifier for the skip reason. `reason` stays free text. Codes: `UNSUPPORTED_PROTOCOL`, `SURFACE_DISABLED`, `MISSING_CAPABILITY`, `NETWORK_MISMATCH` (reserved for a network-identity skip; not yet emitted by the planner) and the `UNKNOWN` fallback, which is also what an absent value in an older report reads as. Consumers must ignore a code they do not know. Implemented (CF-01-D); the lowercase kebab spellings this row used to plan (`protocol-mismatch`, `surface-disabled`, `missing-capability`) were never emitted by any release and are superseded. | CF-01 |
 | `fixturePack` | object | `{ "digest": "sha256:<hex>", "registryVersion": 1, "source": "directory" or "release", "revision": string or null }` | CF-02 |
 | `lock` | object | `{ "path": "<relative>", "status": "absent" or "verified", "warnings": [string] }`. `warnings` carries, for example, an engine-version mismatch (D-12), because stderr is not shown to Action users on a passing run. | CF-03 |
 | `results[].verification` | object | Copy of the fixture's verification record. Never synthesized. | CF-04 |
@@ -242,7 +242,7 @@ A report that ran nothing (illustrative). The shape is valid, but it can only co
   "counts": { "total": 0, "passed": 0, "failed": 0, "warnings": 0, "errors": 0, "skipped": 1 },
   "results": [],
   "skipped": [
-    { "fixtureId": "example-xdr-fixture", "surface": "xdr", "reason": "fixture targets protocol 28, this run targets protocol 29" }
+    { "fixtureId": "example-xdr-fixture", "surface": "xdr", "reason": "fixture targets protocol 28, this run targets protocol 29", "code": "UNSUPPORTED_PROTOCOL" }
   ],
   "git": { "commit": null, "branch": null, "isDirty": false }
 }
@@ -287,7 +287,7 @@ Invalid: unsupported version.
 | CF-01-A Publish a JSON Schema for report v1 matching section 3 | Protocol-Canary | this contract | Schema must accept `0.1.1` output and ignore unknown properties. |
 | CF-01-B Conformance test: reporter output validates against the schema | Protocol-Canary | CF-01-A | |
 | CF-01-C Corpus of real `v0.1.0` and `v0.1.1` reports and parse tests | Protocol-Canary | none | Needs the tagged binaries; do not hand-write them. |
-| CF-01-D Emit `skipped[].code` | Protocol-Canary | this contract | The scheduler now records a `SkipCause` with the stable codes `protocol-mismatch`, `surface-disabled`, `missing-capability` (RH-03); only the JSON field is missing. |
+| CF-01-D Emit `skipped[].code` | Protocol-Canary | this contract | **Done.** The scheduler's `SkipCause` (RH-03) maps to the standard codes `UNSUPPORTED_PROTOCOL`, `SURFACE_DISABLED` and `MISSING_CAPABILITY`; `NETWORK_MISMATCH` is reserved and `UNKNOWN` is the fallback for an unrecognized or absent value. The planner still records the cause itself; only its report spelling changed from the planned kebab form. |
 | CF-01-E Emit `results[].source` | Protocol-Canary | this contract | **Done in RH-02.** |
 | CF-01-F Zero-result guard | Protocol-Canary | D-02 | **Done in RH-03** as a default failure with `--allow-empty`; the opt-in design this row used to describe is superseded. |
 | CF-01-G Action tolerates reserved fields and rejects duplicate identities | ProtocolCanary-Action | this contract | |

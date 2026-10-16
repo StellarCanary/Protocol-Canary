@@ -139,6 +139,7 @@ fn a_skipped_entry_may_share_a_result_identity() {
             fixture_id: "example-xdr-fixture".to_string(),
             surface: Surface::Xdr,
             reason: "fixture targets protocol 28, this run targets protocol 29".to_string(),
+            code: canary_core::SkipCode::UnsupportedProtocol,
         }],
     );
 

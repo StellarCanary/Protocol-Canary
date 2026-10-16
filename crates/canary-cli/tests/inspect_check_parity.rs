@@ -170,8 +170,11 @@ fn inspect_plan_equals_what_check_executes_including_order() {
         .iter()
         .filter_map(|entry| entry["code"].as_str())
         .collect();
-    assert!(skip_codes.contains(&"protocol-mismatch"), "{skip_codes:?}");
-    assert!(skip_codes.contains(&"missing-capability"), "{skip_codes:?}");
+    assert!(
+        skip_codes.contains(&"UNSUPPORTED_PROTOCOL"),
+        "{skip_codes:?}"
+    );
+    assert!(skip_codes.contains(&"MISSING_CAPABILITY"), "{skip_codes:?}");
     assert!(!skipped.is_empty());
 
     let (executed, check_skipped) = check_results(&dir);
@@ -200,8 +203,8 @@ fn inspect_and_check_agree_for_a_surface_disabled_in_configuration() {
         vec![("p28-xdr-1".to_string(), "xdr".to_string())]
     );
     assert_eq!(
-        document["plan"]["skipped"][0]["code"], "surface-disabled",
-        "an RPC fixture with the surface off is surface-disabled"
+        document["plan"]["skipped"][0]["code"], "SURFACE_DISABLED",
+        "an RPC fixture with the surface off is SURFACE_DISABLED"
     );
     assert!(!skipped.is_empty());
 

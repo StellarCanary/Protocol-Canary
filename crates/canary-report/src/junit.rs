@@ -303,6 +303,7 @@ mod tests {
                 fixture_id: "p28-soroban-1".into(),
                 surface: Surface::Soroban,
                 reason: "requires network access".into(),
+                code: canary_core::SkipCode::Unknown,
             }],
         ));
         assert!(xml.contains("skipped=\"1\""));
@@ -324,6 +325,7 @@ mod tests {
                 fixture_id: "p28-rpc-1".into(),
                 surface: Surface::Rpc,
                 reason: "a < b & c > d".into(),
+                code: canary_core::SkipCode::Unknown,
             }],
         ));
 
@@ -346,6 +348,7 @@ mod tests {
                 fixture_id: "p28-rpc-1".into(),
                 surface: Surface::Rpc,
                 reason: "r".into(),
+                code: canary_core::SkipCode::Unknown,
             }],
         );
         assert_eq!(

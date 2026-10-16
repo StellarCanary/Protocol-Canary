@@ -44,6 +44,15 @@ All notable changes to this project are documented in this file.
 - A strict parser and deterministic serializer for `.stellar-canary.lock`
   (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
   No command reads or writes a lockfile yet.
+- Common execution errors print an actionable `Hint:` line under the
+  `error:` line on stderr: connection failures (check that the local
+  standalone node or RPC endpoint is running and reachable), permission
+  denied (check the file mode), a stale or unreadable lockfile, a report
+  schema mismatch (use the engine version that wrote it), and a missing
+  or unreadable project configuration (create `.stellar-canary.toml` or
+  fix `--config`). An error with no advice to give keeps printing
+  exactly one clean error line. Error wording, categories and exit codes
+  are unchanged.
 - `canary_fixtures::pack_digest`: the `canary-pack-v1` digest of a fixture
   pack (CF-02), with the file list it was computed from. It is distinct from
   the engine's internal per-fixture cache key. No command uses it yet.

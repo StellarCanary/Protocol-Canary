@@ -315,4 +315,23 @@ fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
     let err = stderr(&output);
     assert!(err.contains("configuration error"), "stderr: {err}");
     assert!(err.contains("--protocol"), "stderr: {err}");
+    // Negative case for the `Hint:` line: an error with no advice to give
+    // prints exactly one clean error line, with no hint boilerplate.
+    assert!(!err.contains("Hint:"), "stderr: {err}");
+}
+
+#[test]
+fn a_missing_config_file_is_reported_with_an_actionable_hint() {
+    let dir = TempProject::new("check-missing-config-hint");
+
+    let output = run_in(&dir.path, &["check", "--config", "no-such-config.toml"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(
+        err.contains("failed to read configuration file") && err.contains("no-such-config.toml"),
+        "stderr: {err}"
+    );
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains(".stellar-canary.toml"), "stderr: {err}");
+    assert!(err.contains("--config"), "stderr: {err}");
 }

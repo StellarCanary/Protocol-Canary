@@ -147,4 +147,22 @@ fn report_on_a_malformed_file_exits_with_a_configuration_error() {
         err.contains("error: configuration error: invalid report file:"),
         "stderr: {err}"
     );
+    // A malformed file gets no hint: the message alone says what is wrong.
+    assert!(!err.contains("Hint:"), "stderr: {err}");
+}
+
+#[test]
+fn a_report_from_another_schema_version_is_reported_with_an_actionable_hint() {
+    let dir = TempProject::new("report-schema-mismatch");
+    dir.write(
+        "result.json",
+        "{\n  \"schemaVersion\": 999,\n  \"toolVersion\": \"9.9.9\",\n  \"targetProtocol\": 28,\n  \"project\": { \"name\": \"x\", \"type\": \"unknown\" },\n  \"status\": \"pass\",\n  \"results\": []\n}\n",
+    );
+
+    let output = run_in(&dir.path, &["report", "result.json"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(err.contains("unsupported schema version"), "stderr: {err}");
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains("engine version"), "stderr: {err}");
 }

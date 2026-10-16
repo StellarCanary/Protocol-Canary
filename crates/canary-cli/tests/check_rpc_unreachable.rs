@@ -96,4 +96,12 @@ fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
         text.contains("0/1 applicable checks passed."),
         "stdout: {text}"
     );
+
+    // The unreachable endpoint is the most common first stumble, so the
+    // stderr output says what to check next — as an extra `Hint:` line,
+    // never instead of the exit-code and report contract above.
+    let err = stderr(&output);
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains("standalone node"), "stderr: {err}");
+    assert!(err.contains("reachable"), "stderr: {err}");
 }

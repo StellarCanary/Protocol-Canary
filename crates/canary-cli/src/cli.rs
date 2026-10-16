@@ -274,6 +274,36 @@ pub struct FixturesArgs {
 }
 
 #[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary report` subcommand ([`Command::Report`]).
+///
+/// `report` re-renders a JSON report that an earlier `check` run stored (the
+/// contract in `docs/json-report-contract.md`) into another format, without
+/// touching the network, the fixtures, or the project. It exists so a report
+/// captured on one machine — or in CI — can be re-rendered elsewhere, and so
+/// `check --format json | stellar-canary report -` can pipe a run straight
+/// into a Markdown job summary.
+///
+/// The two fields map one-to-one onto the subcommand's arguments:
+///
+/// - [`ReportArgs::path`] is the positional report file, or `-` to read the
+///   report from standard input until EOF (capped at 10 MiB).
+/// - [`ReportArgs::format`] is the `--format` flag: `markdown` by default,
+///   with `terminal`, `json` and `junit` available.
+///
+/// Parsing is performed by `clap` and performs no I/O and cannot panic: a
+/// missing path, an unknown format, or an unreadable or malformed report is
+/// a failure of the *run*, not of parsing — `run_report` reports it on
+/// stderr and maps it to a configuration error (exit code 2). The parse
+/// itself only fails with clap's usage message and exit status 2, before a
+/// `ReportArgs` value ever exists.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary report results.json
+/// stellar-canary report results.json --format json
+/// stellar-canary check --format json | stellar-canary report -
+/// ```
 pub struct ReportArgs {
     /// Path to a JSON report produced by `stellar-canary check --json`, or
     /// `-` to read the report from standard input until EOF (10 MiB max).

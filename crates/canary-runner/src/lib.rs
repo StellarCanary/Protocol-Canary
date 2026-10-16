@@ -8,5 +8,6 @@ pub mod scheduler;
 pub use aggregation::{summarize, ResultSummary};
 pub use execution::execute;
 pub use scheduler::{
-    build_plan, explain_empty_plan, CompatibilityPlan, EnabledSurfaces, SkipCause, SkippedFixture,
+    build_plan, build_plan_with, explain_empty_plan, CompatibilityPlan, EnabledSurfaces,
+    NetworkMode, SkipCause, SkippedFixture,
 };

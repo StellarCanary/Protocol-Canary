@@ -14,6 +14,22 @@ pub struct EnabledSurfaces {
     pub soroban: bool,
 }
 
+/// Whether the run may touch the network.
+///
+/// XDR fixtures are always offline; RPC and Soroban fixtures always need a
+/// live endpoint. [`NetworkMode::Offline`] (the `stellar-canary check
+/// --offline` flag) makes the planner skip the network-requiring fixtures
+/// instead of scheduling them, so an air-gapped run executes only the
+/// offline XDR checks and reports the rest as skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NetworkMode {
+    /// Network-requiring fixtures execute against the configured endpoint.
+    #[default]
+    Live,
+    /// Network-requiring fixtures are skipped, never executed.
+    Offline,
+}
+
 impl EnabledSurfaces {
     fn is_enabled(self, surface: Surface) -> bool {
         match surface {
@@ -34,6 +50,9 @@ pub enum SkipCause {
     SurfaceDisabled,
     /// The project lacks a capability the fixture requires.
     MissingCapability,
+    /// The run is offline (`--offline`) and the fixture's surface requires
+    /// network access (RPC, Soroban).
+    Offline,
 }
 
 impl SkipCause {
@@ -43,6 +62,7 @@ impl SkipCause {
             SkipCause::ProtocolMismatch => "protocol-mismatch",
             SkipCause::SurfaceDisabled => "surface-disabled",
             SkipCause::MissingCapability => "missing-capability",
+            SkipCause::Offline => "skip-offline",
         }
     }
 }
@@ -87,6 +107,30 @@ pub fn build_plan(
     enabled_surfaces: EnabledSurfaces,
     project: &ProjectContext,
 ) -> Result<CompatibilityPlan, CanaryError> {
+    build_plan_with(
+        loaded_fixtures,
+        target_protocol,
+        enabled_surfaces,
+        project,
+        NetworkMode::Live,
+    )
+}
+
+/// [`build_plan`] with an explicit [`NetworkMode`].
+///
+/// Under [`NetworkMode::Offline`], fixtures whose surface requires network
+/// access (RPC and Soroban) are skipped with
+/// [`SkipCause::Offline`] instead of being scheduled, after the protocol,
+/// surface-enabled, and capability checks — so a fixture that would be
+/// skipped for another reason still reports that reason, and the offline
+/// skip only applies to fixtures that would otherwise run.
+pub fn build_plan_with(
+    loaded_fixtures: &[LoadedFixture],
+    target_protocol: ProtocolVersion,
+    enabled_surfaces: EnabledSurfaces,
+    project: &ProjectContext,
+    network_mode: NetworkMode,
+) -> Result<CompatibilityPlan, CanaryError> {
     let mut plan = CompatibilityPlan::default();
 
     for fixture in loaded_fixtures {
@@ -128,6 +172,20 @@ pub fn build_plan(
                 surface: fixture.metadata.surface,
                 reason: format!("requires a capability not declared by this project: {missing:?}"),
                 cause: SkipCause::MissingCapability,
+            });
+            continue;
+        }
+
+        // Every non-XDR surface talks to a live RPC endpoint, so an
+        // offline run skips them rather than opening a socket. This is
+        // checked last so a fixture that is inapplicable anyway keeps its
+        // more specific reason.
+        if network_mode == NetworkMode::Offline && fixture.metadata.surface != Surface::Xdr {
+            plan.skipped.push(SkippedFixture {
+                fixture_id: fixture.metadata.id.clone(),
+                surface: fixture.metadata.surface,
+                reason: "requires network access; skipped because --offline was given".to_string(),
+                cause: SkipCause::Offline,
             });
             continue;
         }
@@ -216,6 +274,12 @@ pub fn explain_empty_plan(
         if missing > 0 {
             message.push_str(&format!(
                 " {missing} require a capability this project does not declare."
+            ));
+        }
+        let offline = count(SkipCause::Offline);
+        if offline > 0 {
+            message.push_str(&format!(
+                " {offline} require network access and were skipped because --offline was given."
             ));
         }
     }
@@ -380,6 +444,131 @@ mod tests {
         let codes: Vec<_> = plan.skipped.iter().map(|s| s.cause.code()).collect();
         assert_eq!(codes, ["protocol-mismatch", "surface-disabled"]);
         assert_eq!(SkipCause::MissingCapability.code(), "missing-capability");
+    }
+
+    #[test]
+    fn offline_mode_schedules_xdr_and_skips_rpc_and_soroban() {
+        let fixtures = vec![
+            loaded(
+                "p28-xdr-1",
+                28,
+                "xdr",
+                "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n",
+            ),
+            loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n"),
+            loaded("p28-soroban-1", 28, "soroban", &soroban_body()),
+        ];
+        let plan = build_plan_with(
+            &fixtures,
+            ProtocolVersion(28),
+            all_enabled(),
+            &project(),
+            NetworkMode::Offline,
+        )
+        .unwrap();
+
+        assert_eq!(plan.applicable_count(), 1, "only the XDR fixture runs");
+        assert_eq!(plan.xdr.len(), 1);
+        assert!(plan.rpc.is_empty());
+        assert!(plan.soroban.is_empty());
+        assert_eq!(plan.skipped.len(), 2);
+        for skipped in &plan.skipped {
+            assert_eq!(skipped.cause, SkipCause::Offline);
+            assert!(skipped.reason.contains("--offline"), "{}", skipped.reason);
+        }
+    }
+
+    #[test]
+    fn the_offline_skip_cause_has_a_stable_code() {
+        assert_eq!(SkipCause::Offline.code(), "skip-offline");
+    }
+
+    /// A fixture that would be skipped for a more specific reason keeps it:
+    /// the offline skip only applies to fixtures that would otherwise run.
+    #[test]
+    fn protocol_mismatch_takes_precedence_over_the_offline_skip() {
+        let fixtures = vec![loaded(
+            "p27-rpc-1",
+            27,
+            "rpc",
+            "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
+        )];
+        let plan = build_plan_with(
+            &fixtures,
+            ProtocolVersion(28),
+            all_enabled(),
+            &project(),
+            NetworkMode::Offline,
+        )
+        .unwrap();
+
+        assert_eq!(plan.skipped.len(), 1);
+        assert_eq!(plan.skipped[0].cause, SkipCause::ProtocolMismatch);
+    }
+
+    #[test]
+    fn live_mode_still_schedules_rpc_fixtures() {
+        // The default `build_plan` is Live: offline skipping is opt-in.
+        let fixtures = vec![loaded(
+            "p28-rpc-1",
+            28,
+            "rpc",
+            "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n",
+        )];
+        let plan = build_plan(&fixtures, ProtocolVersion(28), all_enabled(), &project()).unwrap();
+        assert_eq!(plan.applicable_count(), 1);
+        assert!(plan.skipped.is_empty());
+    }
+
+    #[test]
+    fn explains_an_empty_offline_plan_and_names_the_flag() {
+        let fixtures = vec![
+            loaded(
+                "p28-xdr-1",
+                28,
+                "xdr",
+                "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n",
+            ),
+            loaded("p28-rpc-1", 28, "rpc", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n"),
+        ];
+        // XDR disabled, so under offline mode everything is skipped.
+        let off = EnabledSurfaces {
+            xdr: false,
+            rpc: true,
+            soroban: true,
+        };
+        let plan = build_plan_with(
+            &fixtures,
+            ProtocolVersion(28),
+            off,
+            &project(),
+            NetworkMode::Offline,
+        )
+        .unwrap();
+        assert_eq!(plan.applicable_count(), 0);
+        let message = explain_empty_plan(
+            &plan,
+            &fixtures,
+            ProtocolVersion(28),
+            std::path::Path::new("."),
+        );
+        assert!(
+            message
+                .contains("1 require network access and were skipped because --offline was given"),
+            "{message}"
+        );
+        assert!(
+            message.contains("1 are on a surface that is disabled"),
+            "{message}"
+        );
+    }
+
+    fn soroban_body() -> String {
+        format!(
+            "source_account = \"{}\"\ncontract_id = \"{}\"\nfunction = \"hello\"\nsequence_number = 1\n\n[expect]\nkind = \"simulation-success\"\n",
+            stellar_strkey::ed25519::PublicKey([0u8; 32]),
+            stellar_strkey::Contract([0u8; 32]),
+        )
     }
 
     #[test]

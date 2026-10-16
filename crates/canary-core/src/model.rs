@@ -281,6 +281,25 @@ pub struct RunOptions {
     pub quiet: bool,
     pub max_concurrency: u32,
     pub rpc_timeout: u64,
+    /// Maximum retries after a failed RPC attempt: `0` disables retries
+    /// (one attempt is always made, and the first network error fails the
+    /// call). Defaults to the CLI flag's default of `3`. The serde default
+    /// keeps payloads written before this field existed deserializing to
+    /// that documented value.
+    #[serde(default = "default_rpc_max_retries")]
+    pub rpc_max_retries: u32,
+    /// Base delay between RPC retry attempts, in milliseconds (linear
+    /// backoff: attempt *n* waits `n * base_delay`).
+    #[serde(default = "default_rpc_retry_delay_ms")]
+    pub rpc_retry_delay_ms: u64,
+}
+
+fn default_rpc_max_retries() -> u32 {
+    3
+}
+
+fn default_rpc_retry_delay_ms() -> u64 {
+    500
 }
 
 impl Default for RunOptions {
@@ -290,6 +309,8 @@ impl Default for RunOptions {
             quiet: false,
             max_concurrency: 4,
             rpc_timeout: 10,
+            rpc_max_retries: default_rpc_max_retries(),
+            rpc_retry_delay_ms: default_rpc_retry_delay_ms(),
         }
     }
 }

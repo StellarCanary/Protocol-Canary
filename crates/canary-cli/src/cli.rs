@@ -113,6 +113,17 @@ pub struct CheckArgs {
     #[arg(long = "rpc-timeout", default_value = "10")]
     pub rpc_timeout: u64,
 
+    /// Maximum number of retries after a failed RPC attempt. `0` disables
+    /// retries: the call fails on the first network error. Each retry is a
+    /// full request, so the total number of attempts is n + 1.
+    #[arg(long = "rpc-max-retries", default_value_t = 3)]
+    pub rpc_max_retries: u32,
+
+    /// Base delay between RPC retry attempts, in milliseconds. The backoff
+    /// is linear: attempt n waits n times this value.
+    #[arg(long = "rpc-retry-delay-ms", default_value_t = 500)]
+    pub rpc_retry_delay_ms: u64,
+
     /// Directory containing fixture files (overrides `fixtures_dir` in
     /// .stellar-canary.toml; default: fixtures).
     #[arg(long = "fixtures-dir", value_name = "PATH")]
@@ -432,5 +443,34 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("--network-passphrase"), "{text}");
         assert!(text.contains("the passphrase cannot be empty"), "{text}");
+    }
+
+    #[test]
+    fn rpc_retry_flags_default_to_three_retries_and_500_milliseconds() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.rpc_max_retries, 3);
+            assert_eq!(args.rpc_retry_delay_ms, 500);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn rpc_retry_flags_take_custom_values() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--rpc-max-retries",
+            "0",
+            "--rpc-retry-delay-ms",
+            "250",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.rpc_max_retries, 0);
+            assert_eq!(args.rpc_retry_delay_ms, 250);
+        } else {
+            panic!("Expected Check command");
+        }
     }
 }

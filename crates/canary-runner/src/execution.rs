@@ -10,7 +10,7 @@
 use canary_core::{
     CompatibilityResult, ExecutionContext, FixtureMetadata, ProtocolVersion, Status, Surface,
 };
-use canary_rpc::{HttpRpcClient, RpcFixture, RpcRunner};
+use canary_rpc::{HttpRpcClient, RetryPolicy, RpcFixture, RpcRunner};
 use canary_soroban::{SorobanFixture, SorobanRunner};
 use canary_xdr::{DefaultXdrRunner, XdrFixture, XdrRunner};
 use futures::stream::{self, StreamExt};
@@ -32,7 +32,11 @@ pub async fn execute(
     // non-verbose runs emit nothing new.
     let client = HttpRpcClient::new(rpc_endpoint.to_string())
         .with_timeout(std::time::Duration::from_secs(context.options.rpc_timeout))
-        .with_verbose(context.options.verbose);
+        .with_verbose(context.options.verbose)
+        .with_retry_policy(RetryPolicy::from_retries(
+            context.options.rpc_max_retries,
+            std::time::Duration::from_millis(context.options.rpc_retry_delay_ms),
+        ));
 
     let mut results = run_xdr(&plan.xdr, context);
     results.extend(run_rpc(&plan.rpc, context, client.clone(), concurrency).await);

@@ -75,8 +75,10 @@ fn verbose_mode_logs_each_rpc_attempt_with_count_and_duration() {
         stderr(&output)
     );
     let err = stderr(&output);
+    // The budget is the attempt count: the default `--rpc-max-retries 3`
+    // allows three retries on top of the first request, so 4 attempts.
     assert!(
-        err.contains("[RPC attempt 1/3: "),
+        err.contains("[RPC attempt 1/4: "),
         "attempt count and budget must be logged; stderr: {err}"
     );
     assert!(err.contains("ms] getNetwork "), "stderr: {err}");
@@ -145,8 +147,9 @@ fn verbose_logs_scrub_credentials_and_query_tokens_from_the_url() {
     );
 
     let err = stderr(&output);
+    // Default retry settings (`--rpc-max-retries 3`) budget 4 attempts.
     assert!(
-        err.contains("[RPC attempt 1/3: "),
+        err.contains("[RPC attempt 1/4: "),
         "the attempt must still be logged; stderr: {err}"
     );
     assert!(

@@ -11,7 +11,7 @@ use canary_report::{
     JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary, ReportInput,
     TerminalReporter,
 };
-use canary_rpc::{validate_network_info, HttpRpcClient, RpcClient, RpcError};
+use canary_rpc::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};
 use canary_runner::EnabledSurfaces;
 
 use crate::cli::{
@@ -213,7 +213,12 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         // `RunOptions`, of every fixture call) is logged to stderr with
         // its attempt number and duration; the endpoint URL is scrubbed
         // inside the client, so credentials never reach the log.
-        let client = HttpRpcClient::new(rpc_url.clone()).with_verbose(args.verbose);
+        let client = HttpRpcClient::new(rpc_url.clone())
+            .with_verbose(args.verbose)
+            .with_retry_policy(RetryPolicy::from_retries(
+                args.rpc_max_retries,
+                std::time::Duration::from_millis(args.rpc_retry_delay_ms),
+            ));
         let (observed_protocol, network_error) = match client.get_network().await {
             Ok(info) => {
                 if let Err(err) = validate_network_info(&info, &passphrase, target_protocol.0) {
@@ -305,6 +310,8 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             quiet: args.quiet,
             max_concurrency: args.max_concurrency,
             rpc_timeout: args.rpc_timeout,
+            rpc_max_retries: args.rpc_max_retries,
+            rpc_retry_delay_ms: args.rpc_retry_delay_ms,
         },
     };
 
@@ -402,16 +409,18 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
 /// `println!` puts on stdout — trailing newline included — so `--output`
 /// and shell redirection produce identical files.
 ///
+/// The write is atomic ([`canary_report::atomic_write_report`]): the bytes
+/// go to a `.tmp` sibling that is renamed over `path`, so a crash or a
+/// full disk can never leave a truncated report behind, and an existing
+/// file's permissions are preserved.
+///
 /// An unwritable path is a configuration error (the same exit code as any
 /// other unusable caller-supplied path, e.g. a missing `--config` file),
-/// not a compatibility result.
+/// not a compatibility result. The underlying error already names the
+/// path, so it is passed through unchanged.
 fn write_report_file(path: &Path, rendered: &str) -> Result<(), CanaryError> {
-    std::fs::write(path, format!("{rendered}\n")).map_err(|err| {
-        CanaryError::Configuration(format!(
-            "failed to write report to {}: {err}",
-            path.display()
-        ))
-    })
+    canary_report::atomic_write_report(path, &format!("{rendered}\n"))
+        .map_err(|err| CanaryError::Configuration(err.to_string()))
 }
 
 /// Prints offline project diagnostics and the planned fixture run.

@@ -8,6 +8,7 @@ pub mod digest;
 pub mod loader;
 pub mod manifest;
 pub mod validator;
+pub mod verification;
 
 pub use digest::{pack_digest, PackDigest, PackError, PackFile};
 pub use loader::{load_directory, FixtureError};
@@ -15,6 +16,10 @@ pub use manifest::{
     content_digest, parse_fixture_file, parse_fixture_str, unknown_body_keys, LoadedFixture,
 };
 pub use validator::validate;
+pub use verification::{
+    VerificationMethod, VerificationNetwork, VerificationOutcome, VerificationRecord,
+    VerificationVerifier, VERIFICATION_VERSION,
+};
 
 #[cfg(test)]
 pub(crate) mod test_support {

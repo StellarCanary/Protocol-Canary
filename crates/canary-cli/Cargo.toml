@@ -25,7 +25,9 @@ canary-report.workspace = true
 canary-git.workspace = true
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 wiremock = "0.6"

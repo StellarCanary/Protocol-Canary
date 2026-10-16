@@ -193,6 +193,29 @@ pub enum Capability {
     RawLedgerAccess,
 }
 
+impl Capability {
+    /// Every capability variant the engine can declare, in declaration order.
+    ///
+    /// This is the engine side of the capability vocabulary shared with the
+    /// fixture validator: the canonical vector in `tests/fixtures/
+    /// capabilities.json` must name exactly these variants (kebab-case, as
+    /// serialized by [`Capability`]'s `serde` representation), and the
+    /// `capability_parity` integration test fails when either side grows a
+    /// tag the other lacks. Keep this list in step with `CAPABILITIES` in
+    /// ProtocolCanary-Fixtures' `tools/validate/validate.py` and with the
+    /// `required_capabilities` enum in its `schemas/fixture-v1.schema.json`
+    /// (CF-07 section 9).
+    pub fn all() -> &'static [Capability] {
+        &[
+            Capability::SorobanContract,
+            Capability::RpcClient,
+            Capability::StellarSdkDependency,
+            Capability::WasmArtifact,
+            Capability::RawLedgerAccess,
+        ]
+    }
+}
+
 /// Everything the pipeline knows about the project being checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectContext {

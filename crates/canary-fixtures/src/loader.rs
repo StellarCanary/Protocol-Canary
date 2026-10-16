@@ -56,6 +56,12 @@ pub enum FixtureError {
         source: std::io::Error,
     },
 
+    #[error("invalid [verification] table in {source_path}: {reason}")]
+    InvalidVerification {
+        source_path: PathBuf,
+        reason: String,
+    },
+
     #[error("duplicate fixture id {id:?}: defined in both {first} and {second}")]
     DuplicateId {
         id: String,

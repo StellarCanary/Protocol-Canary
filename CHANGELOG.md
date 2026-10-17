@@ -193,6 +193,11 @@ Read these before moving a CI job from `0.1.1`.
   CI job that runs the engine against the canonical Protocol 28 pack (tag and
   `main`), and a release workflow check that the tag equals the workspace
   version.
+- `stellar-canary cache clear`: deletes the cached fixture execution results
+  under `.stellar-canary-cache` in the project root (or `--cache-dir`) and
+  reports the reclaimed disk space in a human-readable form. An empty or
+  missing cache directory reports zero bytes and exits successfully (issue
+  #490).
 
 ## [0.1.1]
 

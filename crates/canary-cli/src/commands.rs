@@ -135,6 +135,36 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
+/// The directory `check` reads and writes cached results under.
+///
+/// `--cache-dir` replaces the default `.stellar-canary-cache` in the project
+/// root; like every other caller-supplied path it is resolved against
+/// `--project-root` when one was given. The directory is created here, before
+/// any fixture runs, so a location that cannot be created (a read-only mount,
+/// or a path that runs through a regular file) is reported as a configuration
+/// error naming the flag instead of surfacing later as an opaque per-fixture
+/// cache-write failure. With `--no-cache` nothing is created, matching a run
+/// that never touches the cache.
+fn resolve_cache_dir(
+    args: &CheckArgs,
+    project_root: &ProjectRoot,
+    root: &Path,
+) -> Result<PathBuf, CanaryError> {
+    let Some(requested) = &args.cache_dir else {
+        return Ok(root.join(CACHE_DIR_NAME));
+    };
+    let dir = project_root.resolve_input(requested);
+    if !args.no_cache {
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "--cache-dir {} could not be created: {e}",
+                dir.display()
+            ))
+        })?;
+    }
+    Ok(dir)
+}
+
 pub async fn run_check(args: CheckArgs) -> ExitCode {
     match run_check_inner(args).await {
         Ok(exit_code) => exit_code,
@@ -295,13 +325,14 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
 
     let git = collect_git_context(&CliGitRepository::new(&root));
 
+    let cache_dir = resolve_cache_dir(&args, &project_root, &root)?;
     let context = ExecutionContext {
         protocol: target_protocol,
         project: project.clone(),
         network: network_context,
         fixtures: fixture_store,
         git: git.clone(),
-        cache: CacheStore::new(root.join(CACHE_DIR_NAME)).with_policy(CachePolicy {
+        cache: CacheStore::new(cache_dir).with_policy(CachePolicy {
             enabled: !args.no_cache,
             live_max_age: args.live_cache_ttl.map(std::time::Duration::from_secs),
         }),

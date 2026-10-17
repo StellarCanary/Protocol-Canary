@@ -98,9 +98,9 @@ pub struct CheckArgs {
     pub network_passphrase: Option<String>,
 
     /// Directory to treat as the project root (default: the current
-    /// directory). Relative `--config`, `--fixtures-dir` and `--output`
-    /// paths are resolved against it. The root is never searched for in
-    /// parent directories.
+    /// directory). Relative `--config`, `--fixtures-dir`, `--cache-dir` and
+    /// `--output` paths are resolved against it. The root is never searched
+    /// for in parent directories.
     #[arg(long = "project-root", value_name = "PATH")]
     pub project_root: Option<PathBuf>,
 
@@ -128,6 +128,13 @@ pub struct CheckArgs {
     /// .stellar-canary.toml; default: fixtures).
     #[arg(long = "fixtures-dir", value_name = "PATH")]
     pub fixtures_dir: Option<PathBuf>,
+
+    /// Directory for cached fixture execution results (default:
+    /// .stellar-canary-cache in the project root). The directory is created
+    /// if it does not exist. Relative paths are resolved against
+    /// --project-root when it is given.
+    #[arg(long = "cache-dir", value_name = "PATH")]
+    pub cache_dir: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
@@ -369,6 +376,31 @@ mod tests {
         let cli = Cli::parse_from(["stellar-canary", "check", "--output", "result.json"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.output, Some(PathBuf::from("result.json")));
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn cache_dir_flag_defaults_to_none() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.cache_dir, None);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn cache_dir_flag_takes_a_path() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--cache-dir",
+            "build/canary-cache",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.cache_dir, Some(PathBuf::from("build/canary-cache")));
         } else {
             panic!("Expected Check command");
         }

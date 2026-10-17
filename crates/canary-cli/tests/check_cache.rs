@@ -1,6 +1,6 @@
 mod support;
 
-use support::{run_in, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
 
 const OFFLINE_CONFIG: &str =
     "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n";
@@ -95,6 +95,119 @@ fn entries_written_by_an_older_layout_are_ignored() {
 
 fn cache_entries(dir: &TempProject) -> Vec<String> {
     std::fs::read_dir(dir.path.join(".stellar-canary-cache"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with('v') && name.ends_with(".json"))
+        .collect()
+}
+
+#[test]
+fn a_custom_cache_dir_receives_the_cache_entries() {
+    let dir = TempProject::new("cache-dir");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture(VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--cache-dir", "custom-cache"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        dir.path.join("custom-cache").is_dir(),
+        "the custom directory was created"
+    );
+    assert_eq!(
+        entries_in(&dir.path.join("custom-cache")).len(),
+        1,
+        "the result was written to the custom directory"
+    );
+    assert!(
+        !dir.path.join(".stellar-canary-cache").exists(),
+        "the default directory is not touched when --cache-dir is given"
+    );
+}
+
+#[test]
+fn the_cache_falls_back_to_the_default_directory_without_the_flag() {
+    let dir = TempProject::new("cache-dir-default");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture(VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stdout(&output));
+    assert!(
+        dir.path.join(".stellar-canary-cache").is_dir(),
+        "without --cache-dir the entries land in the default directory"
+    );
+}
+
+#[test]
+fn an_unusable_cache_dir_is_a_clear_configuration_error() {
+    let dir = TempProject::new("cache-dir-bad");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture(VALID_STELLAR_VALUE_BASE64),
+    );
+    // A regular file where a directory is required: the path cannot be
+    // created, and the failure must be reported before any fixture runs.
+    dir.write("blocked", "not a directory");
+
+    let output = run_in(&dir.path, &["check", "--cache-dir", "blocked/nested"]);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unusable --cache-dir is a configuration error\n{}\n{}",
+        stdout(&output),
+        stderr(&output)
+    );
+    let err = stderr(&output);
+    assert!(err.contains("--cache-dir"), "{err}");
+    assert!(err.contains("blocked"), "the path is named: {err}");
+}
+
+/// On a read-only directory the failure is a permission error specifically.
+/// Skipped implicitly when the test runs as root, where the mode bits do not
+/// deny the write and `create_dir_all` would succeed.
+#[cfg(unix)]
+#[test]
+fn a_read_only_cache_dir_reports_a_permission_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempProject::new("cache-dir-perm");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture(VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let readonly = dir.path.join("readonly");
+    std::fs::create_dir(&readonly).unwrap();
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    // Running as root bypasses the mode bits, so there is nothing to assert.
+    if std::fs::create_dir(readonly.join("probe")).is_ok() {
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let output = run_in(&dir.path, &["check", "--cache-dir", "readonly/cache"]);
+    let err = stderr(&output);
+    assert_eq!(output.status.code(), Some(2), "{err}");
+    assert!(err.contains("--cache-dir"), "{err}");
+    assert!(
+        err.to_lowercase().contains("permission"),
+        "the error names the permission problem: {err}"
+    );
+
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+fn entries_in(path: &std::path::Path) -> Vec<String> {
+    std::fs::read_dir(path)
         .unwrap()
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|name| name.starts_with('v') && name.ends_with(".json"))

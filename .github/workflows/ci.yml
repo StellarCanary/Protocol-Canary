@@ -58,10 +58,12 @@ jobs:
           - pack: protocol-28 tag
             ref: protocol-28
             min_xdr: 3
+            vector: ""
           # Whatever the Fixtures repository holds now.
           - pack: Fixtures main
             ref: main
             min_xdr: 4
+            vector: canonical-pack/tests/vectors/conformance/invalid/xdr-toml-syntax.toml
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -79,7 +81,9 @@ jobs:
         run: cargo build --locked
 
       - name: Load the pack and run its offline fixtures
-        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack/protocol-28 ${{ matrix.min_xdr }}
+        # Pass the executable pack, not the checkout root: the root also holds
+        # the intentionally malformed negative vectors under tests/vectors.
+        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack/protocol-28 ${{ matrix.min_xdr }} "${{ matrix.vector }}"
 
   audit:
     name: cargo audit

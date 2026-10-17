@@ -1,6 +1,6 @@
 //! Project type detection.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use canary_core::{ProjectContext, ProjectType};
 
@@ -86,26 +86,41 @@ fn classify(capabilities: &[canary_core::Capability], has_stellar_toml: bool) ->
 }
 
 fn find_wasm_artifact(root: &Path) -> bool {
+    !find_wasm_artifacts(root).is_empty()
+}
+
+/// The WASM artifacts the detector sees at `root`: files with a `.wasm`
+/// extension in the known Cargo output directories or up to two
+/// directories below the root, skipping `.git`, `node_modules` and
+/// `target`.
+///
+/// Paths are absolute and in no particular order; callers that need a
+/// deterministic, root-relative form (e.g. the CA-04 fingerprint) sort
+/// and normalize them themselves.
+pub fn find_wasm_artifacts(root: &Path) -> Vec<PathBuf> {
+    let mut found = Vec::new();
     for known in KNOWN_WASM_OUTPUT_DIRS {
-        if dir_contains_wasm(&root.join(known)) {
-            return true;
+        collect_wasm_in_dir(&root.join(known), &mut found);
+    }
+    collect_wasm_shallow(root, 2, &mut found);
+    found
+}
+
+fn collect_wasm_in_dir(dir: &Path, found: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        if path.extension().is_some_and(|ext| ext == "wasm") {
+            found.push(path);
         }
     }
-    shallow_scan_for_wasm(root, 2)
 }
 
-fn dir_contains_wasm(dir: &Path) -> bool {
+fn collect_wasm_shallow(dir: &Path, remaining_depth: u32, found: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries
-        .filter_map(Result::ok)
-        .any(|entry| entry.path().extension().is_some_and(|ext| ext == "wasm"))
-}
-
-fn shallow_scan_for_wasm(dir: &Path, remaining_depth: u32) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
+        return;
     };
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
@@ -116,14 +131,13 @@ fn shallow_scan_for_wasm(dir: &Path, remaining_depth: u32) -> bool {
             if SKIP_DIRS.contains(&file_name.as_ref()) || file_name == "target" {
                 continue;
             }
-            if remaining_depth > 0 && shallow_scan_for_wasm(&path, remaining_depth - 1) {
-                return true;
+            if remaining_depth > 0 {
+                collect_wasm_shallow(&path, remaining_depth - 1, found);
             }
         } else if path.extension().is_some_and(|ext| ext == "wasm") {
-            return true;
+            found.push(path);
         }
     }
-    false
 }
 
 #[cfg(test)]

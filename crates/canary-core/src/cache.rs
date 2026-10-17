@@ -4,7 +4,7 @@
 //! rule): a cache entry is one small JSON file per key under a cache
 //! directory, keyed by everything that can invalidate reuse.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
@@ -237,6 +237,33 @@ impl CacheStore {
         std::fs::remove_dir_all(&self.root)
             .map_err(|e| CanaryError::Cache(format!("failed to clear cache directory: {e}")))
     }
+
+    /// Total size in bytes of every file under the cache root, computed by
+    /// walking the directory tree. Returns `0` when the root does not exist,
+    /// so callers can report a clean "nothing to clear" result instead of an
+    /// error.
+    pub fn cache_size(&self) -> Result<u64, CanaryError> {
+        if !self.root.exists() {
+            return Ok(0);
+        }
+        dir_size(&self.root)
+            .map_err(|e| CanaryError::Cache(format!("failed to read cache directory: {e}")))
+    }
+}
+
+/// Recursively sums the size of every file under `dir`.
+fn dir_size(dir: &Path) -> Result<u64, std::io::Error> {
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let metadata = entry.metadata()?;
+        if metadata.is_dir() {
+            total += dir_size(&entry.path())?;
+        } else {
+            total += metadata.len();
+        }
+    }
+    Ok(total)
 }
 
 #[cfg(test)]

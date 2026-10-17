@@ -47,6 +47,8 @@ pub enum Command {
     Fixtures(FixturesArgs),
     /// Render a previously generated JSON report.
     Report(ReportArgs),
+    /// Manage the local result cache.
+    Cache(CacheArgs),
     /// Print the tool version.
     Version,
 }
@@ -181,6 +183,27 @@ pub struct CheckArgs {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub live_cache_ttl: Option<u64>,
+}
+
+/// Arguments for the `cache` command group.
+#[derive(Debug, Subcommand)]
+pub enum CacheArgs {
+    /// Delete cached fixture execution results and report reclaimed space.
+    Clear(CacheClearArgs),
+}
+
+/// Arguments for `stellar-canary cache clear`.
+#[derive(Debug, Parser)]
+pub struct CacheClearArgs {
+    /// Directory to treat as the project root (default: the current
+    /// directory). Relative `--cache-dir` paths are resolved against it.
+    #[arg(long = "project-root", value_name = "PATH")]
+    pub project_root: Option<PathBuf>,
+
+    /// Directory for cached fixture execution results (default:
+    /// .stellar-canary-cache in the project root).
+    #[arg(long = "cache-dir", value_name = "PATH")]
+    pub cache_dir: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -507,6 +530,49 @@ mod tests {
             assert_eq!(args.rpc_retry_delay_ms, 250);
         } else {
             panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn cache_clear_subcommand_defaults_to_none() {
+        let cli = Cli::parse_from(["stellar-canary", "cache", "clear"]);
+        if let Command::Cache(CacheArgs::Clear(args)) = cli.command {
+            assert_eq!(args.cache_dir, None);
+            assert_eq!(args.project_root, None);
+        } else {
+            panic!("Expected Cache::Clear command");
+        }
+    }
+
+    #[test]
+    fn cache_clear_subcommand_takes_a_cache_dir() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "cache",
+            "clear",
+            "--cache-dir",
+            "build/canary-cache",
+        ]);
+        if let Command::Cache(CacheArgs::Clear(args)) = cli.command {
+            assert_eq!(args.cache_dir, Some(PathBuf::from("build/canary-cache")));
+        } else {
+            panic!("Expected Cache::Clear command");
+        }
+    }
+
+    #[test]
+    fn cache_clear_subcommand_takes_a_project_root() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "cache",
+            "clear",
+            "--project-root",
+            "member",
+        ]);
+        if let Command::Cache(CacheArgs::Clear(args)) = cli.command {
+            assert_eq!(args.project_root, Some(PathBuf::from("member")));
+        } else {
+            panic!("Expected Cache::Clear command");
         }
     }
 }

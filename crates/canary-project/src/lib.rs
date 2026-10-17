@@ -7,11 +7,17 @@ pub mod manifest;
 pub mod workspace;
 
 pub use capabilities::{detect_capabilities, DetectionSignals};
-pub use detector::{detect, find_wasm_artifacts, resolve_project_type};
+pub use detector::{
+    detect, detect_details, find_wasm_artifacts, resolve_project_type, CapabilityEvidence,
+    DetailedDetection, DetectionEvidence,
+};
 pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
 };
-pub use manifest::{read_cargo_manifest, read_package_json, ProjectManifest};
+pub use manifest::{
+    parse_cargo_dependencies, parse_package_json_dependencies, read_cargo_manifest,
+    read_package_json, ManifestDep, ProjectManifest,
+};
 pub use workspace::{
     scan_cargo_workspace, Diagnostic, DiagnosticCode, WorkspaceMember, WorkspaceScan,
     MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,

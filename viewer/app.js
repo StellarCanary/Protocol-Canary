@@ -31,7 +31,43 @@
     list.appendChild(detail);
   }
 
+  /* The protocol the run observed, wherever the report carries it: the
+   * schema nests it under `network`, but a top-level `observedProtocol` is
+   * accepted too. `null` means "not observed", which is not a mismatch. */
+  function observedProtocolOf(report) {
+    var network = report.network;
+    if (network && typeof network.observedProtocol === "number") {
+      return network.observedProtocol;
+    }
+    if (typeof report.observedProtocol === "number") {
+      return report.observedProtocol;
+    }
+    return null;
+  }
+
+  /* A mismatch between the target and the observed protocol is the one
+   * finding that invalidates the whole report, so it gets its own alert
+   * banner at the top rather than a line in the warnings list. Reports that
+   * match, or that never observed a protocol (offline run, transport error),
+   * leave the banner hidden — no banner, no undefined, no throw. */
+  function showMismatchBanner(report) {
+    var banner = el("protocol-mismatch");
+    var observed = observedProtocolOf(report);
+    var target = report.targetProtocol;
+    if (observed === null || typeof target !== "number" || observed === target) {
+      banner.hidden = true;
+      banner.textContent = "";
+      return;
+    }
+    banner.textContent =
+      "Protocol Mismatch Warning: Target protocol (" + target +
+      ") differs from network observed protocol (" + observed + ").";
+    banner.hidden = false;
+  }
+
   function showInvalid(reason) {
+    el("protocol-mismatch").hidden = true;
+    el("protocol-mismatch").textContent = "";
     el("result").hidden = false;
     el("result").setAttribute("data-state", "invalid");
     setText("heading", V.heading(null, null));
@@ -53,15 +89,11 @@
       );
     }
     var network = report.network || null;
-    if (network && typeof network.observedProtocol === "number" && network.observedProtocol !== report.targetProtocol) {
-      warnings.push(
-        "The network reported protocol " + network.observedProtocol +
-          ", but this report targets protocol " + report.targetProtocol + "."
-      );
-    }
 
     el("result").hidden = false;
     el("result").setAttribute("data-state", report.status);
+    /* After the result section is visible, so the alert region is announced. */
+    showMismatchBanner(report);
     setText("heading", V.heading(report, counts));
     el("invalid-reason").hidden = true;
     setText("status-line", "Report status: " + report.status);

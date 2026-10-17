@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.1.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "v010_fail",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "results": [
+    {
+      "testId": "p28-xdr-invalid",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "failed to decode StellarValue",
+      "details": "Invalid symbol 45, offset 3.",
+      "durationMs": 1,
+      "fixtureId": "p28-xdr-invalid"
+    }
+  ],
+  "git": {
+    "commit": "2458f9271c4f14c8c38500cbbc6562959ab21726",
+    "branch": "master",
+    "isDirty": false
+  }
+}

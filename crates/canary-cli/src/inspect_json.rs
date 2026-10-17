@@ -4,8 +4,7 @@
 //!
 //! The shape is written out explicitly, like `canary_report::json`, so a
 //! change to an internal type can never silently change the document.
-//! `fingerprint` (CA-04) and `project.detection` (CF-07) are omitted
-//! until their contracts land; both are optional in CA-03 section 3.
+//! Conforms to CA-03, CF-07, and CA-04.
 
 use serde::Serialize;
 
@@ -27,6 +26,8 @@ pub struct InspectDocument {
     pub target: InspectTarget,
     pub fixtures: InspectFixtures,
     pub plan: InspectPlan,
+    pub workspace: InspectWorkspace,
+    pub fingerprint: InspectFingerprint,
 }
 
 #[derive(Debug, Serialize)]
@@ -43,6 +44,68 @@ pub struct InspectProject {
     pub detected_type: String,
     /// Sorted, lowercase kebab.
     pub capabilities: Vec<String>,
+    pub workspace: InspectWorkspace,
+    pub detection: InspectDetection,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectWorkspace {
+    pub members: Vec<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectFingerprint {
+    pub fingerprint_version: u32,
+    pub detector: u64,
+    pub digest: String,
+    pub inputs: usize,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectDetection {
+    pub evidence_version: u32,
+    pub root: String,
+    pub capabilities: Vec<InspectCapabilityEvidence>,
+    pub inspected: Vec<String>,
+    pub diagnostics: Vec<InspectDiagnostic>,
+    pub project_type: InspectProjectTypeEvidence,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectCapabilityEvidence {
+    pub capability: String,
+    pub evidence: Vec<InspectEvidenceItem>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectEvidenceItem {
+    pub manifest: String,
+    pub ecosystem: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dependency: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectDiagnostic {
+    pub code: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Serialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct InspectProjectTypeEvidence {
+    pub value: String,
+    pub source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detected_value: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,6 +221,32 @@ mod tests {
                 type_source: "detected".to_string(),
                 detected_type: "soroban".to_string(),
                 capabilities: vec!["soroban-contract".to_string()],
+                workspace: InspectWorkspace {
+                    members: vec!["contracts/token".to_string()],
+                },
+                detection: InspectDetection {
+                    evidence_version: 1,
+                    root: ".".to_string(),
+                    capabilities: vec![InspectCapabilityEvidence {
+                        capability: "soroban-contract".to_string(),
+                        evidence: vec![InspectEvidenceItem {
+                            manifest: "contracts/token/Cargo.toml".to_string(),
+                            ecosystem: "cargo".to_string(),
+                            dependency: Some("soroban-sdk".to_string()),
+                            section: Some("dependencies".to_string()),
+                        }],
+                    }],
+                    inspected: vec![
+                        "Cargo.toml".to_string(),
+                        "contracts/token/Cargo.toml".to_string(),
+                    ],
+                    diagnostics: vec![],
+                    project_type: InspectProjectTypeEvidence {
+                        value: "soroban".to_string(),
+                        source: "detected".to_string(),
+                        detected_value: None,
+                    },
+                },
             },
             config: InspectConfig {
                 found: false,
@@ -196,6 +285,16 @@ mod tests {
                 check_would_refuse: false,
                 refusal: None,
             },
+            workspace: InspectWorkspace {
+                members: vec!["contracts/token".to_string()],
+            },
+            fingerprint: InspectFingerprint {
+                fingerprint_version: 1,
+                detector: 1,
+                digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+                inputs: 2,
+            },
         }
     }
 
@@ -209,6 +308,15 @@ mod tests {
         assert_eq!(value["project"]["type"], "soroban");
         assert_eq!(value["project"]["typeSource"], "detected");
         assert_eq!(value["project"]["detectedType"], "soroban");
+        assert_eq!(
+            value["project"]["workspace"]["members"][0],
+            "contracts/token"
+        );
+        assert_eq!(value["project"]["detection"]["evidenceVersion"], 1);
+        assert_eq!(
+            value["project"]["detection"]["capabilities"][0]["capability"],
+            "soroban-contract"
+        );
         assert_eq!(value["config"]["found"], false);
         assert_eq!(value["config"]["path"], serde_json::Value::Null);
         assert_eq!(value["target"]["source"], "default");
@@ -218,6 +326,14 @@ mod tests {
         assert_eq!(value["plan"]["skipped"][0]["code"], "protocol-mismatch");
         assert_eq!(value["plan"]["checkWouldRefuse"], false);
         assert_eq!(value["plan"]["refusal"], serde_json::Value::Null);
+        assert_eq!(value["workspace"]["members"][0], "contracts/token");
+        assert_eq!(value["fingerprint"]["fingerprintVersion"], 1);
+        assert_eq!(value["fingerprint"]["detector"], 1);
+        assert_eq!(
+            value["fingerprint"]["digest"],
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+        );
+        assert_eq!(value["fingerprint"]["inputs"], 2);
     }
 
     #[test]

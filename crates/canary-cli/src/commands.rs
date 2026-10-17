@@ -1053,7 +1053,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
                 &fixtures_dir,
                 &loaded_fixtures,
             );
-            println!("{}", fixtures_json::render(&inventory));
+            print!("{}", fixtures_json::render(&inventory));
         }
     }
 

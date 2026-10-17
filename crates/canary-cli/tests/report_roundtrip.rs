@@ -34,6 +34,30 @@ fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network()
     assert!(text.contains("**Result: PASS**"));
 }
 
+/// `report --format junit` re-renders a stored JSON report as JUnit XML
+/// for CI test-summary dashboards, without re-running anything.
+#[test]
+fn report_renders_a_saved_json_report_as_junit_xml() {
+    let dir = TempProject::new("report-junit");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
+
+    let check_output = run_in(&dir.path, &["check", "--json"]);
+    assert_eq!(check_output.status.code(), Some(0));
+    dir.write("result.json", &stdout(&check_output));
+
+    let report_output = run_in(&dir.path, &["report", "result.json", "--format", "junit"]);
+    assert_eq!(report_output.status.code(), Some(0));
+    let text = stdout(&report_output);
+    assert!(
+        text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"),
+        "junit output must start with the XML declaration, got: {text}"
+    );
+    assert!(text.contains("<testsuites name=\"stellar-canary\""));
+    assert!(text.contains("name=\"p28-xdr-1\""));
+    assert!(text.trim_end().ends_with("</testsuites>"));
+}
+
 /// `ReportArgs::format` documents Markdown as the default, so a bare
 /// `report <path>` invocation must render Markdown rather than terminal
 /// output. This covers the default that the explicit-`--format markdown`

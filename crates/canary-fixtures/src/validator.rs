@@ -86,6 +86,7 @@ mod tests {
             input_file: None,
             expected_file: None,
             body: toml::Value::Table(Default::default()),
+            verification: None,
         }
     }
 

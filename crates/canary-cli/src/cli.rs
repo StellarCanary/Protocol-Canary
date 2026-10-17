@@ -10,6 +10,21 @@ use clap::{Parser, Subcommand, ValueEnum};
     version,
     about = "Rehearse Stellar protocol upgrades before they reach your production stack."
 )]
+/// Top-level command-line interface for the `stellar-canary` binary.
+///
+/// `Cli` is the `clap` entry point: it holds the one required subcommand the
+/// user typed — [`Command::Check`], [`Command::Inspect`],
+/// [`Command::Fixtures`], [`Command::Report`] or [`Command::Version`] —
+/// together with that subcommand's own argument struct. The binary name and
+/// version banner come from the `#[command(...)]` attributes above, and flags
+/// that apply to a single run live on the per-command `*Args` types rather
+/// than here.
+///
+/// Building a `Cli` parses process arguments only: it performs no I/O of its
+/// own and does not panic. Invalid input is a failure condition rather than
+/// an error value — `clap` prints the usage message to stderr and exits the
+/// process with status 2 before a `Cli` is ever constructed, so any `Cli`
+/// value that exists represents a successfully parsed invocation.
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -51,6 +66,9 @@ pub enum OutputFormat {
     Json,
     /// Markdown output for summaries and pull-request comments.
     Markdown,
+    /// JUnit XML output for CI test-summary dashboards.
+    #[value(name = "junit")]
+    JUnit,
 }
 
 #[derive(Debug, Parser)]
@@ -94,6 +112,17 @@ pub struct CheckArgs {
     /// Request timeout for the RPC client in seconds.
     #[arg(long = "rpc-timeout", default_value = "10")]
     pub rpc_timeout: u64,
+
+    /// Maximum number of retries after a failed RPC attempt. `0` disables
+    /// retries: the call fails on the first network error. Each retry is a
+    /// full request, so the total number of attempts is n + 1.
+    #[arg(long = "rpc-max-retries", default_value_t = 3)]
+    pub rpc_max_retries: u32,
+
+    /// Base delay between RPC retry attempts, in milliseconds. The backoff
+    /// is linear: attempt n waits n times this value.
+    #[arg(long = "rpc-retry-delay-ms", default_value_t = 500)]
+    pub rpc_retry_delay_ms: u64,
 
     /// Directory containing fixture files (overrides `fixtures_dir` in
     /// .stellar-canary.toml; default: fixtures).
@@ -147,6 +176,20 @@ pub struct CheckArgs {
     pub live_cache_ttl: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+/// Selects the renderer used by `inspect`.
+///
+/// `Terminal` is today's human-readable output, byte for byte. `Json`
+/// prints the versioned CA-03 document for CI pipelines and tooling.
+/// `markdown` is deliberately not accepted here: `inspect` renders no
+/// report.
+pub enum InspectFormat {
+    /// Human-readable output for an interactive terminal.
+    Terminal,
+    /// Versioned JSON output (CA-03) for automation.
+    Json,
+}
+
 /// Rejects `--network-passphrase ""` at parse time.
 ///
 /// An empty expected passphrase is how `canary_rpc::validate_network_info`
@@ -184,6 +227,28 @@ pub struct InspectArgs {
     /// project root).
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = InspectFormat::Terminal)]
+    pub format: InspectFormat,
+
+    /// Shorthand for --format json.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+/// Selects the renderer used by `fixtures`.
+///
+/// `Terminal` is today's human-readable listing, byte for byte. `Json`
+/// prints the versioned CA-02 inventory for CI pipelines and tooling.
+/// `markdown` is deliberately not accepted: `fixtures` renders no
+/// report.
+pub enum FixturesFormat {
+    /// Human-readable output for an interactive terminal.
+    Terminal,
+    /// Versioned JSON inventory (CA-02) for automation.
+    Json,
 }
 
 #[derive(Debug, Parser)]
@@ -209,6 +274,14 @@ pub struct FixturesArgs {
     /// project root).
     #[arg(long)]
     pub config: Option<PathBuf>,
+
+    /// Output format.
+    #[arg(long, value_enum, default_value_t = FixturesFormat::Terminal)]
+    pub format: FixturesFormat,
+
+    /// Shorthand for --format json.
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Debug, Parser)]
@@ -340,5 +413,34 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("--network-passphrase"), "{text}");
         assert!(text.contains("the passphrase cannot be empty"), "{text}");
+    }
+
+    #[test]
+    fn rpc_retry_flags_default_to_three_retries_and_500_milliseconds() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.rpc_max_retries, 3);
+            assert_eq!(args.rpc_retry_delay_ms, 500);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn rpc_retry_flags_take_custom_values() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--rpc-max-retries",
+            "0",
+            "--rpc-retry-delay-ms",
+            "250",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.rpc_max_retries, 0);
+            assert_eq!(args.rpc_retry_delay_ms, 250);
+        } else {
+            panic!("Expected Check command");
+        }
     }
 }

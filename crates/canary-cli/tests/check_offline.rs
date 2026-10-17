@@ -278,6 +278,29 @@ fn quiet_with_json_still_prints_the_full_json_report() {
     assert_eq!(value["results"][0]["status"], "pass");
 }
 
+/// `check --format junit` wires the JUnit reporter into the check path
+/// end-to-end (the reporter itself is unit-tested in canary-report).
+#[test]
+fn junit_format_outputs_junit_xml_for_check() {
+    let dir = TempProject::new("check-junit");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--format", "junit"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"),
+        "junit output must start with the XML declaration, got: {text}"
+    );
+    assert!(text.contains("<testsuites name=\"stellar-canary\""));
+    assert!(text.contains("name=\"p28-xdr-1\""));
+    assert!(text.trim_end().ends_with("</testsuites>"));
+}
+
 #[test]
 fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
     let dir = TempProject::new("check-protocol-zero");

@@ -16,6 +16,8 @@ Options:
       --project-root <PATH>          Directory to treat as the project root (default: the current directory)
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
       --rpc-timeout <RPC_TIMEOUT>    Request timeout for the RPC client in seconds [default: 10]
+      --rpc-max-retries <RPC_MAX_RETRIES>  Maximum number of retries after a failed RPC attempt; 0 disables retries (attempts = n + 1) [default: 3]
+      --rpc-retry-delay-ms <RPC_RETRY_DELAY_MS>  Base delay between RPC retry attempts in milliseconds, linear backoff [default: 500]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json

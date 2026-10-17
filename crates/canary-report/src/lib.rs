@@ -7,8 +7,10 @@
 
 pub mod diff;
 pub mod json;
+pub mod junit;
 pub mod markdown;
 pub mod terminal;
+pub mod writer;
 
 use canary_core::{
     CompatibilityResult, GitContext, NetworkName, PolicyDecision, ProjectType, ProtocolVersion,
@@ -16,8 +18,10 @@ use canary_core::{
 };
 
 pub use json::JsonReporter;
+pub use junit::JUnitReporter;
 pub use markdown::MarkdownReporter;
 pub use terminal::TerminalReporter;
+pub use writer::atomic_write_report;
 
 /// A fixture the planner decided not to run, and why — carried into the
 /// report as plain data so reporters don't need to depend on
@@ -42,6 +46,37 @@ pub struct NetworkSummary {
     pub name: NetworkName,
     pub observed_protocol: Option<ProtocolVersion>,
     pub error: Option<String>,
+}
+
+/// What is known about a fixture's CF-04 verification evidence, for
+/// display. Verification is a separate, dated, attributed event — a
+/// passing run is not a verification (CF-04 section 2).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationSummary {
+    pub fixture_id: String,
+    /// The CF-04 method: `structural`, `source-checked`, `live-read-only`
+    /// or `live-simulation`.
+    pub method: String,
+    /// `matched` or `mismatched`.
+    pub outcome: String,
+    /// The RFC 3339 UTC instant the record was checked at.
+    pub checked_at: String,
+}
+
+impl VerificationSummary {
+    /// The badge shown next to a result, e.g. `[verified: live-simulation]`.
+    ///
+    /// A `matched` record is `[verified: <method>]`; a `mismatched`
+    /// record is reported as unverified and names its method, because a
+    /// mismatched record is retained precisely to explain why the
+    /// fixture is not trusted (CF-04 section 3).
+    pub fn badge(&self) -> String {
+        if self.outcome == "matched" {
+            format!("[verified: {}]", self.method)
+        } else {
+            format!("[unverified: {} record {}]", self.method, self.outcome)
+        }
+    }
 }
 
 /// Facts about the engine run that produced a report (CF-01 `run`).
@@ -69,6 +104,11 @@ pub struct ReportInput {
     pub network: Option<NetworkSummary>,
     pub results: Vec<CompatibilityResult>,
     pub skipped: Vec<SkipSummary>,
+    /// Verification evidence for the fixtures of this run, by fixture
+    /// id. A fixture missing from this list is unverified, which is the
+    /// unknown state; the terminal reporter shows that rather than
+    /// omitting it.
+    pub verification: Vec<VerificationSummary>,
     pub decision: PolicyDecision,
     pub git: GitContext,
     pub verbose: bool,
@@ -79,6 +119,26 @@ pub struct ReportInput {
 }
 
 impl ReportInput {
+    /// The verification evidence recorded for `fixture_id`, if any.
+    pub fn verification_for(&self, fixture_id: &str) -> Option<&VerificationSummary> {
+        self.verification
+            .iter()
+            .find(|record| record.fixture_id == fixture_id)
+    }
+
+    /// The verification badge for one result: the fixture's recorded
+    /// evidence, or `[unverified]` when there is none. Never empty — the
+    /// unknown state is shown, not hidden.
+    pub fn verification_badge(&self, result: &CompatibilityResult) -> String {
+        match result
+            .fixture_id
+            .as_deref()
+            .and_then(|id| self.verification_for(id))
+        {
+            Some(record) => record.badge(),
+            None => "[unverified]".to_string(),
+        }
+    }
     /// How many results were replayed from the local result cache instead of
     /// being executed in this run.
     pub fn cached_count(&self) -> usize {
@@ -142,6 +202,7 @@ impl ReportInput {
     ///     network: None,
     ///     results: vec![xdr_pass.clone(), rpc_pass, xdr_pass],
     ///     skipped: Vec::new(),
+    ///     verification: Vec::new(),
     ///     decision: canary_core::PolicyDecision::Pass,
     ///     git: canary_core::GitContext::default(),
     ///     verbose: false,
@@ -324,6 +385,7 @@ mod tests {
             network: None,
             results,
             skipped: Vec::new(),
+            verification: Vec::new(),
             decision,
             git: GitContext::default(),
             verbose: false,

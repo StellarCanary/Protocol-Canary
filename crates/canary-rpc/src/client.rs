@@ -269,6 +269,45 @@ impl Default for RetryPolicy {
     }
 }
 
+impl RetryPolicy {
+    /// Builds a policy from a *retry count* rather than an attempt count.
+    ///
+    /// `max_retries` is how many times a failed attempt may be repeated, so
+    /// `max_attempts` becomes `max_retries + 1`: the first attempt is always
+    /// made, and everything after it is a retry. `from_retries(0, …)`
+    /// therefore yields a policy that issues exactly one request and
+    /// surfaces the first network error — what the CLI's
+    /// `--rpc-max-retries 0` promises. The count saturates instead of
+    /// overflowing at `u32::MAX`.
+    ///
+    /// `base_delay` is the linear-backoff base: attempt *n* waits `n *
+    /// base_delay` before the next attempt (see [`HttpRpcClient::with_retry_policy`]
+    /// for the timing model).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use canary_rpc::RetryPolicy;
+    ///
+    /// // `--rpc-max-retries 3 --rpc-retry-delay-ms 500`: one attempt plus
+    /// // three retries, 500ms base delay.
+    /// let policy = RetryPolicy::from_retries(3, Duration::from_millis(500));
+    /// assert_eq!(policy.max_attempts, 4);
+    /// assert_eq!(policy.base_delay, Duration::from_millis(500));
+    ///
+    /// // `--rpc-max-retries 0`: exactly one attempt, no retries.
+    /// let single = RetryPolicy::from_retries(0, Duration::from_millis(500));
+    /// assert_eq!(single.max_attempts, 1);
+    /// ```
+    pub fn from_retries(max_retries: u32, base_delay: Duration) -> Self {
+        RetryPolicy {
+            max_attempts: max_retries.saturating_add(1),
+            base_delay,
+        }
+    }
+}
+
 /// A [`RpcClient`] backed by a real HTTP endpoint.
 #[derive(Clone)]
 pub struct HttpRpcClient {

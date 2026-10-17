@@ -276,7 +276,8 @@ mod tests {
         ProtocolVersion, RunOptions,
     };
     use stellar_xdr::{
-        ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, WriteXdr,
+        ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, TransactionEnvelope,
+        WriteXdr,
     };
 
     fn valid_stellar_value_base64() -> String {
@@ -476,6 +477,40 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_transaction_envelope() {
+        let base64 = TransactionEnvelope::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"TransactionEnvelope\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-envelope-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::TransactionEnvelope);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(
+            result.summary,
+            "TransactionEnvelope round-tripped byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_transaction_envelope() {
+        let base64 = TransactionEnvelope::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"TransactionEnvelope\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-envelope-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded TransactionEnvelope successfully");
     }
 
     #[test]

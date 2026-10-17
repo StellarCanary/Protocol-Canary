@@ -193,6 +193,29 @@ pub enum Capability {
     RawLedgerAccess,
 }
 
+impl Capability {
+    /// Every capability variant the engine can declare, in declaration order.
+    ///
+    /// This is the engine side of the capability vocabulary shared with the
+    /// fixture validator: the canonical vector in `tests/fixtures/
+    /// capabilities.json` must name exactly these variants (kebab-case, as
+    /// serialized by [`Capability`]'s `serde` representation), and the
+    /// `capability_parity` integration test fails when either side grows a
+    /// tag the other lacks. Keep this list in step with `CAPABILITIES` in
+    /// ProtocolCanary-Fixtures' `tools/validate/validate.py` and with the
+    /// `required_capabilities` enum in its `schemas/fixture-v1.schema.json`
+    /// (CF-07 section 9).
+    pub fn all() -> &'static [Capability] {
+        &[
+            Capability::SorobanContract,
+            Capability::RpcClient,
+            Capability::StellarSdkDependency,
+            Capability::WasmArtifact,
+            Capability::RawLedgerAccess,
+        ]
+    }
+}
+
 /// Everything the pipeline knows about the project being checked.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProjectContext {
@@ -258,6 +281,25 @@ pub struct RunOptions {
     pub quiet: bool,
     pub max_concurrency: u32,
     pub rpc_timeout: u64,
+    /// Maximum retries after a failed RPC attempt: `0` disables retries
+    /// (one attempt is always made, and the first network error fails the
+    /// call). Defaults to the CLI flag's default of `3`. The serde default
+    /// keeps payloads written before this field existed deserializing to
+    /// that documented value.
+    #[serde(default = "default_rpc_max_retries")]
+    pub rpc_max_retries: u32,
+    /// Base delay between RPC retry attempts, in milliseconds (linear
+    /// backoff: attempt *n* waits `n * base_delay`).
+    #[serde(default = "default_rpc_retry_delay_ms")]
+    pub rpc_retry_delay_ms: u64,
+}
+
+fn default_rpc_max_retries() -> u32 {
+    3
+}
+
+fn default_rpc_retry_delay_ms() -> u64 {
+    500
 }
 
 impl Default for RunOptions {
@@ -267,6 +309,8 @@ impl Default for RunOptions {
             quiet: false,
             max_concurrency: 4,
             rpc_timeout: 10,
+            rpc_max_retries: default_rpc_max_retries(),
+            rpc_retry_delay_ms: default_rpc_retry_delay_ms(),
         }
     }
 }
@@ -314,6 +358,22 @@ impl FixtureStore {
         self.fixtures.len()
     }
 
+    /// Returns `true` when the store holds no fixtures.
+    ///
+    /// Equivalent to `self.len() == 0`. An empty store means loading and
+    /// validation produced nothing for any protocol or surface, so a run
+    /// planned from it executes no checks — a configuration error (exit 2)
+    /// unless `--allow-empty` is given.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::FixtureStore;
+    ///
+    /// let store = FixtureStore::default();
+    /// assert!(store.is_empty());
+    /// assert_eq!(store.len(), 0);
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty()
     }
@@ -328,6 +388,35 @@ impl FixtureStore {
         self.fixtures.iter().filter(move |f| f.surface == surface)
     }
 
+    /// Iterates over the fixtures that declare `protocol`.
+    ///
+    /// The comparison is an exact match against each fixture's `protocol`
+    /// metadata: no compatibility range is applied, so a store holding only
+    /// protocol 27 fixtures yields an empty iterator — never an error — when
+    /// asked for `ProtocolVersion(28)`, and a fixture's position in the
+    /// store is preserved. `canary-cli`'s `fixtures` command uses this to
+    /// list one target protocol's fixture ids grouped by surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = |protocol| FixtureMetadata {
+    ///     id: "p28-xdr-001".into(),
+    ///     protocol: ProtocolVersion(protocol),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "roundtrip".into(),
+    ///     source_reference: None,
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture(27), fixture(28)]);
+    ///
+    /// assert_eq!(store.for_protocol(ProtocolVersion(28)).count(), 1);
+    /// assert_eq!(store.for_protocol(ProtocolVersion(29)).count(), 0);
+    /// ```
     pub fn for_protocol(
         &self,
         protocol: ProtocolVersion,

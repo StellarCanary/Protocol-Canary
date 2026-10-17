@@ -1,6 +1,6 @@
 //! Re-encoding a previously decoded XDR value.
 
-use stellar_xdr::{LedgerEntry, Limits, WriteXdr};
+use stellar_xdr::{LedgerEntry, Limits, TransactionEnvelope, WriteXdr};
 
 use crate::decoder::DecodedValue;
 
@@ -10,8 +10,22 @@ pub fn encode(value: &DecodedValue) -> Result<String, stellar_xdr::Error> {
         DecodedValue::StellarValue(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::ContractExecutable(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::ScVal(v) => v.to_xdr_base64(Limits::none()),
+        DecodedValue::TransactionEnvelope(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::LedgerEntry(v) => v.to_xdr_base64(Limits::none()),
     }
+}
+
+/// Encodes `envelope` (V0, V1, or FeeBump) as canonical base64 XDR.
+///
+/// `stellar-xdr`'s XDR writer is deterministic, so for any envelope
+/// produced by [`crate::decode_transaction_envelope`],
+/// `encode_transaction_envelope(decode_transaction_envelope(bytes))`
+/// reproduces `bytes` exactly — signatures, memos, and every other field
+/// included.
+pub fn encode_transaction_envelope(
+    envelope: &TransactionEnvelope,
+) -> Result<String, stellar_xdr::Error> {
+    envelope.to_xdr_base64(Limits::none())
 }
 
 /// Encodes `entry` as canonical base64 XDR.
@@ -28,7 +42,9 @@ pub fn encode_ledger_entry(entry: &LedgerEntry) -> Result<String, stellar_xdr::E
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::decoder::{decode, decode_ledger_entry, DecodedValue, XdrTypeName};
+    use crate::decoder::{
+        decode, decode_ledger_entry, decode_transaction_envelope, DecodedValue, XdrTypeName,
+    };
     use stellar_xdr::{ContractExecutable, StellarValue};
 
     #[test]
@@ -44,8 +60,32 @@ mod tests {
             DecodedValue::StellarValue(v) => assert_eq!(v, value),
             DecodedValue::ContractExecutable(_) => panic!("expected StellarValue"),
             DecodedValue::ScVal(_) => panic!("expected StellarValue"),
+            DecodedValue::TransactionEnvelope(_) => panic!("expected StellarValue"),
             DecodedValue::LedgerEntry(_) => panic!("expected StellarValue"),
         }
+    }
+
+    #[test]
+    fn encoding_a_decoded_transaction_envelope_reproduces_the_same_bytes() {
+        let original = TransactionEnvelope::default();
+        let base64 = encode_transaction_envelope(&original).expect("encodes");
+
+        let decoded = decode_transaction_envelope(&base64).expect("decodes");
+        let re_encoded = encode_transaction_envelope(&decoded).expect("re-encodes");
+
+        assert_eq!(base64, re_encoded);
+    }
+
+    /// The generic [`encode`] path must agree with the typed
+    /// [`encode_transaction_envelope`] for the same envelope, so fixtures
+    /// that go through `DecodedValue` are not encoded differently.
+    #[test]
+    fn the_generic_encode_path_agrees_with_the_typed_one_for_envelopes() {
+        let envelope = TransactionEnvelope::default();
+        let typed = encode_transaction_envelope(&envelope).expect("encodes");
+        let generic =
+            encode(&DecodedValue::TransactionEnvelope(Box::new(envelope))).expect("encodes");
+        assert_eq!(typed, generic);
     }
 
     #[test]
@@ -84,6 +124,7 @@ mod tests {
             DecodedValue::ContractExecutable(v) => assert_eq!(v, value),
             DecodedValue::StellarValue(_) => panic!("expected ContractExecutable"),
             DecodedValue::ScVal(_) => panic!("expected ContractExecutable"),
+            DecodedValue::TransactionEnvelope(_) => panic!("expected ContractExecutable"),
             DecodedValue::LedgerEntry(_) => panic!("expected ContractExecutable"),
         }
     }

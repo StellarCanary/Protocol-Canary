@@ -8,7 +8,9 @@
 
 use std::fmt;
 
-use stellar_xdr::{ContractExecutable, LedgerEntry, Limits, ReadXdr, StellarValue};
+use stellar_xdr::{
+    ContractExecutable, LedgerEntry, Limits, ReadXdr, StellarValue, TransactionEnvelope,
+};
 
 /// A type name a fixture can name in its `type` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -16,6 +18,7 @@ pub enum XdrTypeName {
     StellarValue,
     ContractExecutable,
     ScVal,
+    TransactionEnvelope,
     LedgerEntry,
 }
 
@@ -25,6 +28,7 @@ impl fmt::Display for XdrTypeName {
             XdrTypeName::StellarValue => f.write_str("StellarValue"),
             XdrTypeName::ContractExecutable => f.write_str("ContractExecutable"),
             XdrTypeName::ScVal => f.write_str("ScVal"),
+            XdrTypeName::TransactionEnvelope => f.write_str("TransactionEnvelope"),
             XdrTypeName::LedgerEntry => f.write_str("LedgerEntry"),
         }
     }
@@ -38,10 +42,11 @@ impl std::str::FromStr for XdrTypeName {
             "StellarValue" => Ok(XdrTypeName::StellarValue),
             "ContractExecutable" => Ok(XdrTypeName::ContractExecutable),
             "ScVal" => Ok(XdrTypeName::ScVal),
+            "TransactionEnvelope" => Ok(XdrTypeName::TransactionEnvelope),
             "LedgerEntry" => Ok(XdrTypeName::LedgerEntry),
             other => Err(format!(
                 "unsupported XDR type name {other:?}: supported types are: StellarValue, \
-                 ContractExecutable, ScVal, LedgerEntry"
+                 ContractExecutable, ScVal, TransactionEnvelope, LedgerEntry"
             )),
         }
     }
@@ -53,6 +58,9 @@ pub enum DecodedValue {
     StellarValue(StellarValue),
     ContractExecutable(ContractExecutable),
     ScVal(stellar_xdr::ScVal),
+    /// Boxed because a full `TransactionEnvelope` dwarfs the other
+    /// variants; the indirection keeps `DecodedValue` small enough to move.
+    TransactionEnvelope(Box<TransactionEnvelope>),
     /// Boxed because a full `LedgerEntry` (a `ContractCode` entry can carry
     /// an entire WASM module) dwarfs the other variants; the indirection
     /// keeps `DecodedValue` small enough to move.
@@ -82,6 +90,7 @@ impl DecodedValue {
             DecodedValue::StellarValue(_) => XdrTypeName::StellarValue,
             DecodedValue::ContractExecutable(_) => XdrTypeName::ContractExecutable,
             DecodedValue::ScVal(_) => XdrTypeName::ScVal,
+            DecodedValue::TransactionEnvelope(_) => XdrTypeName::TransactionEnvelope,
             DecodedValue::LedgerEntry(_) => XdrTypeName::LedgerEntry,
         }
     }
@@ -91,8 +100,9 @@ impl DecodedValue {
 /// which decoding failed.
 ///
 /// Returned by the typed decode entry points such as
-/// [`decode_ledger_entry`]. Unlike a bare `stellar_xdr::Error`, this
-/// separates input that is not base64 at all from input whose decoded
+/// [`decode_transaction_envelope`] or [`decode_ledger_entry`]. Unlike a
+/// bare `stellar_xdr::Error`, this separates input that is not base64 at
+/// all from input whose decoded
 /// bytes are not valid XDR, and it names the offset *into the decoded XDR
 /// bytes* at which the parse stopped — the information needed to debug a
 /// truncated or corrupt capture.
@@ -171,6 +181,19 @@ fn read_xdr_from_base64<T: ReadXdr>(
     Ok(value)
 }
 
+/// Decodes base64 TransactionEnvelope XDR (V0, V1, or FeeBump).
+///
+/// Fails with [`XdrDecodeError`] when the input is not valid base64, when
+/// the decoded bytes are not a complete `TransactionEnvelope`, or when
+/// bytes remain after the value. Re-encoding the result with
+/// [`crate::encode_transaction_envelope`] reproduces the input byte for
+/// byte (see `tests/envelope_roundtrip.rs`).
+pub fn decode_transaction_envelope(
+    base64_text: &str,
+) -> Result<TransactionEnvelope, XdrDecodeError> {
+    read_xdr_from_base64(XdrTypeName::TransactionEnvelope, base64_text)
+}
+
 /// Decodes base64 LedgerEntry XDR.
 ///
 /// Covers every `LedgerEntryData` variant the engine supports — Account,
@@ -206,6 +229,10 @@ pub fn decode(type_name: XdrTypeName, base64: &str) -> Result<DecodedValue, stel
         XdrTypeName::ScVal => {
             stellar_xdr::ScVal::from_xdr_base64(base64, Limits::none()).map(DecodedValue::ScVal)
         }
+        XdrTypeName::TransactionEnvelope => {
+            TransactionEnvelope::from_xdr_base64(base64, Limits::none())
+                .map(|envelope| DecodedValue::TransactionEnvelope(Box::new(envelope)))
+        }
         XdrTypeName::LedgerEntry => LedgerEntry::from_xdr_base64(base64, Limits::none())
             .map(|entry| DecodedValue::LedgerEntry(Box::new(entry))),
     }
@@ -235,12 +262,35 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_transaction_envelope_type_name() {
+        assert_eq!(
+            "TransactionEnvelope".parse::<XdrTypeName>().unwrap(),
+            XdrTypeName::TransactionEnvelope
+        );
+        assert_eq!(
+            XdrTypeName::TransactionEnvelope.to_string(),
+            "TransactionEnvelope"
+        );
+    }
+
+    #[test]
     fn parses_the_ledger_entry_type_name() {
         assert_eq!(
             "LedgerEntry".parse::<XdrTypeName>().unwrap(),
             XdrTypeName::LedgerEntry
         );
         assert_eq!(XdrTypeName::LedgerEntry.to_string(), "LedgerEntry");
+    }
+
+    #[test]
+    fn decode_transaction_envelope_decodes_a_valid_envelope() {
+        use stellar_xdr::WriteXdr;
+
+        let base64 = TransactionEnvelope::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let decoded = decode_transaction_envelope(&base64).unwrap();
+        assert_eq!(decoded, TransactionEnvelope::default());
     }
 
     #[test]
@@ -259,6 +309,10 @@ mod tests {
     /// some fabricated position.
     #[test]
     fn corrupted_base64_is_reported_as_invalid_base64_at_offset_zero() {
+        let err = decode_transaction_envelope("not valid base64!!!").unwrap_err();
+        assert!(matches!(err, XdrDecodeError::InvalidBase64(_)), "{err:?}");
+        assert_eq!(err.byte_offset(), 0);
+
         let err = decode_ledger_entry("not valid base64!!!").unwrap_err();
         assert!(matches!(err, XdrDecodeError::InvalidBase64(_)), "{err:?}");
         assert_eq!(err.byte_offset(), 0);
@@ -271,7 +325,7 @@ mod tests {
         use base64::Engine as _;
         use stellar_xdr::WriteXdr;
 
-        let base64 = LedgerEntry::default()
+        let base64 = TransactionEnvelope::default()
             .to_xdr_base64(Limits::none())
             .unwrap();
         let bytes = base64::engine::general_purpose::STANDARD
@@ -280,12 +334,12 @@ mod tests {
         let truncated = &bytes[..bytes.len() - 8];
         let truncated_base64 = base64::engine::general_purpose::STANDARD.encode(truncated);
 
-        let err = decode_ledger_entry(&truncated_base64).unwrap_err();
+        let err = decode_transaction_envelope(&truncated_base64).unwrap_err();
         match &err {
             XdrDecodeError::InvalidXdr {
                 type_name, offset, ..
             } => {
-                assert_eq!(*type_name, XdrTypeName::LedgerEntry);
+                assert_eq!(*type_name, XdrTypeName::TransactionEnvelope);
                 assert!(
                     *offset > 0 && *offset <= truncated.len() as u64,
                     "offset must point into the truncated buffer, got {offset}"
@@ -303,7 +357,7 @@ mod tests {
         use base64::Engine as _;
         use stellar_xdr::WriteXdr;
 
-        let base64 = LedgerEntry::default()
+        let base64 = TransactionEnvelope::default()
             .to_xdr_base64(Limits::none())
             .unwrap();
         let mut bytes = base64::engine::general_purpose::STANDARD
@@ -313,7 +367,7 @@ mod tests {
         bytes.extend_from_slice(&[0, 0, 0, 0]);
         let with_trailing = base64::engine::general_purpose::STANDARD.encode(bytes);
 
-        let err = decode_ledger_entry(&with_trailing).unwrap_err();
+        let err = decode_transaction_envelope(&with_trailing).unwrap_err();
         match &err {
             XdrDecodeError::InvalidXdr {
                 offset, message, ..

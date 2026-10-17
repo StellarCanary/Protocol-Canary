@@ -6,6 +6,33 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `stellar-canary inspect --format json` (and the `--json` shorthand): the
+  versioned `inspectVersion: 1` document of CA-03 — project type and
+  capabilities, the effective configuration, the target protocol and its
+  source, and the fixture plan with `wouldRun`, `skipped` (with the stable
+  `code`), `checkWouldRefuse` and `refusal`. The command stays offline and the
+  `terminal` output is unchanged, byte for byte.
+- The inspect/check parity suite (issue #485, unit CA-03-D): asserts that the
+  ids *and order* in `inspect`'s `plan.wouldRun` equal the `results` a
+  `check --format json` run executes, that skips match too, and that a
+  discrepancy fails with a message naming both lists.
+- CF-04 verification evidence (first part of #443): fixtures may carry a
+  `[verification]` table with a `verificationVersion: 1` record (`method`,
+  `checkedAt`, optional `network`/`verifier`/`endpointHost`/`evidenceRef`,
+  `outcome`). The table is validated strictly against CF-04 section 3 (unknown
+  keys, a mismatched `fixtureId`, a live method without `network`, a malformed
+  `checkedAt` are invalid fixtures, exit 4) and is lifted out of the
+  surface-specific body, so no surface runner ever sees it.
+- `stellar-canary fixtures --format json` (and the `--json` shorthand): the
+  `inventoryVersion: 1` inventory of CA-02 — counts, `otherProtocols`, fixtures
+  sorted by id with `/`-relative paths, per-surface fields, and the reserved
+  `verification` object copied as stored (issue #444, CA-02-E). The terminal
+  listing is unchanged.
+- Verification badges in the terminal report (issue #444): when a run's
+  fixtures carry evidence, each result row shows `[verified: <method>]`,
+  `[unverified: <method> record mismatched]` or `[unverified]` — the unknown
+  state is displayed, never omitted. Runs without evidence keep the compact
+  `N/N PASS` output.
 - `--project-root <PATH>` on `check`, `inspect` and `fixtures` (CF-07, D-08).
   Relative `--config`, `--fixtures-dir` and `--output` paths resolve against
   it. A path that does not exist or is not a directory exits `2`. Without the
@@ -17,6 +44,13 @@ All notable changes to this project are documented in this file.
 - A strict parser and deterministic serializer for `.stellar-canary.lock`
   (CF-03) in `canary-config`: `load_lock`, `parse_lock` and `serialize_lock`.
   No command reads or writes a lockfile yet.
+- `--rpc-max-retries <N>` (default `3`) and `--rpc-retry-delay-ms <MS>`
+  (default `500`) on `check`: how many times a failed RPC attempt may be
+  retried and the linear-backoff base delay between attempts. `0` retries
+  means one attempt and failure on the first network error. The policy is
+  applied to every RPC call the run makes — the network probe and the
+  fixture executions alike — through `RetryPolicy::from_retries` in
+  `canary-rpc`.
 - `canary_fixtures::pack_digest`: the `canary-pack-v1` digest of a fixture
   pack (CF-02), with the file list it was computed from. It is distinct from
   the engine's internal per-fixture cache key. No command uses it yet.
@@ -49,6 +83,12 @@ All notable changes to this project are documented in this file.
   on such a field is evaluated truthfully instead of passing for the wrong
   reason. A `result` that is not an object is an `error`, not a failed
   assertion. The shipped Protocol 28 fixtures give the same outcome.
+- `--output` now writes the report file atomically: the bytes go to a
+  `.tmp` sibling in the target directory, which is then renamed over the
+  destination, so a killed run can no longer leave a truncated or
+  unparseable report on disk. An existing report's permissions are
+  preserved, a failed write leaves no `.tmp` file behind, and the written
+  bytes are unchanged (still exactly what stdout prints).
 
 ## [0.2.0] - 2026-10-09
 

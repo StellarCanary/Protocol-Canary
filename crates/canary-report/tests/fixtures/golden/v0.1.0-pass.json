@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.1.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "v010_pass",
+    "type": "unknown"
+  },
+  "status": "pass",
+  "results": [
+    {
+      "testId": "p28-xdr-valid",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "decoded StellarValue successfully",
+      "durationMs": 0,
+      "fixtureId": "p28-xdr-valid"
+    }
+  ],
+  "git": {
+    "commit": "f6bdf987d43fb58293497ad52e3f6369e061086d",
+    "branch": "master",
+    "isDirty": false
+  }
+}

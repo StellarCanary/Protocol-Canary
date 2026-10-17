@@ -176,3 +176,182 @@ fn a_fixture_without_verification_still_lists_normally() {
     assert_eq!(document["fixtures"][0].get("verification"), None);
     assert_eq!(document["fixtures"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn fixtures_rejects_unsupported_format() {
+    let dir = TempProject::new("fixtures-unsupported-format");
+    let output = run_in(&dir.path, &["fixtures", "--format", "xml"]);
+
+    assert!(!output.status.success(), "must fail for unsupported format");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(support::stdout(&output).is_empty());
+
+    let err = support::stderr(&output);
+    assert!(
+        err.contains("invalid value 'xml' for '--format <FORMAT>'")
+            || err.contains("invalid value"),
+        "stderr: {err}"
+    );
+    assert!(
+        err.contains("terminal") && err.contains("json"),
+        "stderr should list allowed formats: {err}"
+    );
+}
+
+#[test]
+fn fixtures_format_json_conforms_to_ca02_schema_and_deterministic_ordering() {
+    let dir = TempProject::new("fixtures-ca02-conformance");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    dir.write(
+        "fixtures/soroban/contract.toml",
+        r#"
+id = "z-soroban-token"
+protocol = 28
+surface = "soroban"
+category = "token"
+description = "token contract fixture"
+required_capabilities = ["wasm-artifact", "soroban-contract"]
+function = "balance"
+"#,
+    );
+    dir.write(
+        "fixtures/rpc/network.toml",
+        r#"
+id = "a-rpc-network"
+protocol = 28
+surface = "rpc"
+category = "network"
+description = "network fixture"
+source_reference = "https://example.invalid/ref"
+required_capabilities = ["rpc-client"]
+method = "get-network"
+"#,
+    );
+    dir.write(
+        "fixtures/xdr/value.toml",
+        &format!(
+            "id = \"m-xdr-value\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"ledger\"\ndescription = \"ledger value fixture\"\nrequired_capabilities = [\"stellar-sdk-dependency\"]\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+    dir.write(
+        "fixtures/xdr/old.toml",
+        &format!(
+            "id = \"p27-old\"\nprotocol = 27\nsurface = \"xdr\"\ncategory = \"legacy\"\ndescription = \"legacy fixture\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+
+    let output = run_in(&dir.path, &["fixtures", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        support::stderr(&output)
+    );
+    assert!(support::stderr(&output).is_empty());
+
+    let raw = stdout(&output);
+    assert!(raw.ends_with("}\n"), "must end with single LF newline");
+    assert!(
+        !raw.ends_with("}\n\n"),
+        "must not have double trailing newline"
+    );
+    assert!(
+        raw.contains("\n  \"inventoryVersion\": 1"),
+        "2-space indentation"
+    );
+
+    let document: Value = serde_json::from_str(&raw).expect("valid JSON");
+    assert_eq!(document["inventoryVersion"], 1);
+    assert_eq!(document["toolVersion"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(document["fixtureFormat"], 1);
+    assert_eq!(document["protocol"], 28);
+    assert_eq!(document["directoryFound"], true);
+    assert_eq!(document["counts"]["total"], 3);
+    assert_eq!(document["counts"]["xdr"], 1);
+    assert_eq!(document["counts"]["rpc"], 1);
+    assert_eq!(document["counts"]["soroban"], 1);
+    assert_eq!(document["otherProtocols"]["27"], 1);
+
+    let fixtures = document["fixtures"].as_array().expect("fixtures array");
+    assert_eq!(fixtures.len(), 3);
+
+    // Sorted deterministically by id (UTF-8 bytes): a-rpc-network, m-xdr-value, z-soroban-token
+    let ids: Vec<&str> = fixtures.iter().map(|f| f["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, vec!["a-rpc-network", "m-xdr-value", "z-soroban-token"]);
+
+    // Verify first fixture: RPC
+    let rpc = &fixtures[0];
+    assert_eq!(rpc["id"], "a-rpc-network");
+    assert_eq!(rpc["protocol"], 28);
+    assert_eq!(rpc["surface"], "rpc");
+    assert_eq!(rpc["category"], "network");
+    assert_eq!(rpc["description"], "network fixture");
+    assert_eq!(rpc["path"], "rpc/network.toml");
+    assert_eq!(
+        rpc["requiredCapabilities"],
+        serde_json::json!(["rpc-client"])
+    );
+    assert_eq!(rpc["sourceReference"], "https://example.invalid/ref");
+    assert_eq!(rpc["method"], "get-network");
+    assert!(rpc.get("type").is_none());
+    assert!(rpc.get("kind").is_none());
+    assert!(rpc.get("function").is_none());
+
+    // Verify second fixture: XDR
+    let xdr = &fixtures[1];
+    assert_eq!(xdr["id"], "m-xdr-value");
+    assert_eq!(xdr["protocol"], 28);
+    assert_eq!(xdr["surface"], "xdr");
+    assert_eq!(xdr["category"], "ledger");
+    assert_eq!(xdr["description"], "ledger value fixture");
+    assert_eq!(xdr["path"], "xdr/value.toml");
+    assert_eq!(
+        xdr["requiredCapabilities"],
+        serde_json::json!(["stellar-sdk-dependency"])
+    );
+    assert_eq!(xdr["type"], "StellarValue");
+    assert_eq!(xdr["kind"], "decode-success");
+    assert!(xdr.get("sourceReference").is_none());
+    assert!(xdr.get("method").is_none());
+    assert!(xdr.get("function").is_none());
+
+    // Verify third fixture: Soroban
+    let soroban = &fixtures[2];
+    assert_eq!(soroban["id"], "z-soroban-token");
+    assert_eq!(soroban["protocol"], 28);
+    assert_eq!(soroban["surface"], "soroban");
+    assert_eq!(soroban["category"], "token");
+    assert_eq!(soroban["description"], "token contract fixture");
+    assert_eq!(soroban["path"], "soroban/contract.toml");
+    // Sorted, lowercase kebab
+    assert_eq!(
+        soroban["requiredCapabilities"],
+        serde_json::json!(["soroban-contract", "wasm-artifact"])
+    );
+    assert_eq!(soroban["function"], "balance");
+    assert!(soroban.get("sourceReference").is_none());
+    assert!(soroban.get("method").is_none());
+    assert!(soroban.get("type").is_none());
+    assert!(soroban.get("kind").is_none());
+}
+
+#[test]
+fn fixtures_format_json_with_missing_directory_reports_empty_inventory() {
+    let dir = TempProject::new("fixtures-missing-dir");
+    let output = run_in(
+        &dir.path,
+        &[
+            "fixtures",
+            "--format",
+            "json",
+            "--fixtures-dir",
+            "does-not-exist",
+        ],
+    );
+    assert!(output.status.success());
+    let document: Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
+    assert_eq!(document["directoryFound"], false);
+    assert_eq!(document["counts"]["total"], 0);
+    assert_eq!(document["fixtures"], serde_json::json!([]));
+    assert_eq!(document["otherProtocols"], serde_json::json!({}));
+}

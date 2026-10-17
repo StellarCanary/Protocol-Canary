@@ -235,6 +235,10 @@ pub struct InspectArgs {
     /// Shorthand for --format json.
     #[arg(long)]
     pub json: bool,
+
+    /// Include verbose diagnostic details in output.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]

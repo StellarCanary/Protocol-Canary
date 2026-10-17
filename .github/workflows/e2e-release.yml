@@ -1,0 +1,128 @@
+name: E2E Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ENGINE_VERSION: "v0.2.0"
+  FIXTURES_TAG: "protocol-28"
+  EXPECTED_SHA256: "34656189e15169a9f9d339288f7a8a95bb81d86ecee14ca278a165d041d28943"
+
+jobs:
+  e2e-release:
+    name: e2e test (pinned binary & pack tag)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Download pinned engine release binary and verify checksum
+        run: |
+          mkdir -p bin
+          curl -fsSL -O "https://github.com/StellarCanary/Protocol-Canary/releases/download/${ENGINE_VERSION}/stellar-canary-linux-x86_64"
+          curl -fsSL -O "https://github.com/StellarCanary/Protocol-Canary/releases/download/${ENGINE_VERSION}/SHA256SUMS"
+
+          # Verify checksum using published manifest
+          sha256sum --check --ignore-missing SHA256SUMS
+
+          # Verify checksum against pinned digest
+          echo "${EXPECTED_SHA256}  stellar-canary-linux-x86_64" | sha256sum --check -
+
+          chmod +x stellar-canary-linux-x86_64
+          mkdir -p "$HOME/.local/bin"
+          cp stellar-canary-linux-x86_64 "$HOME/.local/bin/stellar-canary"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          sudo cp stellar-canary-linux-x86_64 /usr/local/bin/stellar-canary || true
+
+      - name: Verify engine binary execution
+        run: |
+          stellar-canary version
+          stellar-canary --help
+
+      - name: Download and unpack tagged fixture pack
+        run: |
+          mkdir -p pack-archive
+          curl -fsSL "https://github.com/StellarCanary/ProtocolCanary-Fixtures/archive/refs/tags/${FIXTURES_TAG}.tar.gz" \
+            -o fixture-pack.tar.gz
+          tar -xzf fixture-pack.tar.gz -C pack-archive --strip-components=1
+
+          # Set up project workspace with configuration outside the fixtures directory.
+          # The fixture loader scans all *.toml in --fixtures-dir, so .stellar-canary.toml
+          # must reside outside the fixtures folder to avoid being parsed as a fixture file.
+          mkdir -p test-workdir/fixtures
+          cp -r pack-archive/protocol-28/* test-workdir/fixtures/
+
+          # Create offline configuration targeting protocol 28 in test-workdir
+          printf 'version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n' > test-workdir/.stellar-canary.toml
+
+      - name: Execute stellar-canary check --fixtures-dir .
+        working-directory: test-workdir/fixtures
+        run: |
+          # Execute check against fixtures directory with external configuration
+          stellar-canary check --fixtures-dir . --config ../.stellar-canary.toml
+
+          # Generate versioned report JSON for assertion
+          stellar-canary check --fixtures-dir . --config ../.stellar-canary.toml --json --no-cache > report.json
+
+      - name: Assert exit code 0 and valid report JSON generation
+        working-directory: test-workdir/fixtures
+        run: |
+          python3 -c '
+          import json, sys
+
+          with open("report.json") as f:
+              report = json.load(f)
+
+          print("Validating report JSON structure...")
+          schema = report.get("schemaVersion") or report.get("schema_version")
+          assert schema == 1, f"unexpected schemaVersion: {schema}"
+          status = report.get("status")
+          assert status == "pass", f"expected pass status, got: {status}"
+
+          counts = report.get("counts", {})
+          print(f"Report counts: {counts}")
+          failed = counts.get("failed")
+          assert failed == 0, f"expected 0 failed checks: {failed}"
+          errors = counts.get("errors")
+          assert errors == 0, f"expected 0 errors: {errors}"
+          total = counts.get("total", 0)
+          assert total > 0, f"expected total checks > 0: {total}"
+          passed = counts.get("passed", 0)
+          assert passed > 0, f"expected passed checks > 0: {passed}"
+
+          results = report.get("results", [])
+          assert len(results) == total, "results array length must match counts.total"
+          assert all(r.get("status") == "pass" for r in results), "all check results must have pass status"
+          assert all(r.get("surface") == "xdr" for r in results), "all executed checks must be offline XDR"
+          print("Report verification passed successfully!")
+          '
+
+      - name: Negative test - assert simulated execution error triggers clear CI failure step
+        working-directory: test-workdir/fixtures
+        run: |
+          echo "Simulating execution error: checking an unsupported protocol (999) without matching fixtures"
+          set +e
+          stellar-canary check --fixtures-dir . --config ../.stellar-canary.toml --protocol 999 > sim_out.txt 2> sim_err.txt
+          EXIT_CODE=$?
+          set -e
+
+          echo "Process exited with code: $EXIT_CODE"
+          cat sim_err.txt
+
+          # Check must fail (exit code 2: configuration/empty run error)
+          if [ "$EXIT_CODE" -eq 0 ]; then
+            echo "ERROR: Expected non-zero exit code on simulated execution error, but got 0!"
+            exit 1
+          fi
+
+          if ! grep -q "no checks ran" sim_err.txt; then
+            echo "ERROR: Expected diagnostic 'no checks ran' not found in stderr output!"
+            exit 1
+          fi
+
+          echo "Negative testing passed: simulated execution error triggers clear failure diagnostic and non-zero exit code."

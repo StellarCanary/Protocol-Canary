@@ -16,3 +16,5 @@ sha2 = "0.11"
 thiserror.workspace = true
 serde.workspace = true
 toml.workspace = true
+flate2 = "1.0"
+tar = "0.4"

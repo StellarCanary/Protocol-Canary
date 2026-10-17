@@ -31,3 +31,5 @@ toml.workspace = true
 
 [dev-dependencies]
 wiremock = "0.6"
+canary-soroban.workspace = true
+canary-xdr.workspace = true

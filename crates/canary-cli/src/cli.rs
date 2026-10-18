@@ -48,6 +48,7 @@ pub enum Command {
     /// Render a previously generated JSON report.
     Report(ReportArgs),
     /// Manage the local result cache.
+    #[command(subcommand)]
     Cache(CacheArgs),
     /// Print the tool version.
     Version,

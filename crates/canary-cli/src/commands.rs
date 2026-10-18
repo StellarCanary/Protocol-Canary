@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use canary_core::{
     CachePolicy, CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode,
-    NetworkContext, Policy, PolicyEvaluator, ProtocolVersion, RunOptions,
+    NetworkContext, Policy, PolicyEvaluator, ProtocolVersion, RunOptions, Surface,
 };
 use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
@@ -219,8 +219,69 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     } else {
         NetworkMode::Live
     };
+
+    let discovered_fixtures = if fixtures_dir.is_dir() {
+        canary_fixtures::load_directory(&fixtures_dir)?
+    } else {
+        Vec::new()
+    };
+    let loaded_fixtures: Vec<_> = canary_runner::filter_fixtures(
+        &discovered_fixtures,
+        args.fixture.as_deref(),
+        args.surface.map(Into::into),
+    )
+    .into_iter()
+    .cloned()
+    .collect();
+
+    if loaded_fixtures.is_empty() && (args.fixture.is_some() || args.surface.is_some()) {
+        let mut filters = Vec::new();
+        if let Some(fixture) = &args.fixture {
+            filters.push(format!("--fixture {fixture:?}"));
+        }
+        if let Some(surface) = args.surface {
+            filters.push(format!("--surface {}", Surface::from(surface)));
+        }
+        return Err(CanaryError::Configuration(format!(
+            "no matching fixtures found for {}",
+            filters.join(" and ")
+        )));
+    }
+
+    let fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
+    let enabled = EnabledSurfaces {
+        xdr: config.tests.xdr,
+        rpc: config.tests.rpc,
+        soroban: config.tests.soroban,
+    };
+    let plan = canary_runner::build_plan_with(
+        &loaded_fixtures,
+        target_protocol,
+        enabled,
+        &project,
+        network_mode,
+    )?;
+
+    // A run that executes nothing proves nothing, so it must not look like a
+    // pass. Check this before contacting an endpoint so filtered or empty
+    // runs remain quick and deterministic.
+    if plan.applicable_count() == 0 {
+        let explanation = canary_runner::explain_empty_plan(
+            &plan,
+            &loaded_fixtures,
+            target_protocol,
+            &fixtures_dir,
+        );
+        if !args.allow_empty {
+            return Err(CanaryError::Configuration(format!(
+                "{explanation} Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended."
+            )));
+        }
+        eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
+    }
+
     let live_checks_needed =
-        (config.tests.rpc || config.tests.soroban) && network_mode == NetworkMode::Live;
+        (!plan.rpc.is_empty() || !plan.soroban.is_empty()) && network_mode == NetworkMode::Live;
     let network_name = parse_network_name(&settings.network);
     let (network_context, network_summary) = if live_checks_needed {
         let rpc_url = settings
@@ -305,44 +366,6 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             None,
         )
     };
-
-    let loaded_fixtures = if fixtures_dir.is_dir() {
-        canary_fixtures::load_directory(&fixtures_dir)?
-    } else {
-        Vec::new()
-    };
-    let fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
-
-    let enabled = EnabledSurfaces {
-        xdr: config.tests.xdr,
-        rpc: config.tests.rpc,
-        soroban: config.tests.soroban,
-    };
-    let plan = canary_runner::build_plan_with(
-        &loaded_fixtures,
-        target_protocol,
-        enabled,
-        &project,
-        network_mode,
-    )?;
-
-    // A run that executes nothing proves nothing, so it must not look like a
-    // pass. This is checked before any check runs and before a report exists,
-    // which is why it is a configuration error (exit 2) rather than a result.
-    if plan.applicable_count() == 0 {
-        let explanation = canary_runner::explain_empty_plan(
-            &plan,
-            &loaded_fixtures,
-            target_protocol,
-            &fixtures_dir,
-        );
-        if !args.allow_empty {
-            return Err(CanaryError::Configuration(format!(
-                "{explanation} Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended."
-            )));
-        }
-        eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
-    }
 
     let git = collect_git_context(&CliGitRepository::new(&root));
 

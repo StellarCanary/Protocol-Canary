@@ -19,6 +19,8 @@ Options:
       --rpc-max-retries <RPC_MAX_RETRIES>  Maximum number of retries after a failed RPC attempt; 0 disables retries (attempts = n + 1) [default: 3]
       --rpc-retry-delay-ms <RPC_RETRY_DELAY_MS>  Base delay between RPC retry attempts in milliseconds, linear backoff [default: 500]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
+      --fixture <ID>                 Run only the fixture with this exact ID
+      --surface <SURFACE>            Run fixtures from only this surface [possible values: xdr, rpc, soroban]
       --cache-dir <PATH>             Directory for cached fixture execution results [default: .stellar-canary-cache in the project root; created if missing]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
@@ -47,6 +49,19 @@ It accepts any local path — including a checkout of
 zero fixtures. In releases after `0.1.1` a run that then has nothing to execute
 fails with exit code `2` (see [No applicable fixtures](#no-applicable-fixtures));
 `0.1.1` and earlier reported a `0/0` pass. See [Fixtures](../fixtures-guide.md).
+
+## Targeting fixtures
+
+Use `--fixture <ID>` to run one fixture by its exact ID, or `--surface` to run
+only `xdr`, `rpc` or `soroban` fixtures. Combine the flags to select one
+fixture on a specific surface. A filter with no matches exits `2` and reports
+`no matching fixtures found`.
+
+```bash
+stellar-canary check --fixture p28-xdr-1
+stellar-canary check --surface xdr
+stellar-canary check --fixture p28-xdr-1 --surface xdr
+```
 
 ## Output formats
 

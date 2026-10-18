@@ -6,6 +6,9 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- `stellar-canary check --fixture <ID>` and `--surface <xdr|rpc|soroban>` to
+  run a targeted subset of fixtures. The filters may be combined, preserve
+  fixture order, and report an error when no fixture matches.
 - `stellar-canary inspect --format json` (and the `--json` shorthand): the
   versioned `inspectVersion: 1` document of CA-03 — project type and
   capabilities, the effective configuration, the target protocol and its

@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use canary_core::Surface;
+
 #[derive(Debug, Parser)]
 #[command(
     name = "stellar-canary",
@@ -132,6 +134,14 @@ pub struct CheckArgs {
     #[arg(long = "fixtures-dir", value_name = "PATH")]
     pub fixtures_dir: Option<PathBuf>,
 
+    /// Run only the fixture with this exact ID.
+    #[arg(long, value_name = "ID")]
+    pub fixture: Option<String>,
+
+    /// Run fixtures from only this compatibility surface.
+    #[arg(long, value_enum)]
+    pub surface: Option<SurfaceFilter>,
+
     /// Directory for cached fixture execution results (default:
     /// .stellar-canary-cache in the project root). The directory is created
     /// if it does not exist. Relative paths are resolved against
@@ -195,6 +205,24 @@ pub struct CheckArgs {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub live_cache_ttl: Option<u64>,
+}
+
+/// Surface choices accepted by `check --surface`.
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+pub enum SurfaceFilter {
+    Xdr,
+    Rpc,
+    Soroban,
+}
+
+impl From<SurfaceFilter> for Surface {
+    fn from(value: SurfaceFilter) -> Self {
+        match value {
+            SurfaceFilter::Xdr => Surface::Xdr,
+            SurfaceFilter::Rpc => Surface::Rpc,
+            SurfaceFilter::Soroban => Surface::Soroban,
+        }
+    }
 }
 
 /// Arguments for the `cache` command group.
@@ -427,6 +455,24 @@ mod tests {
         let cli = Cli::parse_from(["stellar-canary", "check", "--fail-on-warning"]);
         if let Command::Check(args) = cli.command {
             assert!(args.fail_on_warning);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn check_accepts_fixture_and_surface_filters() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--fixture",
+            "p28-xdr-1",
+            "--surface",
+            "xdr",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.fixture.as_deref(), Some("p28-xdr-1"));
+            assert_eq!(args.surface, Some(SurfaceFilter::Xdr));
         } else {
             panic!("Expected Check command");
         }

@@ -13,9 +13,11 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    name: Verify and release build
+  verify:
+    name: Verify workspace and tags
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
@@ -40,25 +42,135 @@ jobs:
       - name: cargo test
         run: cargo test --workspace --locked
 
-      - name: cargo build --release
-        # The binary embeds source and registry paths. Remapping them makes the
-        # result independent of the checkout directory (measured: two builds in
-        # different directories were byte-identical; docs/releasing.md).
-        env:
-          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
-        run: cargo build --workspace --release --locked
+  build:
+    name: Build (${{ matrix.target }})
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive_name: stellar-canary-x86_64-unknown-linux-gnu
+            archive_ext: tar.gz
+            rustflags: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            archive_name: stellar-canary-x86_64-apple-darwin
+            archive_ext: tar.gz
+            rustflags: --remap-path-prefix=${{ github.workspace }}=/build
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive_name: stellar-canary-aarch64-apple-darwin
+            archive_ext: tar.gz
+            rustflags: --remap-path-prefix=${{ github.workspace }}=/build
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive_name: stellar-canary-x86_64-pc-windows-msvc
+            archive_ext: zip
+            rustflags: --remap-path-prefix=${{ github.workspace }}=/build
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      - name: Prepare assets
+      - name: Install Rust toolchain and target
         run: |
-          mkdir -p dist
-          cp target/release/stellar-canary dist/stellar-canary-linux-x86_64
+          rustup show
+          rustup target add ${{ matrix.target }}
+
+      - name: cargo build --release
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+          MACOSX_DEPLOYMENT_TARGET: "11.0"
+        run: cargo build --workspace --release --locked --target ${{ matrix.target }}
+
+      - name: Package Unix assets
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p dist/package
+          BIN_SRC="target/${{ matrix.target }}/release/stellar-canary"
+          cp "$BIN_SRC" "dist/package/stellar-canary"
+          chmod +x "dist/package/stellar-canary"
+          tar -czf "dist/${{ matrix.archive_name }}.tar.gz" -C dist/package stellar-canary
+          rm -rf dist/package
+          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
+            cp "$BIN_SRC" "dist/stellar-canary-linux-x86_64"
+          fi
           cd dist
-          sha256sum stellar-canary-linux-x86_64 > SHA256SUMS
+          for file in *; do
+            if [ -f "$file" ] && [ "${file##*.}" != "sha256" ]; then
+              if command -v sha256sum >/dev/null 2>&1; then
+                sha256sum "$file" > "${file}.sha256"
+              else
+                shasum -a 256 "$file" > "${file}.sha256"
+              fi
+            fi
+          done
+
+      - name: Package Windows assets
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist\package
+          $binSrc = "target\${{ matrix.target }}\release\stellar-canary.exe"
+          Copy-Item $binSrc -Destination dist\package\stellar-canary.exe
+          $archivePath = "dist\${{ matrix.archive_name }}.zip"
+          Compress-Archive -Path dist\package\stellar-canary.exe -DestinationPath $archivePath -Force
+          Remove-Item -Recurse -Force dist\package
+          $hash = (Get-FileHash -Algorithm SHA256 $archivePath).Hash.ToLower()
+          $shaPath = Join-Path (Get-Location) "dist\${{ matrix.archive_name }}.zip.sha256"
+          [System.IO.File]::WriteAllText($shaPath, "$hash  ${{ matrix.archive_name }}.zip`n")
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: release-artifacts-*
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS manifest
+        run: |
+          cd dist
+          # Normalize line endings on checksum manifests
+          for f in *.sha256; do
+            if [ -f "$f" ]; then
+              sed -i 's/\r$//' "$f"
+            fi
+          done
+          # Generate SHA256SUMS for all binaries and archives (excluding .sha256 files)
+          for f in *; do
+            if [ -f "$f" ] && [ "${f##*.}" != "sha256" ] && [ "$f" != "SHA256SUMS" ]; then
+              sha256sum "$f"
+            fi
+          done | sort -k2 > SHA256SUMS
+          cat SHA256SUMS
+          # Verify all assets match individual .sha256 manifests
+          for f in *.sha256; do
+            if [ -f "$f" ]; then
+              sha256sum -c "$f"
+            fi
+          done
+          # Verify SHA256SUMS matches
+          sha256sum -c SHA256SUMS
 
       - name: Upload release
         uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           files: |
-            dist/stellar-canary-linux-x86_64
-            dist/SHA256SUMS
-
+            dist/*

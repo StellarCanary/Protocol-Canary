@@ -262,24 +262,6 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         network_mode,
     )?;
 
-    // A run that executes nothing proves nothing, so it must not look like a
-    // pass. Check this before contacting an endpoint so filtered or empty
-    // runs remain quick and deterministic.
-    if plan.applicable_count() == 0 {
-        let explanation = canary_runner::explain_empty_plan(
-            &plan,
-            &loaded_fixtures,
-            target_protocol,
-            &fixtures_dir,
-        );
-        if !args.allow_empty {
-            return Err(CanaryError::Configuration(format!(
-                "{explanation} Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended."
-            )));
-        }
-        eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
-    }
-
     let has_explicit_filter = args.fixture.is_some() || args.surface.is_some();
     let planned_network_checks = !plan.rpc.is_empty() || !plan.soroban.is_empty();
     let configured_network_checks = config.tests.rpc || config.tests.soroban;
@@ -372,6 +354,23 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             None,
         )
     };
+
+    // Preserve the established diagnostic order for unfiltered runs by
+    // checking empty plans after the normal live-network probe.
+    if plan.applicable_count() == 0 {
+        let explanation = canary_runner::explain_empty_plan(
+            &plan,
+            &loaded_fixtures,
+            target_protocol,
+            &fixtures_dir,
+        );
+        if !args.allow_empty {
+            return Err(CanaryError::Configuration(format!(
+                "{explanation} Executing nothing is not evidence of compatibility; pass --allow-empty if an empty run is intended."
+            )));
+        }
+        eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
+    }
 
     let git = collect_git_context(&CliGitRepository::new(&root));
 

@@ -53,7 +53,7 @@ fn warnings_exit_one_with_fail_on_warning() {
 
     let output = run_in(&dir.path, &["check", "--fail-on-warning"]);
     assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
-    assert!(stdout(&output).contains("WARNING"), "{}", stdout(&output));
+    assert!(stdout(&output).contains("WARN"), "{}", stdout(&output));
 }
 
 #[test]

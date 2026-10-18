@@ -280,8 +280,14 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         eprintln!("warning: {explanation} Continuing because --allow-empty was given; this result is not evidence of compatibility.");
     }
 
-    let live_checks_needed =
-        (!plan.rpc.is_empty() || !plan.soroban.is_empty()) && network_mode == NetworkMode::Live;
+    let has_explicit_filter = args.fixture.is_some() || args.surface.is_some();
+    let planned_network_checks = !plan.rpc.is_empty() || !plan.soroban.is_empty();
+    let configured_network_checks = config.tests.rpc || config.tests.soroban;
+    let live_checks_needed = (if has_explicit_filter {
+        planned_network_checks
+    } else {
+        configured_network_checks
+    }) && network_mode == NetworkMode::Live;
     let network_name = parse_network_name(&settings.network);
     let (network_context, network_summary) = if live_checks_needed {
         let rpc_url = settings

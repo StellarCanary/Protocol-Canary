@@ -157,6 +157,10 @@ pub struct CheckArgs {
     #[arg(long)]
     pub allow_empty: bool,
 
+    /// Treat fixture warnings as compatibility failures (exit code 1).
+    #[arg(long)]
+    pub fail_on_warning: bool,
+
     /// Include skip reasons in Markdown/terminal output and populate the JSON report's verbose field.
     #[arg(long)]
     pub verbose: bool,
@@ -386,6 +390,26 @@ mod tests {
         let cli = Cli::parse_from(["stellar-canary", "check", "--max-concurrency", "10"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.max_concurrency, 10);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn fail_on_warning_flag_defaults_to_false() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert!(!args.fail_on_warning);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn fail_on_warning_flag_can_be_enabled() {
+        let cli = Cli::parse_from(["stellar-canary", "check", "--fail-on-warning"]);
+        if let Command::Check(args) = cli.command {
+            assert!(args.fail_on_warning);
         } else {
             panic!("Expected Check command");
         }

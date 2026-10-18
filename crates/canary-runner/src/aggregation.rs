@@ -44,6 +44,11 @@ impl ResultSummary {
     pub fn has_required_failure(&self) -> bool {
         self.failed > 0 || self.errors > 0
     }
+
+    /// Whether at least one executed fixture produced a warning.
+    pub fn has_warnings(&self) -> bool {
+        self.warnings > 0
+    }
 }
 
 /// Aggregates a slice of test results into a [`ResultSummary`].
@@ -155,11 +160,13 @@ mod tests {
         assert_eq!(summary.failed, 1);
         assert_eq!(summary.warnings, 1);
         assert_eq!(summary.errors, 1);
+        assert!(summary.has_warnings());
     }
 
     #[test]
     fn empty_results_are_not_a_required_failure() {
         assert!(!summarize(&[]).has_required_failure());
+        assert!(!summarize(&[]).has_warnings());
     }
 
     #[test]

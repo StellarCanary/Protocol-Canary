@@ -349,8 +349,10 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
 
     let results = canary_runner::execute(&plan, &context, &context.network.rpc_url).await;
 
+    let has_warnings = canary_runner::summarize(&results).has_warnings();
     let policy = Policy {
-        warnings_are_failures: config.policy.warnings_are_failures,
+        warnings_are_failures: config.policy.warnings_are_failures
+            || (args.fail_on_warning && has_warnings),
     };
     let decision = DefaultPolicyEvaluator.evaluate(&results, &policy);
     let exit_code = canary_core::exit_code_for_run(&results, decision);

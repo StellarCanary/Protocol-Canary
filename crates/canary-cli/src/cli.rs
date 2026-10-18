@@ -80,6 +80,41 @@ pub enum OutputFormat {
 }
 
 #[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary check` subcommand ([`Command::Check`]).
+///
+/// `check` is the compatibility run itself: it loads the project and its
+/// fixtures, executes the XDR, RPC and Soroban surfaces selected by the
+/// configuration file, and renders a pass/warn/fail report. Every flag here
+/// is an override or a qualifier for that one run; the resolved settings
+/// cascade as CLI flag > `.stellar-canary.toml` > built-in default, per key
+/// (see `canary_config::resolve_settings`).
+///
+/// The fields map one-to-one onto the subcommand's flags. Notably:
+///
+/// - [`CheckArgs::protocol`], [`CheckArgs::network`] and
+///   [`CheckArgs::fixtures_dir`] override the configuration file without
+///   changing it.
+/// - [`CheckArgs::format`] selects the renderer, and [`CheckArgs::json`] is a
+///   shorthand for `--format json`; [`CheckArgs::output`] also writes the
+///   rendered report to a file.
+/// - [`CheckArgs::offline`] forbids network access, [`CheckArgs::allow_empty`]
+///   permits a run that selects no fixture, and
+///   [`CheckArgs::fail_on_warning`] turns warnings into a failing exit code.
+///
+/// Parsing is performed by `clap`: it performs no I/O and does not panic.
+/// Invalid input is reported as a usage message on stderr with exit status 2
+/// before a `CheckArgs` value exists. Failures of the run itself — a missing
+/// configuration file, an unreachable RPC endpoint, fixture errors — are
+/// reported by the command implementation with the exit codes documented in
+/// the report contract.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary check
+/// stellar-canary check --offline --format json --output report.json
+/// stellar-canary check --surface soroban --fixture p28-soroban-native-asset-name
+/// ```
 pub struct CheckArgs {
     /// Target protocol version (overrides configuration).
     #[arg(long)]
@@ -279,6 +314,32 @@ fn parse_network_passphrase(value: &str) -> Result<String, String> {
 }
 
 #[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary inspect` subcommand ([`Command::Inspect`]).
+///
+/// `inspect` prints offline diagnostics about the project and the fixtures it
+/// would run: the detected project type, the effective protocol, and the
+/// fixture inventory. It never opens a network socket, so it is safe to run
+/// in sandboxes and before credentials are configured.
+///
+/// The fields map one-to-one onto the subcommand's flags. Relative paths for
+/// [`InspectArgs::config`] and [`InspectArgs::fixtures_dir`] are resolved
+/// against [`InspectArgs::project_root`] when it is given, and the project
+/// root is never discovered by walking parent directories.
+/// [`InspectArgs::format`] selects terminal or versioned JSON output, with
+/// [`InspectArgs::json`] as the shorthand for JSON.
+///
+/// Parsing is performed by `clap`: it performs no I/O and does not panic.
+/// Invalid input is a usage error (exit status 2) reported before an
+/// `InspectArgs` value exists; failures of the command itself, such as an
+/// unreadable configuration file, are reported by the command implementation
+/// as configuration errors (exit status 2).
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary inspect
+/// stellar-canary inspect --json --project-root path/to/project
+/// ```
 pub struct InspectArgs {
     /// Target protocol version (overrides configuration).
     #[arg(long)]
@@ -329,6 +390,33 @@ pub enum FixturesFormat {
 }
 
 #[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary fixtures` subcommand ([`Command::Fixtures`]).
+///
+/// `fixtures` lists the fixtures available for a protocol, optionally as the
+/// versioned CA-02 JSON inventory for tooling and CI. It reads fixture files
+/// from disk only: no network request is made and no fixture is executed.
+///
+/// The fields map one-to-one onto the subcommand's flags.
+/// [`FixturesArgs::protocol`] overrides the configured protocol for the
+/// listing, and relative [`FixturesArgs::config`] and
+/// [`FixturesArgs::fixtures_dir`] paths are resolved against
+/// [`FixturesArgs::project_root`] when it is given. [`FixturesArgs::format`]
+/// selects terminal or versioned JSON output, with [`FixturesArgs::json`] as
+/// the shorthand for JSON.
+///
+/// Parsing is performed by `clap`: it performs no I/O and does not panic.
+/// Invalid input is a usage error (exit status 2) reported before a
+/// `FixturesArgs` value exists; failures of the command itself, such as a
+/// missing fixture directory or an unreadable configuration file, are
+/// reported by the command implementation as configuration errors (exit
+/// status 2).
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary fixtures --protocol 28
+/// stellar-canary fixtures --json --fixtures-dir path/to/fixtures
+/// ```
 pub struct FixturesArgs {
     /// Protocol version to list fixtures for (default: the configured
     /// protocol, or 28 if there is no configuration file).

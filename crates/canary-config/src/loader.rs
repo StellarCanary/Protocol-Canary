@@ -1,6 +1,6 @@
 //! Loading and validating `.stellar-canary.toml`.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use canary_core::CanaryError;
@@ -15,6 +15,14 @@ pub const CONFIG_FILE_NAME: &str = ".stellar-canary.toml";
 /// The lockfile name, next to the configuration file in a project root
 /// (CF-03 section 2).
 pub const LOCK_FILE_NAME: &str = ".stellar-canary.lock";
+
+/// The temporary file a lock writer creates next to the lockfile before
+/// renaming it into place (CF-03 section 6).
+///
+/// The name is fixed rather than unique: creating it exclusively is what
+/// gives one process at a time the right to write the lock, and a second
+/// concurrent writer fails instead of interleaving with the first.
+pub const LOCK_TEMP_FILE_NAME: &str = ".stellar-canary.lock.tmp";
 
 /// The network used when neither the CLI nor `.stellar-canary.toml` names
 /// one (see [`resolve_settings`]).
@@ -207,6 +215,18 @@ pub enum LockError {
 
     #[error("invalid lockfile {path}: {reason}")]
     Invalid { path: PathBuf, reason: String },
+
+    #[error("failed to write lockfile {path}: {source}")]
+    Write {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error(
+        "lockfile {path} is being written by another process; retry once {temp} no longer exists"
+    )]
+    Busy { path: PathBuf, temp: PathBuf },
 }
 
 impl From<LockError> for CanaryError {
@@ -364,6 +384,138 @@ pub fn serialize_lock(lock: &LockFile) -> Result<String, LockError> {
     let mut out = lines.join("\n");
     out.push('\n');
     Ok(out)
+}
+
+/// Serializes `lock` and writes it to `path` atomically (CF-03 section 6).
+///
+/// The lock is validated and rendered first, so a lock that could not be
+/// read back never touches the filesystem. The canonical bytes are then
+/// written to a temporary file in the same directory as `path`, flushed and
+/// synced, given mode `0644`, and renamed over the target. The rename is
+/// atomic on a POSIX filesystem, so a crash leaves either the old lock or
+/// the complete new one, never a zero-byte or partially written file.
+///
+/// Mutual exclusion comes from creating the fixed-name temporary file at
+/// [`LOCK_TEMP_FILE_NAME`] with `create_new`: if another writer holds it,
+/// this call fails with [`LockError::Busy`] rather than waiting or
+/// overwriting it. A symbolic link at either the target or the temporary
+/// path is refused, and the temporary file is removed if writing or
+/// renaming fails.
+///
+/// # Errors
+///
+/// Returns [`LockError::Invalid`] if `lock` fails validation, before any
+/// file is created. Returns [`LockError::Symlink`] for a symbolic link,
+/// [`LockError::Busy`] when another writer holds the temporary file, and
+/// [`LockError::Write`] for any other filesystem failure.
+pub fn write_lock(path: &Path, lock: &LockFile) -> Result<(), LockError> {
+    // Serialize first: a rejected lock must not replace a good file.
+    let text = serialize_lock(lock)?;
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| LockError::Invalid {
+            path: path.to_path_buf(),
+            reason: "lockfile path must name a UTF-8 file".to_string(),
+        })?;
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    let temp = parent.join(format!("{file_name}.tmp"));
+
+    // The target may be an existing lock, but never a link or a directory.
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(LockError::Symlink {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(LockError::NotRegularFile {
+                path: path.to_path_buf(),
+            });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(source) => {
+            return Err(LockError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    }
+
+    // Refuse to follow a pre-existing link at the temporary path, then claim
+    // it exclusively. `create_new` is the lock: only one writer can hold it.
+    if std::fs::symlink_metadata(&temp).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(LockError::Symlink { path: temp });
+    }
+    let mut file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp)
+    {
+        Ok(file) => file,
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(LockError::Busy {
+                path: path.to_path_buf(),
+                temp,
+            });
+        }
+        Err(source) => {
+            return Err(LockError::Write { path: temp, source });
+        }
+    };
+
+    // Remove the temporary file on every failure path. `file_name` is kept
+    // separate from `temp` only to make this keyword-free guard readable.
+    let result = (|| {
+        file.write_all(text.as_bytes())
+            .map_err(|source| LockError::Write {
+                path: temp.clone(),
+                source,
+            })?;
+        file.flush().map_err(|source| LockError::Write {
+            path: temp.clone(),
+            source,
+        })?;
+        file.sync_all().map_err(|source| LockError::Write {
+            path: temp.clone(),
+            source,
+        })?;
+        set_lock_permissions(&file, &temp)?;
+        drop(file);
+        std::fs::rename(&temp, path).map_err(|source| LockError::Write {
+            path: path.to_path_buf(),
+            source,
+        })
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
+}
+
+/// Gives a freshly created lockfile mode `0644` on Unix. Other platforms
+/// inherit the permissions a newly created file normally receives.
+fn set_lock_permissions(file: &std::fs::File, path: &Path) -> Result<(), LockError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o644))
+            .map_err(|source| LockError::Write {
+                path: path.to_path_buf(),
+                source,
+            })?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, path);
+    }
+    Ok(())
 }
 
 /// A TOML basic string. Always double-quoted, so the writer never switches

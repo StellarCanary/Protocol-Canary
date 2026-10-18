@@ -33,6 +33,9 @@ pub struct Cli {
 }
 
 #[derive(Debug, Subcommand)]
+// `CheckArgs` is intentionally passed through unchanged from clap parsing;
+// boxing it would alter the public command enum shape for a small size gain.
+#[allow(clippy::large_enum_variant)]
 /// Top-level commands accepted by the `stellar-canary` CLI.
 ///
 /// `Check` runs compatibility assertions, while `Inspect` and `Fixtures`

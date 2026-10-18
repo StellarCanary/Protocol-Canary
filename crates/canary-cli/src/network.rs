@@ -2,6 +2,44 @@
 
 use canary_core::NetworkName;
 
+/// The canonical passphrase for the Stellar Testnet network:
+/// `"Test SDF Network ; September 2015"`.
+///
+/// Stellar networks use a unique network passphrase as a cryptographic
+/// domain separator when hashing and signing transactions. This ensures
+/// transactions signed for Testnet cannot be executed or replayed on
+/// Futurenet, Mainnet, or private networks.
+///
+/// Testnet is the public test network run by the Stellar Development
+/// Foundation (SDF), and this is the identity value its RPC endpoints
+/// report from `getNetwork`. It is the passphrase for
+/// [`NetworkName::Testnet`] — returned by [`default_passphrase`] and used
+/// by [`resolve_passphrase`] when `--network-passphrase` is not passed.
+///
+/// It matters at run time: `canary_rpc::validate_network_info` compares an
+/// endpoint's reported passphrase against it, so pointing `--network
+/// testnet` at an endpoint on a different network surfaces as a
+/// configuration error (exit code 2) rather than a silently mislabelled
+/// report. See `TESTNET_DEFAULT_RPC_URL` for the endpoint this identity is
+/// checked against by default.
+///
+/// This constant is a plain `&'static str`: reading it performs no I/O and
+/// cannot panic. The comparison itself happens later, when the RPC client
+/// contacts the endpoint, and a mismatch is reported as an error, never a
+/// panic.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use crate::network::{default_passphrase, TESTNET_PASSPHRASE};
+/// use canary_core::NetworkName;
+///
+/// assert_eq!(TESTNET_PASSPHRASE, "Test SDF Network ; September 2015");
+/// assert_eq!(
+///     default_passphrase(&NetworkName::Testnet),
+///     Some(TESTNET_PASSPHRASE)
+/// );
+/// ```
 pub const TESTNET_PASSPHRASE: &str = "Test SDF Network ; September 2015";
 /// The default Stellar network passphrase for Futurenet.
 ///

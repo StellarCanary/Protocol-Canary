@@ -5,11 +5,11 @@ use canary_core::Capability;
 use crate::manifest::ProjectManifest;
 
 /// Dependency names that indicate a Soroban contract project.
-const SOROBAN_DEPENDENCIES: &[&str] = &["soroban-sdk"];
+pub const SOROBAN_DEPENDENCIES: &[&str] = &["soroban-sdk"];
 
 /// Dependency names that indicate direct use of official Stellar SDK/XDR
 /// crates without necessarily being a Soroban contract.
-const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
+pub const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
     "stellar-sdk",
     "stellar-xdr",
     "stellar-base",
@@ -19,7 +19,7 @@ const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
 ];
 
 /// Dependency names that indicate the project talks to Stellar RPC.
-const RPC_CLIENT_DEPENDENCIES: &[&str] = &[
+pub const RPC_CLIENT_DEPENDENCIES: &[&str] = &[
     "stellar-rpc-client",
     "soroban-rpc",
     "@stellar/stellar-sdk", // JS SDK includes RPC client

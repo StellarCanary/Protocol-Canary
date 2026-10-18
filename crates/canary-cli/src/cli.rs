@@ -101,9 +101,9 @@ pub struct CheckArgs {
     pub network_passphrase: Option<String>,
 
     /// Directory to treat as the project root (default: the current
-    /// directory). Relative `--config`, `--fixtures-dir` and `--output`
-    /// paths are resolved against it. The root is never searched for in
-    /// parent directories.
+    /// directory). Relative `--config`, `--fixtures-dir`, `--cache-dir` and
+    /// `--output` paths are resolved against it. The root is never searched
+    /// for in parent directories.
     #[arg(long = "project-root", value_name = "PATH")]
     pub project_root: Option<PathBuf>,
 
@@ -131,6 +131,13 @@ pub struct CheckArgs {
     /// .stellar-canary.toml; default: fixtures).
     #[arg(long = "fixtures-dir", value_name = "PATH")]
     pub fixtures_dir: Option<PathBuf>,
+
+    /// Directory for cached fixture execution results (default:
+    /// .stellar-canary-cache in the project root). The directory is created
+    /// if it does not exist. Relative paths are resolved against
+    /// --project-root when it is given.
+    #[arg(long = "cache-dir", value_name = "PATH")]
+    pub cache_dir: Option<PathBuf>,
 
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Terminal)]
@@ -259,6 +266,10 @@ pub struct InspectArgs {
     /// Shorthand for --format json.
     #[arg(long)]
     pub json: bool,
+
+    /// Include verbose diagnostic details in output.
+    #[arg(long)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -309,6 +320,36 @@ pub struct FixturesArgs {
 }
 
 #[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary report` subcommand ([`Command::Report`]).
+///
+/// `report` re-renders a JSON report that an earlier `check` run stored (the
+/// contract in `docs/json-report-contract.md`) into another format, without
+/// touching the network, the fixtures, or the project. It exists so a report
+/// captured on one machine — or in CI — can be re-rendered elsewhere, and so
+/// `check --format json | stellar-canary report -` can pipe a run straight
+/// into a Markdown job summary.
+///
+/// The two fields map one-to-one onto the subcommand's arguments:
+///
+/// - [`ReportArgs::path`] is the positional report file, or `-` to read the
+///   report from standard input until EOF (capped at 10 MiB).
+/// - [`ReportArgs::format`] is the `--format` flag: `markdown` by default,
+///   with `terminal`, `json` and `junit` available.
+///
+/// Parsing is performed by `clap` and performs no I/O and cannot panic: a
+/// missing path, an unknown format, or an unreadable or malformed report is
+/// a failure of the *run*, not of parsing — `run_report` reports it on
+/// stderr and maps it to a configuration error (exit code 2). The parse
+/// itself only fails with clap's usage message and exit status 2, before a
+/// `ReportArgs` value ever exists.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary report results.json
+/// stellar-canary report results.json --format json
+/// stellar-canary check --format json | stellar-canary report -
+/// ```
 pub struct ReportArgs {
     /// Path to a JSON report produced by `stellar-canary check --json`, or
     /// `-` to read the report from standard input until EOF (10 MiB max).
@@ -393,6 +434,31 @@ mod tests {
         let cli = Cli::parse_from(["stellar-canary", "check", "--output", "result.json"]);
         if let Command::Check(args) = cli.command {
             assert_eq!(args.output, Some(PathBuf::from("result.json")));
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn cache_dir_flag_defaults_to_none() {
+        let cli = Cli::parse_from(["stellar-canary", "check"]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.cache_dir, None);
+        } else {
+            panic!("Expected Check command");
+        }
+    }
+
+    #[test]
+    fn cache_dir_flag_takes_a_path() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "check",
+            "--cache-dir",
+            "build/canary-cache",
+        ]);
+        if let Command::Check(args) = cli.command {
+            assert_eq!(args.cache_dir, Some(PathBuf::from("build/canary-cache")));
         } else {
             panic!("Expected Check command");
         }

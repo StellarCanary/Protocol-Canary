@@ -274,6 +274,109 @@ fn an_offline_run_has_no_network_section_and_never_invents_an_observation() {
     assert_eq!(report["targetProtocol"], 28);
 }
 
+/// Protocol 29, the upgrade target: a `--protocol 29` run against an endpoint
+/// that reports 29 must handshake cleanly. Both sides agree, so there is no
+/// mismatch warning at all, the report records 29 as target *and* observed,
+/// and the fixtures that assert protocol 29 actually execute — a clean
+/// handshake is a run, not an empty one.
+#[test]
+fn target_protocol_29_matching_endpoint_passes_handshake_without_warnings() {
+    let (_rt, server) = mock_network(29);
+    let dir = project(&[
+        ("net", identity_fixture("p29-net", 29)),
+        ("x", xdr_fixture("p29-x", 29)),
+    ]);
+
+    let (output, report) = run_json(&dir, &server.uri(), &["--protocol", "29"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(report["targetProtocol"], 29, "what the run asked for");
+    assert_eq!(
+        report["network"]["observedProtocol"], 29,
+        "what the endpoint reported"
+    );
+    assert_eq!(report["counts"]["total"], 2, "both fixtures ran");
+    assert_eq!(status_of(&report, "p29-net"), "pass");
+    assert_eq!(status_of(&report, "p29-x"), "pass");
+
+    let err = stderr(&output);
+    assert!(
+        !err.contains("reports protocol"),
+        "no protocol-mismatch warning on a matching handshake: {err}"
+    );
+    assert!(
+        !err.contains("no checks ran"),
+        "the handshake is backed by a real run: {err}"
+    );
+}
+
+/// The upgrade-rehearsal case, from the other side: the run targets Protocol
+/// 29 while the endpoint is still on Protocol 28. The warning is emitted
+/// verbatim, the report keeps target 29 and observed 28 apart, and — with
+/// `--allow-empty`, because no Protocol 29 fixture exists yet — the run exits
+/// 0 rather than aborting or inventing an exit code.
+#[test]
+fn target_protocol_29_against_protocol_28_endpoint_surfaces_mismatch_warning() {
+    let (_rt, server) = mock_network(28);
+    let dir = project(&[
+        ("net", identity_fixture("p28-net", 28)),
+        ("x", xdr_fixture("p28-x", 28)),
+    ]);
+
+    let (output, report) = run_json(&dir, &server.uri(), &["--protocol", "29", "--allow-empty"]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a clean exit under --allow-empty: {}",
+        stderr(&output)
+    );
+    assert_eq!(report["targetProtocol"], 29);
+    assert_eq!(report["network"]["observedProtocol"], 28);
+    assert_eq!(report["counts"]["total"], 0, "nothing targets 29 yet");
+
+    let err = stderr(&output);
+    assert!(
+        err.contains(
+            "warning: the RPC endpoint reports protocol 28, but this run targets protocol 29"
+        ),
+        "{err}"
+    );
+}
+
+/// Negative case for the Protocol 29 handshake: identity agreement on the
+/// protocol is worthless if the endpoint is not the network the run named.
+/// A passphrase mismatch is a configuration error, so it aborts with exit
+/// code 2 before any check runs and emits no report — it is never reported as
+/// a protocol result or a compatibility outcome.
+#[test]
+fn a_protocol_29_handshake_against_a_foreign_passphrase_aborts_with_exit_code_2() {
+    let (_rt, server) = mock_network(29);
+    let dir = project(&[("x", xdr_fixture("p29-x", 29))]);
+
+    let (output, report) = run_json(
+        &dir,
+        &server.uri(),
+        &[
+            "--protocol",
+            "29",
+            "--network-passphrase",
+            "Some Other Net ; October 2026",
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "configuration error, not a result: {}",
+        stderr(&output)
+    );
+    assert_eq!(report, serde_json::Value::Null, "and no report is written");
+    let err = stderr(&output);
+    assert!(err.contains("passphrase"), "{err}");
+    assert!(!err.contains("reports protocol"), "{err}");
+}
+
 #[test]
 fn the_four_outcomes_use_four_different_exit_codes() {
     // failure, execution error, unsupported coverage, and success.

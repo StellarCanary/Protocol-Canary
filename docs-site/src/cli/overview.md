@@ -39,8 +39,9 @@ Options:
 member of a monorepo. The path must exist and be a directory; otherwise the
 command exits with code `2`.
 
-With `--project-root`, a relative `--config`, `--fixtures-dir` or `--output`
-is resolved against that directory, not against where the command was run.
+With `--project-root`, a relative `--config`, `--fixtures-dir`, `--cache-dir`
+or `--output` is resolved against that directory, not against where the
+command was run.
 The engine never searches parent directories for a project root, so a
 manifest in a parent directory is never picked up.
 

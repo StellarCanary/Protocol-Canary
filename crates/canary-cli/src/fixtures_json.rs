@@ -150,10 +150,22 @@ fn entry(fixture: &LoadedFixture, fixtures_dir: &Path) -> InventoryFixture {
         path: relative_path(fixtures_dir, &fixture.source_path),
         required_capabilities,
         source_reference: fixture.metadata.source_reference.clone(),
-        method: body_string("method"),
-        type_name: body_string("type"),
-        kind: body_string("kind"),
-        function: body_string("function"),
+        method: match fixture.metadata.surface {
+            canary_core::Surface::Rpc => body_string("method"),
+            _ => None,
+        },
+        type_name: match fixture.metadata.surface {
+            canary_core::Surface::Xdr => body_string("type"),
+            _ => None,
+        },
+        kind: match fixture.metadata.surface {
+            canary_core::Surface::Xdr => body_string("kind"),
+            _ => None,
+        },
+        function: match fixture.metadata.surface {
+            canary_core::Surface::Soroban => body_string("function"),
+            _ => None,
+        },
         verification: fixture.verification.clone(),
     }
 }

@@ -99,6 +99,44 @@ pub(crate) fn parse_cargo_manifest(raw: &str) -> Option<ProjectManifest> {
     Some(ProjectManifest { dependency_names })
 }
 
+/// One declared dependency along with its manifest section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestDep {
+    pub name: String,
+    pub section: String,
+}
+
+/// Parses `Cargo.toml` text into declared dependencies with their section names.
+pub fn parse_cargo_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
+    let value: toml::Value = toml::from_str(raw).ok()?;
+
+    let mut deps = Vec::new();
+    for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
+        if let Some(table) = value.get(section).and_then(toml::Value::as_table) {
+            for key in table.keys() {
+                deps.push(ManifestDep {
+                    name: key.clone(),
+                    section: section.to_string(),
+                });
+            }
+        }
+        if let Some(table) = value
+            .get("workspace")
+            .and_then(|w| w.get(section))
+            .and_then(toml::Value::as_table)
+        {
+            for key in table.keys() {
+                deps.push(ManifestDep {
+                    name: key.clone(),
+                    section: format!("workspace.{section}"),
+                });
+            }
+        }
+    }
+
+    Some(deps)
+}
+
 /// Reads and parses `<root>/package.json`, if present.
 pub fn read_package_json(root: &Path) -> Option<ProjectManifest> {
     let raw = std::fs::read_to_string(root.join("package.json")).ok()?;
@@ -114,6 +152,25 @@ pub fn read_package_json(root: &Path) -> Option<ProjectManifest> {
     dependency_names.dedup();
 
     Some(ProjectManifest { dependency_names })
+}
+
+/// Parses `package.json` text into declared dependencies with their section names.
+pub fn parse_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+
+    let mut deps = Vec::new();
+    for section in ["dependencies", "devDependencies", "peerDependencies"] {
+        if let Some(obj) = value.get(section).and_then(|v| v.as_object()) {
+            for key in obj.keys() {
+                deps.push(ManifestDep {
+                    name: key.clone(),
+                    section: section.to_string(),
+                });
+            }
+        }
+    }
+
+    Some(deps)
 }
 
 #[cfg(test)]

@@ -22,6 +22,11 @@ server, then choose a report file.
   the first reason, and nothing else.
 - The heading is chosen from the report's own `status` and is never
   "Compatible", "Ready" or "Supported".
+- When `network.observedProtocol` differs from `targetProtocol`, the report
+  opens with a high-contrast alert banner naming both versions ("Protocol
+  Mismatch Warning: Target protocol (…) differs from network observed
+  protocol (…)."). Reports whose protocols match, and reports that never
+  observed a protocol, show no banner.
 
 ## Not in this unit
 

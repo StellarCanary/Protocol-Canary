@@ -41,8 +41,8 @@ Rules, in order:
 
 1. `--project-root <path>`: the directory, canonicalized once. It must
    exist and be a directory. All relative inputs (`--config`, `--fixtures-dir`,
-   `--output`, lock path) resolve against it, not against the caller's working
-   directory, and the choice is shown in `inspect`.
+   `--cache-dir`, `--output`, lock path) resolve against it, not against the
+   caller's working directory, and the choice is shown in `inspect`.
 2. Otherwise the current directory, exactly as today.
 
 Upward discovery (finding a repository root from a subdirectory) is rejected per approved decision D-08: the current directory or explicit `--project-root` only. The Git context is read from the

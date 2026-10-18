@@ -19,6 +19,7 @@ Options:
       --rpc-max-retries <RPC_MAX_RETRIES>  Maximum number of retries after a failed RPC attempt; 0 disables retries (attempts = n + 1) [default: 3]
       --rpc-retry-delay-ms <RPC_RETRY_DELAY_MS>  Base delay between RPC retry attempts in milliseconds, linear backoff [default: 500]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
+      --cache-dir <PATH>             Directory for cached fixture execution results [default: .stellar-canary-cache in the project root; created if missing]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
       --json                         Shorthand for --format json
       --output <PATH>                Write the rendered report to this path, in addition to stdout.
@@ -209,6 +210,13 @@ exact string values a script should key off of instead of terminal text.
 
 `check` keeps a small file-backed cache in `.stellar-canary-cache` in the
 project root (add it to `.gitignore`).
+
+- **`--cache-dir <PATH>`** stores the cache somewhere else — a CI runner's
+  persistent cache, a tmpfs mount, anywhere a pipeline can keep a directory
+  between runs. The directory is created if it does not exist; a path that
+  cannot be created exits `2` before any fixture runs, with an error naming
+  the flag and the path. A relative path resolves against `--project-root`
+  when that flag is given. Without `--cache-dir` nothing changes.
 
 - **XDR results** are cached. They depend only on the fixture bytes, so an
   entry stays valid until the fixture, a payload it references, the protocol

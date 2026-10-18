@@ -136,6 +136,36 @@ fn without_verbatim_prefix(path: PathBuf) -> PathBuf {
     path
 }
 
+/// The directory `check` reads and writes cached results under.
+///
+/// `--cache-dir` replaces the default `.stellar-canary-cache` in the project
+/// root; like every other caller-supplied path it is resolved against
+/// `--project-root` when one was given. The directory is created here, before
+/// any fixture runs, so a location that cannot be created (a read-only mount,
+/// or a path that runs through a regular file) is reported as a configuration
+/// error naming the flag instead of surfacing later as an opaque per-fixture
+/// cache-write failure. With `--no-cache` nothing is created, matching a run
+/// that never touches the cache.
+fn resolve_cache_dir(
+    args: &CheckArgs,
+    project_root: &ProjectRoot,
+    root: &Path,
+) -> Result<PathBuf, CanaryError> {
+    let Some(requested) = &args.cache_dir else {
+        return Ok(root.join(CACHE_DIR_NAME));
+    };
+    let dir = project_root.resolve_input(requested);
+    if !args.no_cache {
+        std::fs::create_dir_all(&dir).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "--cache-dir {} could not be created: {e}",
+                dir.display()
+            ))
+        })?;
+    }
+    Ok(dir)
+}
+
 pub async fn run_check(args: CheckArgs) -> ExitCode {
     match run_check_inner(args).await {
         Ok(exit_code) => exit_code,
@@ -296,13 +326,14 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
 
     let git = collect_git_context(&CliGitRepository::new(&root));
 
+    let cache_dir = resolve_cache_dir(&args, &project_root, &root)?;
     let context = ExecutionContext {
         protocol: target_protocol,
         project: project.clone(),
         network: network_context,
         fixtures: fixture_store,
         git: git.clone(),
-        cache: CacheStore::new(root.join(CACHE_DIR_NAME)).with_policy(CachePolicy {
+        cache: CacheStore::new(cache_dir).with_policy(CachePolicy {
             enabled: !args.no_cache,
             live_max_age: args.live_cache_ttl.map(std::time::Duration::from_secs),
         }),
@@ -481,6 +512,7 @@ pub fn run_inspect(args: InspectArgs) -> ExitCode {
 /// terminal and JSON paths agree on one set of facts.
 struct InspectSetup {
     root: std::path::PathBuf,
+    root_selected_by: &'static str,
     config: canary_config::ConfigFile,
     /// The configuration file that was read, if any. Decides
     /// `config.found`, `config.path` and `target.source` in the JSON
@@ -494,6 +526,7 @@ struct InspectSetup {
     detected: canary_core::ProjectContext,
     /// [`InspectSetup::detected`] with the resolved (effective) type.
     project: canary_core::ProjectContext,
+    details: canary_project::DetailedDetection,
     explicit_type: Option<canary_core::ProjectType>,
     target_protocol: ProtocolVersion,
     /// `flag`, `config` or `default` (CA-03).
@@ -503,6 +536,11 @@ struct InspectSetup {
 fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
     let root = project_root.path.clone();
+    let root_selected_by = if project_root.explicit {
+        "flag"
+    } else {
+        "current-directory"
+    };
 
     let (config, config_file) = match &args.config {
         Some(path) => {
@@ -526,7 +564,8 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
-    let detected = canary_project::detect(&root);
+    let details = canary_project::detect_details(&root);
+    let detected = details.context.clone();
     let explicit_type = match config.project.project_type {
         canary_config::ProjectTypeSetting::Auto => None,
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
@@ -547,11 +586,13 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
 
     Ok(InspectSetup {
         root,
+        root_selected_by,
         config,
         config_file,
         fixtures_dir,
         detected,
         project,
+        details,
         explicit_type,
         target_protocol,
         target_source,
@@ -765,6 +806,79 @@ fn run_inspect_json(setup: InspectSetup) -> Result<(), CanaryError> {
         .collect();
     capabilities.sort();
 
+    let fingerprint = canary_project::compute_fingerprint(
+        &setup.root,
+        setup.detected.project_type,
+        &setup.detected.capabilities,
+        setup.explicit_type,
+    );
+
+    let capability_evidence: Vec<inspect_json::InspectCapabilityEvidence> = setup
+        .details
+        .capability_evidence
+        .iter()
+        .map(|cap_ev| inspect_json::InspectCapabilityEvidence {
+            capability: inspect_json::capability_name(&cap_ev.capability).to_string(),
+            evidence: cap_ev
+                .evidence
+                .iter()
+                .map(|item| inspect_json::InspectEvidenceItem {
+                    manifest: item.manifest.clone(),
+                    ecosystem: item.ecosystem.clone(),
+                    dependency: item.dependency.clone(),
+                    section: item.section.clone(),
+                })
+                .collect(),
+        })
+        .collect();
+
+    let diagnostics: Vec<inspect_json::InspectDiagnostic> = setup
+        .details
+        .diagnostics
+        .iter()
+        .map(|d| inspect_json::InspectDiagnostic {
+            code: d.code.as_str().to_string(),
+            detail: d.detail.clone(),
+        })
+        .collect();
+
+    let project_type_evidence = inspect_json::InspectProjectTypeEvidence {
+        value: setup.project.project_type.to_string(),
+        source: if setup.explicit_type.is_some() {
+            "config"
+        } else {
+            "detected"
+        }
+        .to_string(),
+        detected_value: if setup.explicit_type.is_some()
+            && setup.project.project_type != setup.detected.project_type
+        {
+            Some(setup.detected.project_type.to_string())
+        } else {
+            None
+        },
+    };
+
+    let detection = inspect_json::InspectDetection {
+        evidence_version: 1,
+        root: ".".to_string(),
+        capabilities: capability_evidence,
+        inspected: setup.details.inspected.clone(),
+        diagnostics,
+        project_type: project_type_evidence,
+    };
+
+    let workspace = inspect_json::InspectWorkspace {
+        members: setup.details.workspace_members.clone(),
+    };
+
+    let inspect_fingerprint = inspect_json::InspectFingerprint {
+        fingerprint_version: canary_project::FINGERPRINT_VERSION,
+        detector: canary_project::DETECTOR_REVISION,
+        digest: fingerprint.digest().to_string(),
+        inputs: fingerprint.inputs(),
+    };
+
     let document = inspect_json::InspectDocument {
         inspect_version: inspect_json::INSPECT_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -773,7 +887,7 @@ fn run_inspect_json(setup: InspectSetup) -> Result<(), CanaryError> {
             // The command inspects the directory it was started in, so
             // the root is `.` relative to where a consumer stands.
             root: ".".to_string(),
-            root_selected_by: "current-directory".to_string(),
+            root_selected_by: setup.root_selected_by.to_string(),
             project_type: setup.project.project_type.to_string(),
             type_source: if setup.explicit_type.is_some() {
                 "config"
@@ -783,6 +897,8 @@ fn run_inspect_json(setup: InspectSetup) -> Result<(), CanaryError> {
             .to_string(),
             detected_type: setup.detected.project_type.to_string(),
             capabilities,
+            workspace: workspace.clone(),
+            detection,
         },
         config: inspect_json::InspectConfig {
             found: setup.config_file.is_some(),
@@ -819,9 +935,11 @@ fn run_inspect_json(setup: InspectSetup) -> Result<(), CanaryError> {
             check_would_refuse,
             refusal,
         },
+        workspace,
+        fingerprint: inspect_fingerprint,
     };
 
-    println!("{}", inspect_json::render(&document));
+    print!("{}", inspect_json::render(&document));
     Ok(())
 }
 
@@ -967,7 +1085,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
                 &fixtures_dir,
                 &loaded_fixtures,
             );
-            println!("{}", fixtures_json::render(&inventory));
+            print!("{}", fixtures_json::render(&inventory));
         }
     }
 
@@ -1158,6 +1276,7 @@ mod tests {
             config: config.map(PathBuf::from),
             format: crate::cli::InspectFormat::Terminal,
             json: false,
+            verbose: false,
         }
     }
 

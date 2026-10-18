@@ -23,14 +23,15 @@ fn fixture_filter_executes_and_reports_only_the_requested_fixture() {
     dir.write("fixtures/xdr-selected.toml", &xdr_fixture("xdr-selected"));
     dir.write("fixtures/xdr-other.toml", &xdr_fixture("xdr-other"));
 
-    let output = run_in(&dir.path, &["check", "--fixture", "xdr-selected"]);
-    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
-    let out = stdout(&output);
-    assert!(out.contains("xdr-selected"), "{out}");
-    assert!(
-        !out.contains("xdr-other"),
-        "unselected result leaked: {out}"
+    let output = run_in(
+        &dir.path,
+        &["check", "--fixture", "xdr-selected", "--format", "json"],
     );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let results = report["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["fixtureId"], "xdr-selected");
 }
 
 #[test]
@@ -44,14 +45,15 @@ fn surface_filter_executes_only_matching_fixtures() {
         "id = \"rpc-excluded\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"not-a-real-method\"\n",
     );
 
-    let output = run_in(&dir.path, &["check", "--surface", "xdr"]);
-    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
-    let out = stdout(&output);
-    assert!(out.contains("xdr-selected"), "{out}");
-    assert!(
-        !out.contains("rpc-excluded"),
-        "unselected result leaked: {out}"
+    let output = run_in(
+        &dir.path,
+        &["check", "--surface", "xdr", "--format", "json"],
     );
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).unwrap();
+    let results = report["results"].as_array().unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["fixtureId"], "xdr-selected");
 }
 
 #[test]

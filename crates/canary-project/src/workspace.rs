@@ -14,7 +14,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{parse_cargo_manifest, ProjectManifest};
+use crate::manifest::{
+    parse_cargo_manifest, parse_npm_workspace_member_dependencies, parse_npm_workspace_patterns,
+    ProjectManifest,
+};
 
 /// Most workspace members that are scanned (decision D-06).
 pub const MAX_WORKSPACE_MEMBERS: usize = 64;
@@ -167,6 +170,90 @@ pub fn scan_cargo_workspace(root: &Path) -> WorkspaceScan {
             code: DiagnosticCode::ScanBoundReached,
             detail: format!(
                 "workspace members limit {MAX_WORKSPACE_MEMBERS} ({total} found); the rest were not scanned"
+            ),
+        });
+    }
+    scan
+}
+
+/// Discovers npm workspace members from the root `package.json`.
+///
+/// Only local member directories are inspected. The same depth, count,
+/// directory-name, and symlink rules as Cargo workspace scanning apply.
+pub fn scan_npm_workspace(root: &Path) -> WorkspaceScan {
+    scan_npm_workspace_with_limit(root, MAX_WORKSPACE_MEMBERS)
+}
+
+pub(crate) fn scan_npm_workspace_with_limit(root: &Path, member_limit: usize) -> WorkspaceScan {
+    let mut scan = WorkspaceScan::default();
+    let manifest_path = root.join("package.json");
+    let metadata = match std::fs::symlink_metadata(&manifest_path) {
+        Ok(metadata) => metadata,
+        Err(_) => return scan,
+    };
+    if metadata.file_type().is_symlink() {
+        push(
+            &mut scan.diagnostics,
+            DiagnosticCode::SymlinkSkipped,
+            "package.json is a symbolic link and was not followed",
+        );
+        return scan;
+    }
+    if !metadata.is_file() {
+        return scan;
+    }
+    let raw = match read_limited(&manifest_path) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestTooLarge,
+                format!("package.json is larger than {MAX_MANIFEST_BYTES} bytes"),
+            );
+            return scan;
+        }
+        Err(error) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                format!("package.json could not be read: {error}"),
+            );
+            return scan;
+        }
+    };
+    let patterns = match parse_npm_workspace_patterns(&raw) {
+        Ok(Some(patterns)) => patterns,
+        Ok(None) => return scan,
+        Err(()) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                "package.json has invalid npm workspace configuration",
+            );
+            return scan;
+        }
+    };
+
+    let mut budget = Budget::default();
+    let mut found = BTreeSet::new();
+    for pattern in &patterns {
+        expand_pattern(
+            root,
+            pattern,
+            &mut found,
+            &mut scan.diagnostics,
+            &mut budget,
+        );
+    }
+    let total = found.len();
+    for member in found.into_iter().take(member_limit) {
+        read_npm_member(root, &member, &mut scan);
+    }
+    if total > member_limit {
+        scan.diagnostics.push(Diagnostic {
+            code: DiagnosticCode::ScanBoundReached,
+            detail: format!(
+                "workspace members limit {member_limit} ({total} found); the rest were not scanned"
             ),
         });
     }
@@ -462,6 +549,42 @@ fn read_member(root: &Path, member: &str, scan: &mut WorkspaceScan) {
     }
 }
 
+fn read_npm_member(root: &Path, member: &str, scan: &mut WorkspaceScan) {
+    let manifest_relative = format!("{member}/package.json");
+    let manifest_path = to_path(root, &manifest_relative);
+    match read_limited(&manifest_path) {
+        Err(_) => push(
+            &mut scan.diagnostics,
+            DiagnosticCode::WorkspaceMemberMissing,
+            format!("npm workspace member {member:?} has no readable package.json"),
+        ),
+        Ok(None) => push(
+            &mut scan.diagnostics,
+            DiagnosticCode::ManifestTooLarge,
+            format!("{manifest_relative} is larger than {MAX_MANIFEST_BYTES} bytes"),
+        ),
+        Ok(Some(text)) => match parse_npm_workspace_member_dependencies(&text) {
+            Some(dependencies) => {
+                let mut dependency_names: Vec<String> = dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name)
+                    .collect();
+                dependency_names.sort();
+                dependency_names.dedup();
+                scan.members.push(WorkspaceMember {
+                    path: member.to_string(),
+                    manifest: ProjectManifest { dependency_names },
+                });
+            }
+            None => push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                format!("{manifest_relative} is not valid JSON"),
+            ),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -484,5 +607,17 @@ mod tests {
         assert!(match_path(&["crates", "*"], &["crates", "a"]));
         assert!(!match_path(&["crates", "*"], &["crates", "a", "b"]));
         assert!(!match_path(&["*"], &["crates", "a"]));
+    }
+
+    #[test]
+    fn npm_workspace_patterns_accept_both_standard_forms() {
+        assert_eq!(
+            parse_npm_workspace_patterns(r#"{"workspaces":["packages/*"]}"#),
+            Ok(Some(vec!["packages/*".to_string()]))
+        );
+        assert_eq!(
+            parse_npm_workspace_patterns(r#"{"workspaces":{"packages":["packages/*","tools/*"]}}"#),
+            Ok(Some(vec!["packages/*".to_string(), "tools/*".to_string()]))
+        );
     }
 }

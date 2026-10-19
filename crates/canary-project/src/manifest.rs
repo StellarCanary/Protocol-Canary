@@ -173,6 +173,44 @@ pub fn parse_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
     Some(deps)
 }
 
+/// Parses the local member patterns from either supported npm workspace form.
+pub(crate) fn parse_npm_workspace_patterns(raw: &str) -> Result<Option<Vec<String>>, ()> {
+    let value: serde_json::Value = serde_json::from_str(raw).map_err(|_| ())?;
+    let Some(workspaces) = value.get("workspaces") else {
+        return Ok(None);
+    };
+    let packages = match workspaces {
+        serde_json::Value::Array(packages) => Some(packages),
+        serde_json::Value::Object(workspaces) => workspaces
+            .get("packages")
+            .and_then(serde_json::Value::as_array),
+        _ => None,
+    }
+    .ok_or(())?;
+    let patterns = packages
+        .iter()
+        .map(|package| package.as_str().map(str::to_string).ok_or(()))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Some(patterns))
+}
+
+/// Parses only runtime and development dependencies from an npm workspace member.
+pub(crate) fn parse_npm_workspace_member_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let mut deps = Vec::new();
+    for section in ["dependencies", "devDependencies"] {
+        if let Some(obj) = value.get(section).and_then(|value| value.as_object()) {
+            for key in obj.keys() {
+                deps.push(ManifestDep {
+                    name: key.clone(),
+                    section: section.to_string(),
+                });
+            }
+        }
+    }
+    Some(deps)
+}
+
 /// An error encountered while parsing a `go.mod` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoModError {

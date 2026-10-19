@@ -173,6 +173,88 @@ pub fn parse_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
     Some(deps)
 }
 
+/// Extracts and normalizes a package name from a single line of a requirements file.
+///
+/// Strips inline comments, skips comments (`#`) and pip flags (`-`), and trims
+/// extras (`[...]`), version operators (`==`, `>=`, `<=`, `~=`, `!=`, `<`, `>`, `===`),
+/// direct URLs (`@`), and environment markers (`;`).
+pub fn parse_requirements_line(line: &str) -> Option<String> {
+    let mut line = line.trim();
+    if let Some(idx) = line.find('#') {
+        line = line[..idx].trim();
+    }
+    if line.is_empty() || line.starts_with('-') {
+        return None;
+    }
+
+    let name_part = line
+        .split(|c: char| {
+            c.is_whitespace() || matches!(c, '[' | ';' | '<' | '>' | '=' | '~' | '!' | '@')
+        })
+        .next()?
+        .trim()
+        .trim_matches(|c| c == '\'' || c == '"');
+
+    if name_part.is_empty() {
+        None
+    } else {
+        Some(normalize_python_package_name(name_part))
+    }
+}
+
+/// Normalizes a Python package name per PEP 508 / PEP 503 (lowercased, hyphens/underscores/dots normalized).
+pub fn normalize_python_package_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace(['_', '.'], "-")
+}
+
+/// Parses `requirements.txt` text line-by-line into declared dependency names.
+///
+/// Ignores comments (`#`), pip options and flags (e.g. `-r`, `-i`), and strips
+/// version constraints, extras, and environment markers. Returns sorted, unique names.
+pub fn parse_requirements_txt(raw: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in raw.lines() {
+        if let Some(name) = parse_requirements_line(line) {
+            names.push(name);
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Parses `requirements.txt` text into a [`ProjectManifest`].
+pub fn parse_requirements_manifest(raw: &str) -> ProjectManifest {
+    ProjectManifest {
+        dependency_names: parse_requirements_txt(raw),
+    }
+}
+
+/// Parses `requirements.txt` text into declared dependencies with their section names.
+pub fn parse_requirements_dependencies(raw: &str) -> Vec<ManifestDep> {
+    let mut deps = Vec::new();
+    for line in raw.lines() {
+        if let Some(name) = parse_requirements_line(line) {
+            deps.push(ManifestDep {
+                name,
+                section: "dependencies".to_string(),
+            });
+        }
+    }
+    deps
+}
+
+/// Reads and parses a requirements file at `path`, if readable.
+pub fn read_requirements_manifest(path: &Path) -> Option<ProjectManifest> {
+    let raw = std::fs::read_to_string(path).ok()?;
+    Some(parse_requirements_manifest(&raw))
+}
+
+/// Reads and parses `<root>/requirements.txt`, if present.
+pub fn read_requirements_txt(root: &Path) -> Option<ProjectManifest> {
+    read_requirements_manifest(&root.join("requirements.txt"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -264,5 +346,81 @@ mod tests {
         };
         assert!(manifest.has_any_dependency(&["stellar-sdk", "stellar-rpc-client"]));
         assert!(!manifest.has_any_dependency(&["soroban-sdk"]));
+    }
+
+    #[test]
+    fn reads_requirements_txt_pinned_versions() {
+        let raw = "stellar-sdk==9.0.0\nrequests==2.28.1\n";
+        let manifest = parse_requirements_manifest(raw);
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("requests"));
+        assert!(!manifest.has_dependency("nonexistent"));
+    }
+
+    #[test]
+    fn reads_requirements_txt_ranges_and_compatible() {
+        let raw = "stellar-sdk>=9.0.0,<10.0.0\nurllib3~=1.26.5\nstellar-base!=0.1.0\n";
+        let manifest = parse_requirements_manifest(raw);
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("urllib3"));
+        assert!(manifest.has_dependency("stellar-base"));
+    }
+
+    #[test]
+    fn normalizes_requirements_package_names() {
+        let raw = "STELLAR_SDK==9.0.0\nStellar-Base>=1.0\n";
+        let manifest = parse_requirements_manifest(raw);
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("stellar-base"));
+    }
+
+    #[test]
+    fn ignores_comments_and_pip_options_in_requirements() {
+        let raw = r#"
+# Core stellar dependencies
+-r base.txt
+-i https://pypi.org/simple
+--extra-index-url https://custom.pypi.org/simple
+stellar-sdk==9.0.0 # inline comment
+# stellar_sdk_legacy==1.0.0
+requests>=2.28.0
+-c constraints.txt
+"#;
+        let manifest = parse_requirements_manifest(raw);
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("requests"));
+        assert!(!manifest.has_dependency("base.txt"));
+        assert!(!manifest.has_dependency("https://pypi.org/simple"));
+        assert!(!manifest.has_dependency("stellar_sdk_legacy"));
+    }
+
+    #[test]
+    fn negative_commented_out_package_does_not_trigger_detection() {
+        let raw = r#"
+# stellar-sdk
+#   stellar-sdk==9.0.0
+#stellar_sdk>=1.0.0
+fastapi>=0.100.0
+"#;
+        let manifest = parse_requirements_manifest(raw);
+        assert!(!manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("fastapi"));
+    }
+
+    #[test]
+    fn requirements_txt_does_not_mutate_file() {
+        let dir = super::super::test_support::temp_dir("manifest-requirements");
+        let path = dir.path.join("requirements.txt");
+        let original = "stellar-sdk==9.0.0\nrequests>=2.28\n";
+        std::fs::write(&path, original).unwrap();
+
+        let before = std::fs::metadata(&path).unwrap();
+        let manifest = read_requirements_txt(&dir.path).expect("read requirements.txt");
+        assert!(manifest.has_dependency("stellar-sdk"));
+
+        let after_content = std::fs::read_to_string(&path).unwrap();
+        let after = std::fs::metadata(&path).unwrap();
+        assert_eq!(original, after_content);
+        assert_eq!(before.len(), after.len());
     }
 }

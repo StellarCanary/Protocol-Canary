@@ -173,391 +173,152 @@ pub fn parse_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
     Some(deps)
 }
 
-/// An error encountered while parsing a `go.mod` file.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GoModError {
-    /// The 1-based line number where the error occurred.
-    pub line: usize,
-    /// Description of the parsing error.
-    pub message: String,
-}
+fn extract_python_package_name(spec: &str) -> Option<String> {
+    let trimmed = spec.trim().trim_matches(|c| c == '\'' || c == '"');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let name_part = trimmed
+        .split(|c: char| {
+            c.is_whitespace() || matches!(c, '[' | ';' | '<' | '>' | '=' | '~' | '!' | '@' | '^')
+        })
+        .next()?;
 
-impl std::fmt::Display for GoModError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "line {}: {}", self.line, self.message)
+    if name_part.is_empty() {
+        None
+    } else {
+        Some(normalize_python_package_name(name_part))
     }
 }
 
-impl std::error::Error for GoModError {}
-
-fn tokenize_line(line: &str) -> Result<Vec<String>, String> {
-    let mut tokens = Vec::new();
-    let chars: Vec<char> = line.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        let c = chars[i];
-        if c.is_whitespace() {
-            i += 1;
-            continue;
-        }
-        if c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
-            break;
-        }
-        if c == '(' {
-            tokens.push("(".to_string());
-            i += 1;
-            continue;
-        }
-        if c == ')' {
-            tokens.push(")".to_string());
-            i += 1;
-            continue;
-        }
-        if c == '=' && i + 1 < chars.len() && chars[i + 1] == '>' {
-            tokens.push("=>".to_string());
-            i += 2;
-            continue;
-        }
-        if c == '"' {
-            i += 1;
-            let mut s = String::new();
-            let mut closed = false;
-            while i < chars.len() {
-                let ch = chars[i];
-                if ch == '\\' && i + 1 < chars.len() {
-                    let next = chars[i + 1];
-                    match next {
-                        'n' => s.push('\n'),
-                        'r' => s.push('\r'),
-                        't' => s.push('\t'),
-                        '\\' => s.push('\\'),
-                        '"' => s.push('"'),
-                        other => {
-                            s.push('\\');
-                            s.push(other);
-                        }
-                    }
-                    i += 2;
-                } else if ch == '"' {
-                    closed = true;
-                    i += 1;
-                    break;
-                } else {
-                    s.push(ch);
-                    i += 1;
-                }
-            }
-            if !closed {
-                return Err("unclosed double quote".to_string());
-            }
-            tokens.push(s);
-            continue;
-        }
-        if c == '`' {
-            i += 1;
-            let mut s = String::new();
-            let mut closed = false;
-            while i < chars.len() {
-                let ch = chars[i];
-                if ch == '`' {
-                    closed = true;
-                    i += 1;
-                    break;
-                } else {
-                    s.push(ch);
-                    i += 1;
-                }
-            }
-            if !closed {
-                return Err("unclosed raw string literal".to_string());
-            }
-            tokens.push(s);
-            continue;
-        }
-        let mut s = String::new();
-        while i < chars.len() {
-            let ch = chars[i];
-            if ch.is_whitespace() || ch == '(' || ch == ')' || ch == '"' || ch == '`' {
-                break;
-            }
-            if ch == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
-                break;
-            }
-            if ch == '=' && i + 1 < chars.len() && chars[i + 1] == '>' {
-                break;
-            }
-            s.push(ch);
-            i += 1;
-        }
-        tokens.push(s);
-    }
-    Ok(tokens)
+fn normalize_python_package_name(name: &str) -> String {
+    name.trim().to_ascii_lowercase().replace(['_', '.'], "-")
 }
 
-#[derive(Debug, PartialEq, Eq)]
-enum BlockState {
-    None,
-    Require,
-    Other(String),
+/// Reads and parses `<root>/pyproject.toml`, if present.
+pub fn read_pyproject_manifest(root: &Path) -> Option<ProjectManifest> {
+    let raw = std::fs::read_to_string(root.join("pyproject.toml")).ok()?;
+    parse_pyproject_manifest(&raw)
 }
 
-const TOP_LEVEL_DIRECTIVES: &[&str] = &[
-    "module",
-    "go",
-    "toolchain",
-    "require",
-    "replace",
-    "exclude",
-    "retract",
-    "use",
-    "godebug",
-];
-
-const BLOCK_DIRECTIVES: &[&str] = &["require", "replace", "exclude", "retract", "use", "godebug"];
-
-/// Parses `go.mod` text into declared dependencies with their section names.
-///
-/// Supports single-line and block `require` directives without executing external
-/// commands. Does not follow `replace` or `exclude` directives. Returns an error if
-/// the manifest has malformed syntax.
-pub fn parse_go_mod_dependencies(raw: &str) -> Result<Vec<ManifestDep>, GoModError> {
-    let clean = raw.strip_prefix('\u{feff}').unwrap_or(raw);
-    let mut deps = Vec::new();
-    let mut state = BlockState::None;
-
-    for (line_idx, line) in clean.lines().enumerate() {
-        let line_no = line_idx + 1;
-        let tokens = tokenize_line(line).map_err(|msg| GoModError {
-            line: line_no,
-            message: msg,
-        })?;
-
-        if tokens.is_empty() {
-            continue;
-        }
-
-        match &state {
-            BlockState::None => {
-                if let Some(open_pos) = tokens.iter().position(|t| t == "(") {
-                    if open_pos != 1 {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!("unexpected '(' in line: {line}"),
-                        });
-                    }
-                    let directive = &tokens[0];
-                    if !BLOCK_DIRECTIVES.contains(&directive.as_str()) {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!(
-                                "directive '{directive}' does not support block syntax"
-                            ),
-                        });
-                    }
-
-                    if let Some(close_pos) = tokens.iter().position(|t| t == ")") {
-                        if close_pos < open_pos {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: "unexpected ')' before '('".to_string(),
-                            });
-                        }
-                        if close_pos != tokens.len() - 1 {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: "unexpected tokens after ')'".to_string(),
-                            });
-                        }
-                        if directive == "require" {
-                            let inner = &tokens[open_pos + 1..close_pos];
-                            if inner.is_empty() {
-                                // Empty require (), valid
-                            } else if inner.len() == 2 {
-                                deps.push(ManifestDep {
-                                    name: inner[0].clone(),
-                                    section: "require".to_string(),
-                                });
-                            } else {
-                                return Err(GoModError {
-                                    line: line_no,
-                                    message: format!(
-                                        "require block entry expects module path and version, found {inner:?}"
-                                    ),
-                                });
-                            }
-                        }
-                    } else {
-                        if tokens.len() != 2 {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: format!(
-                                    "unexpected tokens after '(' on directive line: {line}"
-                                ),
-                            });
-                        }
-                        if directive == "require" {
-                            state = BlockState::Require;
-                        } else {
-                            state = BlockState::Other(directive.clone());
-                        }
-                    }
-                } else if tokens.contains(&")".to_string()) {
-                    return Err(GoModError {
-                        line: line_no,
-                        message: "unexpected closing parenthesis ')'".to_string(),
-                    });
-                } else {
-                    let directive = &tokens[0];
-                    if !TOP_LEVEL_DIRECTIVES.contains(&directive.as_str()) {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!("unknown directive '{directive}'"),
-                        });
-                    }
-
-                    if directive == "require" {
-                        if tokens.len() != 3 {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: "require directive expects module path and version"
-                                    .to_string(),
-                            });
-                        }
-                        deps.push(ManifestDep {
-                            name: tokens[1].clone(),
-                            section: "require".to_string(),
-                        });
-                    } else if tokens.len() < 2 {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!("directive '{directive}' expects arguments"),
-                        });
-                    }
-                }
-            }
-            BlockState::Require => {
-                if tokens.contains(&"(".to_string()) {
-                    return Err(GoModError {
-                        line: line_no,
-                        message: "nested block is not permitted in go.mod".to_string(),
-                    });
-                }
-                if let Some(close_pos) = tokens.iter().position(|t| t == ")") {
-                    if close_pos == 0 {
-                        if tokens.len() > 1 {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: "unexpected tokens after ')'".to_string(),
-                            });
-                        }
-                        state = BlockState::None;
-                    } else if close_pos == tokens.len() - 1 {
-                        let inner = &tokens[..close_pos];
-                        if inner.len() == 2 {
-                            if TOP_LEVEL_DIRECTIVES.contains(&inner[0].as_str()) {
-                                return Err(GoModError {
-                                    line: line_no,
-                                    message: format!(
-                                        "directive '{}' inside require block",
-                                        inner[0]
-                                    ),
-                                });
-                            }
-                            deps.push(ManifestDep {
-                                name: inner[0].clone(),
-                                section: "require".to_string(),
-                            });
-                            state = BlockState::None;
-                        } else {
-                            return Err(GoModError {
-                                line: line_no,
-                                message: format!(
-                                    "require block entry expects module path and version, found {inner:?}"
-                                ),
-                            });
-                        }
-                    } else {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: "unexpected tokens after ')'".to_string(),
-                        });
-                    }
-                } else {
-                    if TOP_LEVEL_DIRECTIVES.contains(&tokens[0].as_str()) {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!("directive '{}' inside require block", tokens[0]),
-                        });
-                    }
-                    if tokens.len() != 2 {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: format!(
-                                "require block entry expects module path and version, found {tokens:?}"
-                            ),
-                        });
-                    }
-                    deps.push(ManifestDep {
-                        name: tokens[0].clone(),
-                        section: "require".to_string(),
-                    });
-                }
-            }
-            BlockState::Other(_) => {
-                if tokens.contains(&"(".to_string()) {
-                    return Err(GoModError {
-                        line: line_no,
-                        message: "nested block is not permitted in go.mod".to_string(),
-                    });
-                }
-                if let Some(close_pos) = tokens.iter().position(|t| t == ")") {
-                    if close_pos != 0 && close_pos != tokens.len() - 1 {
-                        return Err(GoModError {
-                            line: line_no,
-                            message: "unexpected tokens around ')'".to_string(),
-                        });
-                    }
-                    state = BlockState::None;
-                }
-            }
-        }
-    }
-
-    match state {
-        BlockState::None => Ok(deps),
-        BlockState::Require => Err(GoModError {
-            line: clean.lines().count().max(1),
-            message: "unclosed require block".to_string(),
-        }),
-        BlockState::Other(d) => Err(GoModError {
-            line: clean.lines().count().max(1),
-            message: format!("unclosed {d} block"),
-        }),
-    }
+/// Reads and parses `<root>/pyproject.toml`, if present (alias for [`read_pyproject_manifest`]).
+pub fn read_pyproject_toml(root: &Path) -> Option<ProjectManifest> {
+    read_pyproject_manifest(root)
 }
 
-/// Parses `go.mod` text into the dependency names it declares, or
-/// an error when it has malformed syntax.
-pub fn parse_go_mod(raw: &str) -> Result<ProjectManifest, GoModError> {
-    let deps = parse_go_mod_dependencies(raw)?;
+/// Parses `pyproject.toml` text into the dependency names it declares, or
+/// `None` when it is not valid TOML.
+pub fn parse_pyproject_manifest(raw: &str) -> Option<ProjectManifest> {
+    let deps = parse_pyproject_dependencies(raw).ok()?;
     let mut dependency_names: Vec<String> = deps.into_iter().map(|d| d.name).collect();
     dependency_names.sort();
     dependency_names.dedup();
-    Ok(ProjectManifest { dependency_names })
+    Some(ProjectManifest { dependency_names })
 }
 
-/// Reads and parses `<root>/go.mod`, if present.
+/// Parses `pyproject.toml` text into declared dependencies with their section names.
 ///
-/// Returns `None` when there is no `go.mod` or it fails to parse.
-pub fn read_go_mod(root: &Path) -> Option<ProjectManifest> {
-    let raw = std::fs::read_to_string(root.join("go.mod")).ok()?;
-    parse_go_mod(&raw).ok()
-}
+/// Supports PEP 621 `[project.dependencies]` (and `[project.optional-dependencies]`)
+/// as well as Poetry `[tool.poetry.dependencies]` (and `[tool.poetry.dev-dependencies]`,
+/// `[tool.poetry.group.*.dependencies]`).
+pub fn parse_pyproject_dependencies(raw: &str) -> Result<Vec<ManifestDep>, toml::de::Error> {
+    let value: toml::Value = toml::from_str(raw)?;
+    let mut deps = Vec::new();
 
-/// Parses `go.mod` text into the dependency names it declares, or
-/// `None` when it is not valid syntax.
-pub fn parse_go_manifest(raw: &str) -> Option<ProjectManifest> {
-    parse_go_mod(raw).ok()
+    // 1. PEP 621: [project.dependencies]
+    if let Some(project) = value.get("project").and_then(toml::Value::as_table) {
+        if let Some(dependencies) = project.get("dependencies").and_then(toml::Value::as_array) {
+            for item in dependencies {
+                if let Some(spec) = item.as_str() {
+                    if let Some(name) = extract_python_package_name(spec) {
+                        deps.push(ManifestDep {
+                            name,
+                            section: "project.dependencies".to_string(),
+                        });
+                    }
+                }
+            }
+        }
+
+        // PEP 621: [project.optional-dependencies]
+        if let Some(optional) = project
+            .get("optional-dependencies")
+            .and_then(toml::Value::as_table)
+        {
+            for (group, group_deps) in optional {
+                if let Some(arr) = group_deps.as_array() {
+                    for item in arr {
+                        if let Some(spec) = item.as_str() {
+                            if let Some(name) = extract_python_package_name(spec) {
+                                deps.push(ManifestDep {
+                                    name,
+                                    section: format!("project.optional-dependencies.{group}"),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Poetry: [tool.poetry.dependencies]
+    if let Some(tool) = value.get("tool").and_then(toml::Value::as_table) {
+        if let Some(poetry) = tool.get("poetry").and_then(toml::Value::as_table) {
+            if let Some(dependencies) = poetry.get("dependencies").and_then(toml::Value::as_table) {
+                for key in dependencies.keys() {
+                    if key != "python" {
+                        let normalized = normalize_python_package_name(key);
+                        deps.push(ManifestDep {
+                            name: normalized,
+                            section: "tool.poetry.dependencies".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // [tool.poetry.dev-dependencies]
+            if let Some(dev_deps) = poetry
+                .get("dev-dependencies")
+                .and_then(toml::Value::as_table)
+            {
+                for key in dev_deps.keys() {
+                    if key != "python" {
+                        let normalized = normalize_python_package_name(key);
+                        deps.push(ManifestDep {
+                            name: normalized,
+                            section: "tool.poetry.dev-dependencies".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // [tool.poetry.group.<name>.dependencies]
+            if let Some(group) = poetry.get("group").and_then(toml::Value::as_table) {
+                for (group_name, group_table) in group {
+                    if let Some(table) = group_table.as_table() {
+                        if let Some(deps_table) =
+                            table.get("dependencies").and_then(toml::Value::as_table)
+                        {
+                            for key in deps_table.keys() {
+                                if key != "python" {
+                                    let normalized = normalize_python_package_name(key);
+                                    deps.push(ManifestDep {
+                                        name: normalized,
+                                        section: format!(
+                                            "tool.poetry.group.{group_name}.dependencies"
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(deps)
 }
 
 #[cfg(test)]
@@ -642,7 +403,7 @@ mod tests {
         let dir = super::super::test_support::temp_dir("manifest-missing");
         assert!(read_cargo_manifest(&dir.path).is_none());
         assert!(read_package_json(&dir.path).is_none());
-        assert!(read_go_mod(&dir.path).is_none());
+        assert!(read_pyproject_manifest(&dir.path).is_none());
     }
 
     #[test]
@@ -655,226 +416,119 @@ mod tests {
     }
 
     #[test]
-    fn reads_go_mod_single_line_require() {
-        let raw = "module example.com/my/app\n\ngo 1.22\n\nrequire github.com/stellar/go-stellar-sdk v1.0.0\n";
-        let manifest = parse_go_mod(raw).expect("valid go.mod");
-        assert_eq!(
-            manifest.dependency_names,
-            vec!["github.com/stellar/go-stellar-sdk"]
-        );
-        assert!(manifest.has_dependency("github.com/stellar/go-stellar-sdk"));
-        assert!(!manifest.has_dependency("github.com/stellar/go"));
-
-        let deps = parse_go_mod_dependencies(raw).expect("dependencies");
-        assert_eq!(
-            deps,
-            vec![ManifestDep {
-                name: "github.com/stellar/go-stellar-sdk".to_string(),
-                section: "require".to_string(),
-            }]
-        );
-    }
-
-    #[test]
-    fn reads_go_mod_block_require() {
+    fn reads_pep621_pyproject_dependencies() {
         let raw = r#"
-        module example.com/my/app
+        [project]
+        name = "my-stellar-app"
+        version = "0.1.0"
+        dependencies = [
+            "stellar-sdk>=9.0.0",
+            "requests>=2.28.0",
+            "stellar_base==0.1.0",
+        ]
 
-        go 1.22
-
-        require (
-            github.com/stellar/go-stellar-sdk v1.0.0
-            github.com/stretchr/testify v1.8.4
-        )
+        [project.optional-dependencies]
+        test = ["pytest>=7.0"]
         "#;
-        let manifest = parse_go_mod(raw).expect("valid go.mod block");
-        assert_eq!(
-            manifest.dependency_names,
-            vec![
-                "github.com/stellar/go-stellar-sdk",
-                "github.com/stretchr/testify"
-            ]
-        );
-        assert!(manifest.has_dependency("github.com/stellar/go-stellar-sdk"));
-        assert!(manifest.has_dependency("github.com/stretchr/testify"));
+        let manifest = parse_pyproject_manifest(raw).expect("valid pyproject");
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("stellar-base"));
+        assert!(manifest.has_dependency("requests"));
+        assert!(manifest.has_dependency("pytest"));
+        assert!(!manifest.has_dependency("nonexistent"));
+
+        let deps = parse_pyproject_dependencies(raw).expect("dependencies");
+        assert!(deps
+            .iter()
+            .any(|d| d.name == "stellar-sdk" && d.section == "project.dependencies"));
+        assert!(deps
+            .iter()
+            .any(|d| d.name == "pytest" && d.section == "project.optional-dependencies.test"));
     }
 
     #[test]
-    fn reads_go_mod_with_comments_and_indirect() {
+    fn reads_pep621_pyproject_with_extras_and_markers() {
         let raw = r#"
-        // Module definition
-        module example.com/my/app // inline comment
-
-        go 1.22
-
-        // Direct & indirect dependencies
-        require (
-            // Stellar SDK
-            github.com/stellar/go-stellar-sdk v1.0.0 // direct
-            golang.org/x/crypto v0.14.0 // indirect
-        )
+        [project]
+        name = "complex-deps"
+        dependencies = [
+            "stellar-sdk[aiohttp]>=9.0.0; python_version >= '3.10'",
+        ]
         "#;
-        let manifest = parse_go_mod(raw).expect("comments handled");
-        assert_eq!(
-            manifest.dependency_names,
-            vec!["github.com/stellar/go-stellar-sdk", "golang.org/x/crypto"]
-        );
+        let manifest = parse_pyproject_manifest(raw).expect("valid pyproject");
+        assert!(manifest.has_dependency("stellar-sdk"));
     }
 
     #[test]
-    fn reads_go_mod_multiple_require_blocks() {
+    fn reads_poetry_pyproject_dependencies() {
         let raw = r#"
-        module example.com/my/app
+        [tool.poetry]
+        name = "poetry-app"
+        version = "0.1.0"
 
-        require github.com/first/pkg v0.1.0
-
-        require (
-            github.com/stellar/go-stellar-sdk v1.0.0
-        )
-
-        require (
-            github.com/second/pkg v0.2.0
-        )
+        [tool.poetry.dependencies]
+        python = "^3.10"
+        stellar-sdk = "^9.0.0"
+        requests = { version = ">=2.28", optional = true }
         "#;
-        let manifest = parse_go_mod(raw).expect("multiple require blocks");
-        assert_eq!(
-            manifest.dependency_names,
-            vec![
-                "github.com/first/pkg",
-                "github.com/second/pkg",
-                "github.com/stellar/go-stellar-sdk",
-            ]
-        );
+        let manifest = parse_pyproject_manifest(raw).expect("valid poetry");
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("requests"));
+        assert!(!manifest.has_dependency("python"));
+
+        let deps = parse_pyproject_dependencies(raw).expect("dependencies");
+        assert!(deps
+            .iter()
+            .any(|d| d.name == "stellar-sdk" && d.section == "tool.poetry.dependencies"));
     }
 
     #[test]
-    fn reads_go_mod_quoted_paths() {
+    fn reads_poetry_dev_and_group_dependencies() {
         let raw = r#"
-        module "example.com/my/app"
+        [tool.poetry.dev-dependencies]
+        pytest = "^7.0"
 
-        require "github.com/stellar/go-stellar-sdk" "v1.0.0"
-
-        require (
-            `github.com/stretchr/testify` `v1.8.4`
-        )
+        [tool.poetry.group.sdk.dependencies]
+        stellar-sdk = "^9.0.0"
         "#;
-        let manifest = parse_go_mod(raw).expect("quoted paths");
-        assert_eq!(
-            manifest.dependency_names,
-            vec![
-                "github.com/stellar/go-stellar-sdk",
-                "github.com/stretchr/testify"
-            ]
-        );
+        let manifest = parse_pyproject_manifest(raw).expect("valid poetry groups");
+        assert!(manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("pytest"));
     }
 
     #[test]
-    fn go_mod_ignores_replace_and_exclude_directives() {
+    fn unrelated_python_project_has_no_stellar_dependencies() {
         let raw = r#"
-        module example.com/my/app
-
-        require (
-            github.com/other/lib v1.0.0
-        )
-
-        replace github.com/other/lib => github.com/stellar/go-stellar-sdk v1.0.0
-
-        replace (
-            golang.org/x/sys => golang.org/x/sys v0.1.0
-        )
-
-        exclude (
-            github.com/stellar/go-stellar-sdk v0.9.0
-        )
-
-        exclude github.com/other/lib v0.8.0
+        [project]
+        name = "unrelated"
+        dependencies = [
+            "fastapi>=0.100.0",
+            "uvicorn>=0.23.0",
+        ]
         "#;
-        let manifest = parse_go_mod(raw).expect("replace and exclude ignored");
-        assert_eq!(manifest.dependency_names, vec!["github.com/other/lib"]);
-        assert!(!manifest.has_dependency("github.com/stellar/go-stellar-sdk"));
+        let manifest = parse_pyproject_manifest(raw).expect("valid pyproject");
+        assert!(!manifest.has_dependency("stellar-sdk"));
+        assert!(manifest.has_dependency("fastapi"));
     }
 
     #[test]
-    fn go_mod_empty_or_directives_only() {
-        let raw = "module example.com/my/app\n\ngo 1.22\ntoolchain go1.22.1\n";
-        let manifest = parse_go_mod(raw).expect("directives only");
-        assert!(manifest.dependency_names.is_empty());
-
-        let empty = parse_go_mod("").expect("empty is valid");
-        assert!(empty.dependency_names.is_empty());
+    fn invalid_toml_pyproject_returns_none_or_err() {
+        let raw = "invalid toml = = = [ [ [";
+        assert!(parse_pyproject_manifest(raw).is_none());
+        assert!(parse_pyproject_dependencies(raw).is_err());
     }
 
     #[test]
-    fn go_mod_malformed_unclosed_block() {
-        let raw = "module example.com/my/app\n\nrequire (\n    github.com/stellar/go-stellar-sdk v1.0.0\n";
-        let err = parse_go_mod(raw).expect_err("unclosed block must error");
-        assert!(err.message.contains("unclosed require block"));
-    }
-
-    #[test]
-    fn go_mod_malformed_unclosed_replace_block() {
-        let raw = "module example.com/my/app\n\nreplace (\n    github.com/a => github.com/b v1.0\n";
-        let err = parse_go_mod(raw).expect_err("unclosed replace block must error");
-        assert!(err.message.contains("unclosed replace block"));
-    }
-
-    #[test]
-    fn go_mod_malformed_stray_closing_paren() {
-        let raw = "module example.com/my/app\n)\n";
-        let err = parse_go_mod(raw).expect_err("stray closing paren");
-        assert!(err.message.contains("unexpected closing parenthesis"));
-    }
-
-    #[test]
-    fn go_mod_malformed_missing_version_single() {
-        let raw = "module example.com/my/app\nrequire github.com/stellar/go-stellar-sdk\n";
-        let err = parse_go_mod(raw).expect_err("missing version in single require");
-        assert!(err
-            .message
-            .contains("require directive expects module path and version"));
-    }
-
-    #[test]
-    fn go_mod_malformed_missing_version_block() {
-        let raw =
-            "module example.com/my/app\nrequire (\n    github.com/stellar/go-stellar-sdk\n)\n";
-        let err = parse_go_mod(raw).expect_err("missing version in require block");
-        assert!(err
-            .message
-            .contains("require block entry expects module path and version"));
-    }
-
-    #[test]
-    fn go_mod_malformed_unclosed_quote() {
-        let raw = "module example.com/my/app\nrequire \"github.com/stellar/go-stellar-sdk v1.0.0\n";
-        let err = parse_go_mod(raw).expect_err("unclosed quote");
-        assert!(err.message.contains("unclosed double quote"));
-    }
-
-    #[test]
-    fn go_mod_malformed_unknown_directive() {
-        let raw = "invalid_directive foo bar\n";
-        let err = parse_go_mod(raw).expect_err("unknown directive");
-        assert!(err.message.contains("unknown directive"));
-    }
-
-    #[test]
-    fn go_mod_malformed_nested_blocks() {
-        let raw = "require (\n    require (\n        foo v1.0\n    )\n)\n";
-        let err = parse_go_mod(raw).expect_err("nested block");
-        assert!(err.message.contains("nested block"));
-    }
-
-    #[test]
-    fn go_mod_does_not_mutate_file() {
-        let dir = super::super::test_support::temp_dir("manifest-go-mod");
-        let path = dir.path.join("go.mod");
-        let original_content = "module example.com/test\n\ngo 1.22\n\nrequire github.com/stellar/go-stellar-sdk v1.0.0\n";
+    fn pyproject_does_not_mutate_file() {
+        let dir = super::super::test_support::temp_dir("manifest-pyproject");
+        let path = dir.path.join("pyproject.toml");
+        let original_content =
+            "[project]\nname = \"demo\"\ndependencies = [\"stellar-sdk>=9.0\"]\n";
         std::fs::write(&path, original_content).unwrap();
 
         let before_metadata = std::fs::metadata(&path).unwrap();
-        let manifest = read_go_mod(&dir.path).expect("read go.mod");
-        assert!(manifest.has_dependency("github.com/stellar/go-stellar-sdk"));
+        let manifest = read_pyproject_manifest(&dir.path).expect("read pyproject.toml");
+        assert!(manifest.has_dependency("stellar-sdk"));
 
         let after_content = std::fs::read_to_string(&path).unwrap();
         let after_metadata = std::fs::metadata(&path).unwrap();

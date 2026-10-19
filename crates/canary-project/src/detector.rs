@@ -27,8 +27,9 @@ const KNOWN_WASM_OUTPUT_DIRS: &[&str] = &[
     "target/wasm32v1-none/debug",
 ];
 
-/// One piece of evidence supporting a detected capability (CF-07 section 6).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One piece of evidence supporting a detected capability (CF-07 section 6, CA-04).
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DetectionEvidence {
     /// Root-relative path to the manifest or artifact with `/` separators.
     pub manifest: String,
@@ -38,13 +39,45 @@ pub struct DetectionEvidence {
     pub dependency: Option<String>,
     /// The manifest section (e.g. `dependencies`), or `None` for artifact evidence.
     pub section: Option<String>,
+    /// Normalized root-relative path to the manifest or artifact file.
+    pub source_file: String,
+    /// The matched dependency, string, or artifact identifier.
+    pub matched_text: String,
+    /// The reason or manifest section explaining why this evidence produces the capability.
+    pub reason: String,
+}
+
+impl DetectionEvidence {
+    /// Converts this detection evidence into a [`crate::models::CapabilityEvidence`] record.
+    pub fn to_capability_evidence(&self) -> crate::models::CapabilityEvidence {
+        crate::models::CapabilityEvidence {
+            source_file: self.source_file.clone(),
+            matched_text: self.matched_text.clone(),
+            reason: self.reason.clone(),
+        }
+    }
 }
 
 /// A detected capability together with the evidence records that produced it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct CapabilityEvidence {
     pub capability: Capability,
     pub evidence: Vec<DetectionEvidence>,
+}
+
+impl CapabilityEvidence {
+    /// Converts this detected capability into a [`crate::models::CapabilityModel`].
+    pub fn to_model(&self) -> crate::models::CapabilityModel {
+        crate::models::CapabilityModel {
+            capability: self.capability.clone(),
+            evidence: self
+                .evidence
+                .iter()
+                .map(|e| e.to_capability_evidence())
+                .collect(),
+        }
+    }
 }
 
 /// The complete detection outcome, including context, evidence, workspace members,
@@ -56,6 +89,16 @@ pub struct DetailedDetection {
     pub workspace_members: Vec<String>,
     pub diagnostics: Vec<crate::workspace::Diagnostic>,
     pub capability_evidence: Vec<CapabilityEvidence>,
+}
+
+impl DetailedDetection {
+    /// Returns the detected capabilities and their evidence as [`crate::models::CapabilityModel`] records.
+    pub fn capability_models(&self) -> Vec<crate::models::CapabilityModel> {
+        self.capability_evidence
+            .iter()
+            .map(|ce| ce.to_model())
+            .collect()
+    }
 }
 
 /// Detects the [`ProjectContext`] for the project rooted at `root`.
@@ -149,13 +192,20 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
     if has_wasm_artifact {
         for wasm_path in &wasm_artifacts {
             let rel_str = relative_slash_path(root, wasm_path);
+            let matched_name = wasm_path
+                .file_name()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "*.wasm".to_string());
             all_evidence.push((
                 Capability::WasmArtifact,
                 DetectionEvidence {
-                    manifest: rel_str,
+                    manifest: rel_str.clone(),
                     ecosystem: "wasm".to_string(),
                     dependency: None,
                     section: None,
+                    source_file: rel_str,
+                    matched_text: matched_name,
+                    reason: "compiled Soroban WASM artifact found in build output".to_string(),
                 },
             ));
         }
@@ -216,6 +266,9 @@ fn record_dep_evidence(
     ecosystem: &str,
     all_evidence: &mut Vec<(Capability, DetectionEvidence)>,
 ) {
+    let source_file = manifest.to_string();
+    let matched_text = name.to_string();
+    let reason = format!("{ecosystem} {section} declares {name}");
     if SOROBAN_DEPENDENCIES.contains(&name) {
         all_evidence.push((
             Capability::SorobanContract,
@@ -224,6 +277,9 @@ fn record_dep_evidence(
                 ecosystem: ecosystem.to_string(),
                 dependency: Some(name.to_string()),
                 section: Some(section.to_string()),
+                source_file: source_file.clone(),
+                matched_text: matched_text.clone(),
+                reason: reason.clone(),
             },
         ));
     }
@@ -235,6 +291,9 @@ fn record_dep_evidence(
                 ecosystem: ecosystem.to_string(),
                 dependency: Some(name.to_string()),
                 section: Some(section.to_string()),
+                source_file: source_file.clone(),
+                matched_text: matched_text.clone(),
+                reason: reason.clone(),
             },
         ));
     }
@@ -246,6 +305,9 @@ fn record_dep_evidence(
                 ecosystem: ecosystem.to_string(),
                 dependency: Some(name.to_string()),
                 section: Some(section.to_string()),
+                source_file,
+                matched_text,
+                reason,
             },
         ));
     }
@@ -516,5 +578,57 @@ mod tests {
             soroban_ev.evidence[0].section.as_deref(),
             Some("dependencies")
         );
+        assert_eq!(
+            soroban_ev.evidence[0].source_file,
+            "contracts/token/Cargo.toml"
+        );
+        assert_eq!(soroban_ev.evidence[0].matched_text, "soroban-sdk");
+        assert!(soroban_ev.evidence[0].reason.contains("soroban-sdk"));
+    }
+
+    #[test]
+    fn every_detected_capability_has_at_least_one_evidence_record_with_normalized_path() {
+        let dir = crate::test_support::temp_dir("evidence-normalized-paths");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\nstellar-rpc-client = \"0.1\"\n",
+        )
+        .unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.capability_evidence.len(), 2);
+
+        for cap_ev in &details.capability_evidence {
+            assert!(
+                !cap_ev.evidence.is_empty(),
+                "each detected capability must have at least one evidence record"
+            );
+            for ev in &cap_ev.evidence {
+                assert!(!ev.source_file.is_empty());
+                assert!(
+                    !ev.source_file.starts_with('/') && !ev.source_file.starts_with("./"),
+                    "source_file must be a normalized relative path: {}",
+                    ev.source_file
+                );
+                assert!(!ev.matched_text.is_empty());
+                assert!(!ev.reason.is_empty());
+            }
+        }
+
+        let models = details.capability_models();
+        assert_eq!(models.len(), 2);
+        for m in &models {
+            assert!(m.has_evidence());
+            assert_eq!(m.evidence[0].source_file, "Cargo.toml");
+        }
+    }
+
+    #[test]
+    fn negative_empty_project_root_produces_empty_capabilities_and_zero_evidence() {
+        let dir = crate::test_support::temp_dir("evidence-negative-empty");
+        let details = detect_details(&dir.path);
+        assert!(details.context.capabilities.is_empty());
+        assert!(details.capability_evidence.is_empty());
+        assert!(details.capability_models().is_empty());
     }
 }

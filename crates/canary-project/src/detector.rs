@@ -9,10 +9,12 @@ use crate::capabilities::{
     STELLAR_SDK_DEPENDENCIES,
 };
 use crate::manifest::{
-    parse_cargo_dependencies, parse_cargo_manifest, parse_package_json_dependencies,
-    read_package_json,
+    parse_cargo_dependencies, parse_cargo_manifest, parse_go_mod_dependencies,
+    parse_package_json_dependencies, read_package_json, ProjectManifest,
 };
 use crate::workspace::scan_cargo_workspace;
+
+pub use crate::capabilities::GO_STELLAR_SDK_DEPENDENCY;
 
 /// Directories that are never worth descending into while looking for a
 /// checked-in or built WASM artifact.
@@ -32,7 +34,7 @@ const KNOWN_WASM_OUTPUT_DIRS: &[&str] = &[
 pub struct DetectionEvidence {
     /// Root-relative path to the manifest or artifact with `/` separators.
     pub manifest: String,
-    /// `cargo`, `npm`, or `wasm`.
+    /// `cargo`, `npm`, `go`, or `wasm`.
     pub ecosystem: String,
     /// The matching dependency name, or `None` for artifact evidence.
     pub dependency: Option<String>,
@@ -95,6 +97,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
 
     // 2. Cargo workspace members
     let workspace_scan = scan_cargo_workspace(root);
+    let mut diagnostics = workspace_scan.diagnostics;
     let mut workspace_members = Vec::new();
     for member in &workspace_scan.members {
         workspace_members.push(member.path.clone());
@@ -135,6 +138,63 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
                     "npm",
                     &mut all_evidence,
                 );
+            }
+        }
+    }
+
+    // 4. go.mod
+    let root_go = root.join("go.mod");
+    if let Ok(meta) = std::fs::symlink_metadata(&root_go) {
+        if meta.file_type().is_symlink() {
+            diagnostics.push(crate::workspace::Diagnostic {
+                code: crate::workspace::DiagnosticCode::SymlinkSkipped,
+                detail: "go.mod is a symbolic link and was not followed".to_string(),
+            });
+        } else if meta.is_file() {
+            inspected.push("go.mod".to_string());
+            if meta.len() > crate::workspace::MAX_MANIFEST_BYTES {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::ManifestTooLarge,
+                    detail: format!(
+                        "go.mod is larger than {} bytes",
+                        crate::workspace::MAX_MANIFEST_BYTES
+                    ),
+                });
+            } else {
+                match std::fs::read_to_string(&root_go) {
+                    Ok(raw) => match parse_go_mod_dependencies(&raw) {
+                        Ok(deps) => {
+                            let mut dep_names = Vec::new();
+                            for dep in deps {
+                                dep_names.push(dep.name.clone());
+                                record_dep_evidence(
+                                    &dep.name,
+                                    &dep.section,
+                                    "go.mod",
+                                    "go",
+                                    &mut all_evidence,
+                                );
+                            }
+                            dep_names.sort();
+                            dep_names.dedup();
+                            manifests.push(ProjectManifest {
+                                dependency_names: dep_names,
+                            });
+                        }
+                        Err(err) => {
+                            diagnostics.push(crate::workspace::Diagnostic {
+                                code: crate::workspace::DiagnosticCode::ManifestUnparseable,
+                                detail: format!("go.mod: {err}"),
+                            });
+                        }
+                    },
+                    Err(e) => {
+                        diagnostics.push(crate::workspace::Diagnostic {
+                            code: crate::workspace::DiagnosticCode::ManifestUnparseable,
+                            detail: format!("go.mod could not be read: {e}"),
+                        });
+                    }
+                }
             }
         }
     }
@@ -204,7 +264,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         context,
         inspected,
         workspace_members,
-        diagnostics: workspace_scan.diagnostics,
+        diagnostics,
         capability_evidence,
     }
 }
@@ -516,5 +576,199 @@ mod tests {
             soroban_ev.evidence[0].section.as_deref(),
             Some("dependencies")
         );
+    }
+
+    #[test]
+    fn detects_go_stellar_sdk_dependency_single_line() {
+        let dir = crate::test_support::temp_dir("detect-go-single");
+        std::fs::write(
+            dir.path.join("go.mod"),
+            "module example.com/my-service\n\ngo 1.22\n\nrequire github.com/stellar/go-stellar-sdk v1.0.0\n",
+        )
+        .unwrap();
+
+        let ctx = detect(&dir.path);
+        assert_eq!(ctx.project_type, ProjectType::StellarSdk);
+        assert_eq!(ctx.capabilities, vec![Capability::StellarSdkDependency]);
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::StellarSdk);
+        assert!(details.inspected.contains(&"go.mod".to_string()));
+        assert!(details.diagnostics.is_empty());
+
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::StellarSdkDependency)
+            .expect("stellar sdk evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(ev.evidence[0].manifest, "go.mod");
+        assert_eq!(ev.evidence[0].ecosystem, "go");
+        assert_eq!(
+            ev.evidence[0].dependency.as_deref(),
+            Some("github.com/stellar/go-stellar-sdk")
+        );
+        assert_eq!(ev.evidence[0].section.as_deref(), Some("require"));
+    }
+
+    #[test]
+    fn detects_go_stellar_sdk_dependency_block() {
+        let dir = crate::test_support::temp_dir("detect-go-block");
+        std::fs::write(
+            dir.path.join("go.mod"),
+            "module example.com/my-service\n\ngo 1.22\n\nrequire (\n    github.com/stellar/go-stellar-sdk v1.0.0\n    github.com/stretchr/testify v1.8.4\n)\n",
+        )
+        .unwrap();
+
+        let ctx = detect(&dir.path);
+        assert_eq!(ctx.project_type, ProjectType::StellarSdk);
+        assert!(ctx.capabilities.contains(&Capability::StellarSdkDependency));
+
+        let details = detect_details(&dir.path);
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::StellarSdkDependency)
+            .expect("stellar sdk evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(
+            ev.evidence[0].dependency.as_deref(),
+            Some("github.com/stellar/go-stellar-sdk")
+        );
+    }
+
+    #[test]
+    fn unrelated_go_module_does_not_emit_stellar_sdk_capability() {
+        let dir = crate::test_support::temp_dir("detect-go-unrelated");
+        std::fs::write(
+            dir.path.join("go.mod"),
+            "module example.com/my-service\n\ngo 1.22\n\nrequire (\n    github.com/stretchr/testify v1.8.4\n    golang.org/x/sync v0.6.0\n)\n",
+        )
+        .unwrap();
+
+        let ctx = detect(&dir.path);
+        assert_eq!(ctx.project_type, ProjectType::Unknown);
+        assert!(!ctx.capabilities.contains(&Capability::StellarSdkDependency));
+
+        let details = detect_details(&dir.path);
+        assert!(details.capability_evidence.is_empty());
+        assert!(details.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn unapproved_legacy_go_path_does_not_emit_capability() {
+        let dir = crate::test_support::temp_dir("detect-go-legacy");
+        std::fs::write(
+            dir.path.join("go.mod"),
+            "module example.com/my-service\n\ngo 1.22\n\nrequire github.com/stellar/go v0.0.0\n",
+        )
+        .unwrap();
+
+        let ctx = detect(&dir.path);
+        assert_eq!(ctx.project_type, ProjectType::Unknown);
+        assert!(!ctx.capabilities.contains(&Capability::StellarSdkDependency));
+
+        let details = detect_details(&dir.path);
+        assert!(details.capability_evidence.is_empty());
+    }
+
+    #[test]
+    fn replace_and_exclude_directives_are_not_followed() {
+        let dir = crate::test_support::temp_dir("detect-go-replace-exclude");
+        std::fs::write(
+            dir.path.join("go.mod"),
+            r#"
+            module example.com/my-service
+
+            go 1.22
+
+            require github.com/other/pkg v1.0.0
+
+            replace github.com/other/pkg => github.com/stellar/go-stellar-sdk v1.0.0
+
+            exclude github.com/stellar/go-stellar-sdk v0.9.0
+            "#,
+        )
+        .unwrap();
+
+        let ctx = detect(&dir.path);
+        assert_eq!(ctx.project_type, ProjectType::Unknown);
+        assert!(!ctx.capabilities.contains(&Capability::StellarSdkDependency));
+
+        let details = detect_details(&dir.path);
+        assert!(details.capability_evidence.is_empty());
+    }
+
+    #[test]
+    fn malformed_go_mod_records_diagnostic_without_panicking() {
+        // Case 1: unclosed require block
+        let dir1 = crate::test_support::temp_dir("detect-go-unclosed");
+        std::fs::write(
+            dir1.path.join("go.mod"),
+            "module example.com/my-service\n\nrequire (\n    github.com/stellar/go-stellar-sdk v1.0.0\n",
+        )
+        .unwrap();
+
+        let ctx1 = detect(&dir1.path);
+        assert!(!ctx1
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+
+        let details1 = detect_details(&dir1.path);
+        assert!(details1.diagnostics.iter().any(|d| d.code
+            == crate::workspace::DiagnosticCode::ManifestUnparseable
+            && d.detail.contains("go.mod")));
+
+        // Case 2: invalid syntax (missing args)
+        let dir2 = crate::test_support::temp_dir("detect-go-invalid-syntax");
+        std::fs::write(
+            dir2.path.join("go.mod"),
+            "module example.com/my-service\nrequire\n",
+        )
+        .unwrap();
+
+        let ctx2 = detect(&dir2.path);
+        assert!(!ctx2
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+
+        let details2 = detect_details(&dir2.path);
+        assert!(details2
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::ManifestUnparseable));
+
+        // Case 3: garbage / non-go.mod content
+        let dir3 = crate::test_support::temp_dir("detect-go-garbage");
+        std::fs::write(
+            dir3.path.join("go.mod"),
+            "??? this is definitely not go.mod ???\n",
+        )
+        .unwrap();
+
+        let ctx3 = detect(&dir3.path);
+        assert!(!ctx3
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+
+        let details3 = detect_details(&dir3.path);
+        assert!(details3
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::ManifestUnparseable));
+    }
+
+    #[test]
+    fn go_mod_is_not_mutated_by_detector() {
+        let dir = crate::test_support::temp_dir("detect-go-immutable");
+        let path = dir.path.join("go.mod");
+        let content = "module example.com/my-service\n\ngo 1.22\n\nrequire github.com/stellar/go-stellar-sdk v1.0.0\n";
+        std::fs::write(&path, content).unwrap();
+
+        let before = std::fs::read_to_string(&path).unwrap();
+        let _ = detect_details(&dir.path);
+        let after = std::fs::read_to_string(&path).unwrap();
+
+        assert_eq!(before, after);
     }
 }

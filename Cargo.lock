@@ -206,6 +206,7 @@ name = "canary-project"
 version = "0.2.0"
 dependencies = [
  "canary-core",
+ "serde",
  "serde_json",
  "sha2 0.11.0",
  "toml",

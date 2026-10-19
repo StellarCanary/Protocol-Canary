@@ -4,9 +4,10 @@ pub mod capabilities;
 pub mod detector;
 pub mod fingerprint;
 pub mod manifest;
+pub mod models;
 pub mod workspace;
 
-pub use capabilities::{detect_capabilities, DetectionSignals};
+pub use capabilities::{detect_capabilities, detect_capabilities_models, DetectionSignals};
 pub use detector::{
     detect, detect_details, find_wasm_artifacts, resolve_project_type, CapabilityEvidence,
     DetailedDetection, DetectionEvidence,
@@ -18,6 +19,7 @@ pub use manifest::{
     parse_cargo_dependencies, parse_package_json_dependencies, read_cargo_manifest,
     read_package_json, ManifestDep, ProjectManifest,
 };
+pub use models::{CapabilityEvidence as ModelCapabilityEvidence, CapabilityModel};
 pub use workspace::{
     scan_cargo_workspace, Diagnostic, DiagnosticCode, WorkspaceMember, WorkspaceScan,
     MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,

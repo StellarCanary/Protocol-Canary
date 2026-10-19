@@ -19,7 +19,8 @@ use serde_json::json;
 use canary_core::CanaryError;
 
 use crate::models::{
-    GetHealthResponse, LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse,
+    EventFilter, EventResponse, GetHealthResponse, GetTransactionsResponse, LatestLedger,
+    NetworkInfo, SimulationRequest, SimulationResponse,
 };
 
 /// Errors returned by the Stellar RPC client.
@@ -259,6 +260,19 @@ pub trait RpcClient {
         &self,
         request: SimulationRequest,
     ) -> impl std::future::Future<Output = Result<SimulationResponse, RpcError>> + Send;
+
+    fn get_events(
+        &self,
+        start_ledger: u32,
+        filters: &[EventFilter],
+    ) -> impl std::future::Future<Output = Result<EventResponse, RpcError>> + Send;
+
+    fn get_transactions(
+        &self,
+        start_ledger: u32,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+    ) -> impl std::future::Future<Output = Result<GetTransactionsResponse, RpcError>> + Send;
 }
 
 /// Bounded retry policy for transient failures.
@@ -840,11 +854,42 @@ impl RpcClient for HttpRpcClient {
     ) -> Result<SimulationResponse, RpcError> {
         self.call("simulateTransaction", request).await
     }
+
+    async fn get_events(
+        &self,
+        start_ledger: u32,
+        filters: &[EventFilter],
+    ) -> Result<EventResponse, RpcError> {
+        let params = json!({
+            "startLedger": start_ledger,
+            "filters": filters,
+        });
+        self.call("getEvents", params).await
+    }
+
+    async fn get_transactions(
+        &self,
+        start_ledger: u32,
+        cursor: Option<&str>,
+        limit: Option<u32>,
+    ) -> Result<GetTransactionsResponse, RpcError> {
+        let mut params = json!({
+            "startLedger": start_ledger,
+        });
+        if let Some(c) = cursor {
+            params["cursor"] = json!(c);
+        }
+        if let Some(l) = limit {
+            params["limit"] = json!(l);
+        }
+        self.call("getTransactions", params).await
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::EventFilter;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1223,6 +1268,76 @@ mod tests {
             .await
             .expect("ok");
         assert!(!response.succeeded());
+    }
+
+    #[tokio::test]
+    async fn get_events_parses_a_successful_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "latestLedger": 1000,
+                    "events": [
+                        {
+                            "ledger": 100,
+                            "contractId": "AAA",
+                            "type": "contract",
+                            "topic": ["AAA", "BBB"],
+                            "value": "CCCC"
+                        }
+                    ]
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let filters = vec![EventFilter {
+            r#type: Some("contract".to_string()),
+            contract_ids: Some(vec!["AAA".to_string()]),
+            topics: None,
+        }];
+        let response = client.get_events(100, &filters).await.expect("ok");
+        assert_eq!(response.latest_ledger, 1000);
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events[0].ledger, 100);
+    }
+
+    #[tokio::test]
+    async fn get_transactions_parses_a_successful_response() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "latestLedger": 1000,
+                    "transactions": [
+                        {
+                            "ledger": 100,
+                            "status": "SUCCESS"
+                        }
+                    ],
+                    "cursor": "some-cursor"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let response = client
+            .get_transactions(100, Some("cursor-123"), Some(10))
+            .await
+            .expect("ok");
+        assert_eq!(response.latest_ledger, 1000);
+        assert_eq!(response.transactions.len(), 1);
+        assert_eq!(response.transactions[0].ledger, 100);
+        assert_eq!(response.transactions[0].status, "SUCCESS");
+        assert_eq!(response.cursor, Some("some-cursor".to_string()));
     }
 
     fn network_info(passphrase: &str, protocol_version: u32) -> NetworkInfo {

@@ -18,9 +18,9 @@ pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
 };
 pub use manifest::{
-    parse_cargo_dependencies, parse_go_manifest, parse_go_mod, parse_go_mod_dependencies,
-    parse_package_json_dependencies, read_cargo_manifest, read_go_mod, read_package_json,
-    GoModError, ManifestDep, ProjectManifest,
+    parse_cargo_dependencies, parse_package_json_dependencies, parse_pyproject_dependencies,
+    parse_pyproject_manifest, read_cargo_manifest, read_package_json, read_pyproject_manifest,
+    read_pyproject_toml, ManifestDep, ProjectManifest,
 };
 pub use workspace::{
     scan_cargo_workspace, Diagnostic, DiagnosticCode, WorkspaceMember, WorkspaceScan,

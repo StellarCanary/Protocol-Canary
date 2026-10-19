@@ -143,7 +143,6 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
     }
 
     // 4. pyproject.toml
-    let mut diagnostics = workspace_scan.diagnostics;
     let root_pyproject = root.join("pyproject.toml");
     if let Ok(meta) = std::fs::symlink_metadata(&root_pyproject) {
         if meta.file_type().is_symlink() {

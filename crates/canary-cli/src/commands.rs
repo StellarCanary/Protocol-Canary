@@ -894,6 +894,9 @@ fn run_inspect_json(setup: InspectSetup) -> Result<(), CanaryError> {
                     ecosystem: item.ecosystem.clone(),
                     dependency: item.dependency.clone(),
                     section: item.section.clone(),
+                    source_file: Some(item.source_file.clone()),
+                    matched_text: Some(item.matched_text.clone()),
+                    reason: Some(item.reason.clone()),
                 })
                 .collect(),
         })

@@ -24,7 +24,7 @@ use canary_core::{
 use canary_fixtures::LoadedFixture;
 
 use crate::client::{RpcClient, RpcError};
-use crate::models::{LatestLedger, NetworkInfo};
+use crate::models::{GetHealthResponse, LatestLedger, NetworkInfo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcFixtureError {
@@ -46,6 +46,7 @@ impl From<RpcFixtureError> for CanaryError {
 pub enum RpcMethod {
     GetNetwork,
     GetLatestLedger,
+    GetHealth,
 }
 
 impl std::str::FromStr for RpcMethod {
@@ -55,8 +56,9 @@ impl std::str::FromStr for RpcMethod {
         match s {
             "get-network" => Ok(RpcMethod::GetNetwork),
             "get-latest-ledger" => Ok(RpcMethod::GetLatestLedger),
+            "get-health" => Ok(RpcMethod::GetHealth),
             other => Err(format!(
-                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\""
+                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\", \"get-health\""
             )),
         }
     }
@@ -490,6 +492,7 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
         let response_json = match fixture.method {
             RpcMethod::GetNetwork => self.client.get_network_raw().await,
             RpcMethod::GetLatestLedger => self.client.get_latest_ledger_raw().await,
+            RpcMethod::GetHealth => self.client.get_health_raw().await,
         };
 
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
@@ -572,6 +575,11 @@ pub async fn observe_network(client: &impl RpcClient) -> Result<NetworkInfo, Rpc
 /// against [`observe_network`].
 pub async fn observe_latest_ledger(client: &impl RpcClient) -> Result<LatestLedger, RpcError> {
     client.get_latest_ledger().await
+}
+
+/// Fetches endpoint health via `getHealth`.
+pub async fn observe_health(client: &impl RpcClient) -> Result<GetHealthResponse, RpcError> {
+    client.get_health().await
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 //! Typed request/response shapes for the small subset of Stellar RPC this
-//! crate calls: `getNetwork`, `getLatestLedger`, and `simulateTransaction`.
+//! crate calls: `getNetwork`, `getLatestLedger`, `getHealth`, and `simulateTransaction`.
 //!
 //! These mirror the documented Stellar RPC JSON-RPC methods; XDR-bearing
 //! fields stay as base64 strings here; the Soroban runner decodes them
@@ -7,6 +7,25 @@
 //! that.
 
 use serde::{Deserialize, Serialize};
+
+/// The result of `getHealth`.
+///
+/// Reference: <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getHealth>
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetHealthResponse {
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger_retention_window: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger_close_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger_close_time: Option<String>,
+}
 
 /// The result of `getNetwork`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -194,6 +194,12 @@ pub enum Capability {
 }
 
 impl Capability {
+    /// Alias for [`Capability::StellarSdkDependency`] representing Python SDK detection.
+    #[allow(non_upper_case_globals)]
+    pub const PythonSdk: Capability = Capability::StellarSdkDependency;
+    /// Constant alias for Python SDK capability.
+    pub const PYTHON_SDK: Capability = Capability::StellarSdkDependency;
+
     /// Every capability variant the engine can declare, in declaration order.
     ///
     /// This is the engine side of the capability vocabulary shared with the

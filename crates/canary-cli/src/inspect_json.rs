@@ -90,6 +90,12 @@ pub struct InspectEvidenceItem {
     pub dependency: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub section: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub matched_text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone, PartialEq, Eq)]
@@ -234,6 +240,9 @@ mod tests {
                             ecosystem: "cargo".to_string(),
                             dependency: Some("soroban-sdk".to_string()),
                             section: Some("dependencies".to_string()),
+                            source_file: Some("contracts/token/Cargo.toml".to_string()),
+                            matched_text: Some("soroban-sdk".to_string()),
+                            reason: Some("cargo dependencies declares soroban-sdk".to_string()),
                         }],
                     }],
                     inspected: vec![

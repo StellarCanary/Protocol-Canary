@@ -7,6 +7,9 @@ use crate::manifest::ProjectManifest;
 /// Dependency names that indicate a Soroban contract project.
 pub const SOROBAN_DEPENDENCIES: &[&str] = &["soroban-sdk"];
 
+/// The verified Go SDK module path (CF-07 section 4).
+pub const GO_STELLAR_SDK_DEPENDENCY: &str = "github.com/stellar/go-stellar-sdk";
+
 /// Dependency names that indicate direct use of official Stellar SDK/XDR
 /// crates without necessarily being a Soroban contract.
 pub const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
@@ -16,6 +19,7 @@ pub const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
     "stellar-strkey",
     "@stellar/stellar-sdk",
     "@stellar/stellar-base",
+    GO_STELLAR_SDK_DEPENDENCY,
 ];
 
 /// Dependency names that indicate the project talks to Stellar RPC.
@@ -128,5 +132,17 @@ mod tests {
             detect_capabilities(&signals),
             vec![Capability::WasmArtifact]
         );
+    }
+
+    #[test]
+    fn go_stellar_sdk_dependency_yields_stellar_sdk_capability() {
+        let signals = DetectionSignals {
+            manifests: vec![ProjectManifest {
+                dependency_names: vec![GO_STELLAR_SDK_DEPENDENCY.to_string()],
+            }],
+            ..Default::default()
+        };
+        let caps = detect_capabilities(&signals);
+        assert_eq!(caps, vec![Capability::StellarSdkDependency]);
     }
 }

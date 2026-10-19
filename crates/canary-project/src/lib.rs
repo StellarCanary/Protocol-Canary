@@ -15,8 +15,10 @@ pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
 };
 pub use manifest::{
-    parse_cargo_dependencies, parse_package_json_dependencies, read_cargo_manifest,
-    read_package_json, ManifestDep, ProjectManifest,
+    parse_cargo_dependencies, parse_package_json_dependencies, parse_requirements_dependencies,
+    parse_requirements_line, parse_requirements_manifest, parse_requirements_txt,
+    read_cargo_manifest, read_package_json, read_requirements_manifest, read_requirements_txt,
+    ManifestDep, ProjectManifest,
 };
 pub use workspace::{
     scan_cargo_workspace, Diagnostic, DiagnosticCode, WorkspaceMember, WorkspaceScan,

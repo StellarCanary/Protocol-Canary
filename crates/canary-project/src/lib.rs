@@ -4,6 +4,7 @@ pub mod capabilities;
 pub mod detector;
 pub mod fingerprint;
 pub mod manifest;
+pub mod models;
 pub mod workspace;
 
 pub use capabilities::{
@@ -24,6 +25,7 @@ pub use manifest::{
     read_package_json, read_requirements_manifest, read_requirements_txt, GoModError, ManifestDep,
     ProjectManifest,
 };
+pub use models::{CapabilityEvidence as ModelCapabilityEvidence, CapabilityModel};
 pub use workspace::{
     scan_cargo_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode, WorkspaceMember,
     WorkspaceScan, MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,

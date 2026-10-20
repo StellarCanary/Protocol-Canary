@@ -633,15 +633,20 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
-    let details = canary_project::detect_details(&root);
-    let detected = details.context.clone();
     let explicit_type = match config.project.project_type {
         canary_config::ProjectTypeSetting::Auto => None,
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
     };
-    let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
-    let mut project = detected.clone();
-    project.project_type = resolved_type;
+    let details = canary_project::detect_project(&root, explicit_type);
+    let project = details.context.clone();
+    // Reconstruct detected ProjectContext before override for terminal/json inspection
+    let detected_type = details
+        .diagnostics
+        .iter()
+        .find(|d| d.code == canary_project::DiagnosticCode::OverrideNotice)
+        .map(|_| canary_project::detect_details(&root).context)
+        .unwrap_or_else(|| project.clone());
+    let detected = detected_type;
 
     let target_source = if args.protocol.is_some() {
         "flag"

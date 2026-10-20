@@ -20,10 +20,11 @@ pub use fingerprint::{
 };
 pub use manifest::{
     parse_cargo_dependencies, parse_go_manifest, parse_go_mod, parse_go_mod_dependencies,
-    parse_package_json_dependencies, parse_requirements_dependencies, parse_requirements_line,
-    parse_requirements_manifest, parse_requirements_txt, read_cargo_manifest, read_go_mod,
-    read_package_json, read_requirements_manifest, read_requirements_txt, GoModError, ManifestDep,
-    ProjectManifest,
+    parse_package_json_dependencies, parse_pyproject_dependencies, parse_pyproject_manifest,
+    parse_requirements_dependencies, parse_requirements_line, parse_requirements_manifest,
+    parse_requirements_txt, read_cargo_manifest, read_go_mod, read_package_json,
+    read_pyproject_manifest, read_pyproject_toml, read_requirements_manifest,
+    read_requirements_txt, GoModError, ManifestDep, ProjectManifest,
 };
 pub use models::{CapabilityEvidence as ModelCapabilityEvidence, CapabilityModel};
 pub use workspace::{

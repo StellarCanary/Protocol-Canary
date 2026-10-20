@@ -378,7 +378,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
     inspected.dedup();
 
     let has_stellar_toml = root.join("stellar.toml").is_file();
-    let wasm_artifacts = find_wasm_artifacts(root);
+    let wasm_artifacts = find_wasm_artifacts_bounded(root, &mut diagnostics);
     let has_wasm_artifact = !wasm_artifacts.is_empty();
 
     if has_wasm_artifact {
@@ -590,11 +590,21 @@ fn classify(capabilities: &[canary_core::Capability], has_stellar_toml: bool) ->
 /// deterministic, root-relative form (e.g. the CA-04 fingerprint) sort
 /// and normalize them themselves.
 pub fn find_wasm_artifacts(root: &Path) -> Vec<PathBuf> {
+    let mut diagnostics = Vec::new();
+    find_wasm_artifacts_bounded(root, &mut diagnostics)
+}
+
+pub fn find_wasm_artifacts_bounded(
+    root: &Path,
+    diagnostics: &mut Vec<crate::workspace::Diagnostic>,
+) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for known in KNOWN_WASM_OUTPUT_DIRS {
         collect_wasm_in_dir(&root.join(known), &mut found);
     }
+    let mut dirs_visited = 0;
     collect_wasm_shallow(root, 2, &mut found);
+    check_tree_depth_and_dir_count(root, root, 0, &mut dirs_visited, diagnostics);
     found
 }
 
@@ -607,6 +617,68 @@ fn collect_wasm_in_dir(dir: &Path, found: &mut Vec<PathBuf>) {
         if path.extension().is_some_and(|ext| ext == "wasm") {
             found.push(path);
         }
+    }
+}
+
+fn check_tree_depth_and_dir_count(
+    _root: &Path,
+    dir: &Path,
+    depth: usize,
+    dirs_visited: &mut usize,
+    diagnostics: &mut Vec<crate::workspace::Diagnostic>,
+) {
+    if *dirs_visited >= crate::workspace::MAX_DIRECTORIES_VISITED {
+        if !diagnostics.iter().any(|d| {
+            d.code == crate::workspace::DiagnosticCode::ScanBoundHit
+                && d.detail.contains("directories visited limit")
+        }) {
+            diagnostics.push(crate::workspace::Diagnostic {
+                code: crate::workspace::DiagnosticCode::ScanBoundHit,
+                detail: format!(
+                    "directories visited limit {} reached; traversal stopped",
+                    crate::workspace::MAX_DIRECTORIES_VISITED
+                ),
+            });
+        }
+        return;
+    }
+
+    *dirs_visited += 1;
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    let mut subdirs = Vec::new();
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name_str = file_name.to_string_lossy();
+        if path.is_dir()
+            && !SKIP_DIRS.contains(&file_name_str.as_ref())
+            && file_name_str != "target"
+        {
+            subdirs.push(path);
+        }
+    }
+    subdirs.sort();
+
+    for subdir in subdirs {
+        if depth + 1 > crate::workspace::MAX_WORKSPACE_DEPTH {
+            if !diagnostics.iter().any(|d| {
+                d.code == crate::workspace::DiagnosticCode::ScanBoundHit
+                    && d.detail.contains("scan depth limit")
+            }) {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::ScanBoundHit,
+                    detail: format!(
+                        "scan depth limit {} reached; traversal stopped",
+                        crate::workspace::MAX_WORKSPACE_DEPTH
+                    ),
+                });
+            }
+            break;
+        }
+        check_tree_depth_and_dir_count(_root, &subdir, depth + 1, dirs_visited, diagnostics);
     }
 }
 

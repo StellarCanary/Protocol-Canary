@@ -6,7 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use canary_core::{Capability, ProjectType};
 use canary_project::{
-    detect, scan_cargo_workspace, DiagnosticCode, MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
+    detect, detect_details, scan_cargo_workspace, scan_pnpm_workspace, DiagnosticCode,
+    MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -352,4 +353,55 @@ fn results_are_stable_across_runs() {
         scan_cargo_workspace(dir.path()),
         scan_cargo_workspace(dir.path())
     );
+}
+
+#[test]
+fn pnpm_workspaces_detect_members_and_apply_exclusion_patterns() {
+    let dir = Scratch::new("pnpm-members");
+    dir.write(
+        "pnpm-workspace.yaml",
+        "packages:\n  - 'packages/*' # include package directories\n  - '!packages/ignored' # exclude generated package\n",
+    );
+    dir.write(
+        "packages/sdk/package.json",
+        r#"{"dependencies":{"@stellar/stellar-sdk":"^13"}}"#,
+    );
+    dir.write(
+        "packages/ignored/package.json",
+        r#"{"dependencies":{"soroban-sdk":"1"}}"#,
+    );
+
+    let scan = scan_pnpm_workspace(dir.path());
+    assert_eq!(member_paths(&scan), ["packages/sdk"]);
+    assert!(scan.has_dependency("@stellar/stellar-sdk"));
+    assert!(!scan.has_dependency("soroban-sdk"));
+    assert!(scan.diagnostics.is_empty(), "{:?}", scan.diagnostics);
+
+    let detection = detect_details(dir.path());
+    assert_eq!(detection.context.project_type, ProjectType::RpcConsumer);
+    assert_eq!(detection.workspace_members, ["packages/sdk"]);
+    assert!(detection
+        .inspected
+        .contains(&"pnpm-workspace.yaml".to_string()));
+    assert!(detection
+        .inspected
+        .contains(&"packages/sdk/package.json".to_string()));
+}
+
+#[test]
+fn malformed_pnpm_workspace_reports_diagnostic_and_keeps_root_detection() {
+    let dir = Scratch::new("pnpm-malformed");
+    dir.write("pnpm-workspace.yaml", "packages: [\n  - 'broken'\n");
+    dir.write(
+        "package.json",
+        r#"{"dependencies":{"@stellar/stellar-sdk":"^13"}}"#,
+    );
+
+    let detection = detect_details(dir.path());
+    assert_eq!(detection.context.project_type, ProjectType::RpcConsumer);
+    assert!(detection.workspace_members.is_empty());
+    assert!(detection.diagnostics.iter().any(|diagnostic| {
+        diagnostic.code == DiagnosticCode::ManifestUnparseable
+            && diagnostic.detail.contains("pnpm-workspace.yaml")
+    }));
 }

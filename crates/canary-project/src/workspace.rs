@@ -14,7 +14,10 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{parse_cargo_manifest, ProjectManifest};
+use crate::manifest::{
+    parse_cargo_manifest, parse_pnpm_workspace_patterns, parse_workspace_package_json_dependencies,
+    PnpmWorkspaceParseError, ProjectManifest,
+};
 
 /// Most workspace members that are scanned (decision D-06).
 pub const MAX_WORKSPACE_MEMBERS: usize = 64;
@@ -146,6 +149,7 @@ pub fn scan_cargo_workspace(root: &Path) -> WorkspaceScan {
             &mut found,
             &mut scan.diagnostics,
             &mut budget,
+            true,
         );
     }
 
@@ -167,6 +171,116 @@ pub fn scan_cargo_workspace(root: &Path) -> WorkspaceScan {
             code: DiagnosticCode::ScanBoundReached,
             detail: format!(
                 "workspace members limit {MAX_WORKSPACE_MEMBERS} ({total} found); the rest were not scanned"
+            ),
+        });
+    }
+    scan
+}
+
+/// Discovers pnpm workspace members from `pnpm-workspace.yaml` using CF-07 bounds.
+pub fn scan_pnpm_workspace(root: &Path) -> WorkspaceScan {
+    scan_pnpm_workspace_with_limit(root, MAX_WORKSPACE_MEMBERS)
+}
+
+pub(crate) fn scan_pnpm_workspace_with_limit(root: &Path, member_limit: usize) -> WorkspaceScan {
+    let mut scan = WorkspaceScan::default();
+    let manifest_path = root.join("pnpm-workspace.yaml");
+    let metadata = match std::fs::symlink_metadata(&manifest_path) {
+        Ok(metadata) => metadata,
+        Err(_) => return scan,
+    };
+    if metadata.file_type().is_symlink() {
+        push(
+            &mut scan.diagnostics,
+            DiagnosticCode::SymlinkSkipped,
+            "pnpm-workspace.yaml is a symbolic link and was not followed",
+        );
+        return scan;
+    }
+    if !metadata.is_file() {
+        return scan;
+    }
+    let raw = match read_limited(&manifest_path) {
+        Ok(Some(raw)) => raw,
+        Ok(None) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestTooLarge,
+                format!("pnpm-workspace.yaml is larger than {MAX_MANIFEST_BYTES} bytes"),
+            );
+            return scan;
+        }
+        Err(error) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                format!("pnpm-workspace.yaml could not be read: {error}"),
+            );
+            return scan;
+        }
+    };
+    let patterns = match parse_pnpm_workspace_patterns(&raw) {
+        Ok(patterns) => patterns,
+        Err(PnpmWorkspaceParseError::InvalidYaml) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                "pnpm-workspace.yaml is not valid YAML",
+            );
+            return scan;
+        }
+        Err(PnpmWorkspaceParseError::Unsupported) => {
+            push(
+                &mut scan.diagnostics,
+                DiagnosticCode::UnsupportedSyntax,
+                "pnpm-workspace.yaml must contain only a top-level packages list of strings",
+            );
+            return scan;
+        }
+    };
+
+    let mut budget = Budget::default();
+    let mut included = BTreeSet::new();
+    let mut excluded = BTreeSet::new();
+    for pattern in &patterns {
+        if let Some(pattern) = pattern.strip_prefix('!') {
+            if pattern.is_empty() {
+                push(
+                    &mut scan.diagnostics,
+                    DiagnosticCode::UnsupportedSyntax,
+                    "pnpm workspace exclusion pattern cannot be empty",
+                );
+                continue;
+            }
+            expand_pattern(
+                root,
+                pattern,
+                &mut excluded,
+                &mut scan.diagnostics,
+                &mut budget,
+                false,
+            );
+        } else {
+            expand_pattern(
+                root,
+                pattern,
+                &mut included,
+                &mut scan.diagnostics,
+                &mut budget,
+                true,
+            );
+        }
+    }
+    included.retain(|member| !excluded.contains(member));
+    let total = included.len();
+    for member in included.into_iter().take(member_limit) {
+        read_package_member(root, &member, &mut scan);
+    }
+    if total > member_limit {
+        scan.diagnostics.push(Diagnostic {
+            code: DiagnosticCode::ScanBoundReached,
+            detail: format!(
+                "workspace members limit {member_limit} ({total} found); the rest were not scanned"
             ),
         });
     }
@@ -264,6 +378,7 @@ fn expand_pattern(
     found: &mut BTreeSet<String>,
     diagnostics: &mut Vec<Diagnostic>,
     budget: &mut Budget,
+    report_missing: bool,
 ) {
     if pattern.is_empty()
         || pattern.starts_with('/')
@@ -312,7 +427,7 @@ fn expand_pattern(
     let before = found.len();
     expand_segments(root, "", &segments, found, diagnostics, budget);
     let literal = !segments.iter().any(|s| has_wildcard(s));
-    if literal && found.len() == before && !budget.reported {
+    if report_missing && literal && found.len() == before && !budget.reported {
         // Reported only when nothing else (a skipped link) explains it.
         let already = diagnostics.iter().any(|d| d.detail.contains(pattern));
         if !already {
@@ -462,6 +577,42 @@ fn read_member(root: &Path, member: &str, scan: &mut WorkspaceScan) {
     }
 }
 
+fn read_package_member(root: &Path, member: &str, scan: &mut WorkspaceScan) {
+    let manifest_relative = format!("{member}/package.json");
+    let manifest_path = to_path(root, &manifest_relative);
+    match read_limited(&manifest_path) {
+        Err(_) => push(
+            &mut scan.diagnostics,
+            DiagnosticCode::WorkspaceMemberMissing,
+            format!("workspace member {member:?} has no readable package.json"),
+        ),
+        Ok(None) => push(
+            &mut scan.diagnostics,
+            DiagnosticCode::ManifestTooLarge,
+            format!("{manifest_relative} is larger than {MAX_MANIFEST_BYTES} bytes"),
+        ),
+        Ok(Some(text)) => match parse_workspace_package_json_dependencies(&text) {
+            Some(dependencies) => {
+                let mut dependency_names: Vec<String> = dependencies
+                    .into_iter()
+                    .map(|dependency| dependency.name)
+                    .collect();
+                dependency_names.sort();
+                dependency_names.dedup();
+                scan.members.push(WorkspaceMember {
+                    path: member.to_string(),
+                    manifest: ProjectManifest { dependency_names },
+                });
+            }
+            None => push(
+                &mut scan.diagnostics,
+                DiagnosticCode::ManifestUnparseable,
+                format!("{manifest_relative} is not valid JSON"),
+            ),
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +628,27 @@ mod tests {
         assert!(match_segment("a*b*c", "aXXbYYc"));
         assert!(match_segment("", ""));
         assert!(!match_segment("", "a"));
+    }
+
+    #[test]
+    fn pnpm_yaml_parser_ignores_comments_and_requires_a_packages_list() {
+        assert_eq!(
+            parse_pnpm_workspace_patterns(
+                "packages:\n  - 'packages/*' # package sources\n  - '!packages/ignored'\n"
+            ),
+            Ok(vec![
+                "packages/*".to_string(),
+                "!packages/ignored".to_string()
+            ])
+        );
+        assert_eq!(
+            parse_pnpm_workspace_patterns("packages: packages/*\n"),
+            Err(PnpmWorkspaceParseError::Unsupported)
+        );
+        assert_eq!(
+            parse_pnpm_workspace_patterns("packages: [\n"),
+            Err(PnpmWorkspaceParseError::InvalidYaml)
+        );
     }
 
     #[test]

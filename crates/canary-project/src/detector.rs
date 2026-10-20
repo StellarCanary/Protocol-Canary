@@ -9,10 +9,13 @@ use crate::capabilities::{
     STELLAR_SDK_DEPENDENCIES,
 };
 use crate::manifest::{
-    parse_cargo_dependencies, parse_cargo_manifest, parse_package_json_dependencies,
-    parse_pyproject_dependencies, read_package_json, ProjectManifest,
+    parse_cargo_dependencies, parse_cargo_manifest, parse_go_mod_dependencies,
+    parse_package_json_dependencies, parse_requirements_dependencies,
+    parse_workspace_package_json_dependencies, read_package_json, ProjectManifest,
 };
-use crate::workspace::scan_cargo_workspace;
+use crate::workspace::{
+    scan_cargo_workspace, scan_pnpm_workspace_with_limit, MAX_WORKSPACE_MEMBERS,
+};
 
 pub use crate::capabilities::GO_STELLAR_SDK_DEPENDENCY;
 
@@ -119,6 +122,38 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         }
         manifests.push(member.manifest.clone());
     }
+
+    // 2b. pnpm workspace members
+    let pnpm_workspace_scan = scan_pnpm_workspace_with_limit(
+        root,
+        MAX_WORKSPACE_MEMBERS.saturating_sub(workspace_scan.members.len()),
+    );
+    diagnostics.extend(pnpm_workspace_scan.diagnostics);
+    if std::fs::symlink_metadata(root.join("pnpm-workspace.yaml"))
+        .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
+    {
+        inspected.push("pnpm-workspace.yaml".to_string());
+    }
+    for member in &pnpm_workspace_scan.members {
+        workspace_members.push(member.path.clone());
+        let member_rel = format!("{}/package.json", member.path);
+        let member_path = root.join(&member_rel);
+        if let Ok(raw) = std::fs::read_to_string(&member_path) {
+            inspected.push(member_rel.clone());
+            if let Some(deps) = parse_workspace_package_json_dependencies(&raw) {
+                for dep in deps {
+                    record_dep_evidence(
+                        &dep.name,
+                        &dep.section,
+                        &member_rel,
+                        "npm",
+                        &mut all_evidence,
+                    );
+                }
+            }
+        }
+        manifests.push(member.manifest.clone());
+    }
     workspace_members.sort();
     workspace_members.dedup();
 
@@ -199,6 +234,46 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         }
     }
 
+    // 5. requirements.txt and requirements/*.txt
+    for req_rel in find_requirements_manifest_paths(root, &mut diagnostics) {
+        let req_path = root.join(&req_rel);
+        if let Ok(meta) = std::fs::symlink_metadata(&req_path) {
+            if meta.file_type().is_symlink() {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::SymlinkSkipped,
+                    detail: format!("{req_rel} is a symbolic link and was not followed"),
+                });
+            } else if meta.len() > crate::workspace::MAX_MANIFEST_BYTES {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::ManifestTooLarge,
+                    detail: format!(
+                        "{req_rel} is larger than {} bytes",
+                        crate::workspace::MAX_MANIFEST_BYTES
+                    ),
+                });
+            } else if let Ok(raw) = std::fs::read_to_string(&req_path) {
+                inspected.push(req_rel.clone());
+                let deps = parse_requirements_dependencies(&raw);
+                let mut dep_names = Vec::new();
+                for dep in deps {
+                    record_dep_evidence(
+                        &dep.name,
+                        &dep.section,
+                        &req_rel,
+                        "python",
+                        &mut all_evidence,
+                    );
+                    dep_names.push(dep.name);
+                }
+                dep_names.sort();
+                dep_names.dedup();
+                manifests.push(ProjectManifest {
+                    dependency_names: dep_names,
+                });
+            }
+        }
+    }
+
     inspected.sort();
     inspected.dedup();
 
@@ -267,6 +342,49 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         diagnostics,
         capability_evidence,
     }
+}
+
+fn find_requirements_manifest_paths(
+    root: &Path,
+    diagnostics: &mut Vec<crate::workspace::Diagnostic>,
+) -> Vec<String> {
+    let mut files = Vec::new();
+
+    // 1. Root requirements*.txt
+    if let Ok(entries) = std::fs::read_dir(root) {
+        for entry in entries.filter_map(Result::ok) {
+            let file_name = entry.file_name();
+            let name = file_name.to_string_lossy();
+            if name.starts_with("requirements") && name.ends_with(".txt") {
+                files.push(name.into_owned());
+            }
+        }
+    }
+
+    // 2. <root>/requirements/*.txt
+    let req_dir = root.join("requirements");
+    if let Ok(meta) = std::fs::symlink_metadata(&req_dir) {
+        if meta.file_type().is_symlink() {
+            diagnostics.push(crate::workspace::Diagnostic {
+                code: crate::workspace::DiagnosticCode::SymlinkSkipped,
+                detail: "requirements is a symbolic link and was not followed".to_string(),
+            });
+        } else if meta.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(&req_dir) {
+                for entry in entries.filter_map(Result::ok) {
+                    let file_name = entry.file_name();
+                    let name = file_name.to_string_lossy();
+                    if name.ends_with(".txt") {
+                        files.push(format!("requirements/{name}"));
+                    }
+                }
+            }
+        }
+    }
+
+    files.sort();
+    files.dedup();
+    files
 }
 
 fn record_dep_evidence(
@@ -677,5 +795,89 @@ mod tests {
             "expected manifest-unparseable diagnostic"
         );
         assert!(unparseable.unwrap().detail.contains("pyproject.toml"));
+    }
+
+    #[test]
+    fn detects_python_stellar_sdk_in_requirements_txt() {
+        let dir = crate::test_support::temp_dir("detect-requirements");
+        std::fs::write(
+            dir.path.join("requirements.txt"),
+            "stellar-sdk>=9.0.0\nrequests>=2.28.0\n",
+        )
+        .unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::StellarSdk);
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+        assert!(details.inspected.contains(&"requirements.txt".to_string()));
+
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::PythonSdk)
+            .expect("PythonSdk capability evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(ev.evidence[0].manifest, "requirements.txt");
+        assert_eq!(ev.evidence[0].ecosystem, "python");
+        assert_eq!(ev.evidence[0].dependency.as_deref(), Some("stellar-sdk"));
+        assert_eq!(ev.evidence[0].section.as_deref(), Some("dependencies"));
+    }
+
+    #[test]
+    fn detects_python_stellar_sdk_in_requirements_dir() {
+        let dir = crate::test_support::temp_dir("detect-requirements-dir");
+        let req_dir = dir.path.join("requirements");
+        std::fs::create_dir_all(&req_dir).unwrap();
+        std::fs::write(req_dir.join("prod.txt"), "stellar_sdk==9.0.0\n").unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::StellarSdk);
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(details
+            .inspected
+            .contains(&"requirements/prod.txt".to_string()));
+
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::PythonSdk)
+            .expect("PythonSdk capability evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(ev.evidence[0].manifest, "requirements/prod.txt");
+        assert_eq!(ev.evidence[0].ecosystem, "python");
+        assert_eq!(ev.evidence[0].dependency.as_deref(), Some("stellar-sdk"));
+    }
+
+    #[test]
+    fn negative_commented_out_stellar_sdk_in_requirements_does_not_trigger_capability() {
+        let dir = crate::test_support::temp_dir("detect-requirements-comment");
+        std::fs::write(
+            dir.path.join("requirements.txt"),
+            "# stellar-sdk==9.0.0\n# stellar_sdk\nfastapi>=0.100.0\n",
+        )
+        .unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::Unknown);
+        assert!(!details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(!details
+            .context
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+        assert!(details.capability_evidence.is_empty());
+        assert!(details.inspected.contains(&"requirements.txt".to_string()));
     }
 }

@@ -10,8 +10,8 @@ use crate::capabilities::{
 };
 use crate::manifest::{
     parse_cargo_dependencies, parse_cargo_manifest, parse_go_mod_dependencies,
-    parse_package_json_dependencies, parse_workspace_package_json_dependencies, read_package_json,
-    ProjectManifest,
+    parse_package_json_dependencies, parse_requirements_dependencies,
+    parse_workspace_package_json_dependencies, read_package_json, ProjectManifest,
 };
 use crate::workspace::{
     scan_cargo_workspace, scan_pnpm_workspace_with_limit, MAX_WORKSPACE_MEMBERS,
@@ -230,6 +230,46 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
                         });
                     }
                 }
+            }
+        }
+    }
+
+    // 5. requirements.txt and requirements/*.txt
+    for req_rel in find_requirements_manifest_paths(root, &mut diagnostics) {
+        let req_path = root.join(&req_rel);
+        if let Ok(meta) = std::fs::symlink_metadata(&req_path) {
+            if meta.file_type().is_symlink() {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::SymlinkSkipped,
+                    detail: format!("{req_rel} is a symbolic link and was not followed"),
+                });
+            } else if meta.len() > crate::workspace::MAX_MANIFEST_BYTES {
+                diagnostics.push(crate::workspace::Diagnostic {
+                    code: crate::workspace::DiagnosticCode::ManifestTooLarge,
+                    detail: format!(
+                        "{req_rel} is larger than {} bytes",
+                        crate::workspace::MAX_MANIFEST_BYTES
+                    ),
+                });
+            } else if let Ok(raw) = std::fs::read_to_string(&req_path) {
+                inspected.push(req_rel.clone());
+                let deps = parse_requirements_dependencies(&raw);
+                let mut dep_names = Vec::new();
+                for dep in deps {
+                    record_dep_evidence(
+                        &dep.name,
+                        &dep.section,
+                        &req_rel,
+                        "python",
+                        &mut all_evidence,
+                    );
+                    dep_names.push(dep.name);
+                }
+                dep_names.sort();
+                dep_names.dedup();
+                manifests.push(ProjectManifest {
+                    dependency_names: dep_names,
+                });
             }
         }
     }
@@ -848,5 +888,89 @@ mod tests {
         let after = std::fs::read_to_string(&path).unwrap();
 
         assert_eq!(before, after);
+    }
+
+    #[test]
+    fn detects_python_stellar_sdk_in_requirements_txt() {
+        let dir = crate::test_support::temp_dir("detect-requirements");
+        std::fs::write(
+            dir.path.join("requirements.txt"),
+            "stellar-sdk>=9.0.0\nrequests>=2.28.0\n",
+        )
+        .unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::StellarSdk);
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+        assert!(details.inspected.contains(&"requirements.txt".to_string()));
+
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::PythonSdk)
+            .expect("PythonSdk capability evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(ev.evidence[0].manifest, "requirements.txt");
+        assert_eq!(ev.evidence[0].ecosystem, "python");
+        assert_eq!(ev.evidence[0].dependency.as_deref(), Some("stellar-sdk"));
+        assert_eq!(ev.evidence[0].section.as_deref(), Some("dependencies"));
+    }
+
+    #[test]
+    fn detects_python_stellar_sdk_in_requirements_dir() {
+        let dir = crate::test_support::temp_dir("detect-requirements-dir");
+        let req_dir = dir.path.join("requirements");
+        std::fs::create_dir_all(&req_dir).unwrap();
+        std::fs::write(req_dir.join("prod.txt"), "stellar_sdk==9.0.0\n").unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::StellarSdk);
+        assert!(details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(details
+            .inspected
+            .contains(&"requirements/prod.txt".to_string()));
+
+        let ev = details
+            .capability_evidence
+            .iter()
+            .find(|c| c.capability == Capability::PythonSdk)
+            .expect("PythonSdk capability evidence");
+        assert_eq!(ev.evidence.len(), 1);
+        assert_eq!(ev.evidence[0].manifest, "requirements/prod.txt");
+        assert_eq!(ev.evidence[0].ecosystem, "python");
+        assert_eq!(ev.evidence[0].dependency.as_deref(), Some("stellar-sdk"));
+    }
+
+    #[test]
+    fn negative_commented_out_stellar_sdk_in_requirements_does_not_trigger_capability() {
+        let dir = crate::test_support::temp_dir("detect-requirements-comment");
+        std::fs::write(
+            dir.path.join("requirements.txt"),
+            "# stellar-sdk==9.0.0\n# stellar_sdk\nfastapi>=0.100.0\n",
+        )
+        .unwrap();
+
+        let details = detect_details(&dir.path);
+        assert_eq!(details.context.project_type, ProjectType::Unknown);
+        assert!(!details
+            .context
+            .capabilities
+            .contains(&Capability::PythonSdk));
+        assert!(!details
+            .context
+            .capabilities
+            .contains(&Capability::StellarSdkDependency));
+        assert!(details.capability_evidence.is_empty());
+        assert!(details.inspected.contains(&"requirements.txt".to_string()));
     }
 }

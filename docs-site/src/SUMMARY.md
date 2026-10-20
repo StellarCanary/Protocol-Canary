@@ -8,6 +8,7 @@
 - [Installation](./installation.md)
 - [Your First Check](./first-check.md)
 - [CLI Reference](./cli/overview.md)
+  - [cache](./cli/cache.md)
   - [check](./cli/check.md)
   - [inspect](./cli/inspect.md)
   - [fixtures](./cli/fixtures.md)

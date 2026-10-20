@@ -2,11 +2,14 @@
 
 mod cli;
 mod commands;
+mod error;
+mod fixtures_json;
+mod inspect_json;
 mod network;
 
 use clap::Parser;
 
-use cli::{Cli, Command};
+use cli::{CacheArgs, Cli, Command};
 
 #[tokio::main]
 async fn main() {
@@ -17,6 +20,7 @@ async fn main() {
         Command::Inspect(args) => commands::run_inspect(args),
         Command::Fixtures(args) => commands::run_fixtures(args),
         Command::Report(args) => commands::run_report(args),
+        Command::Cache(CacheArgs::Clear(args)) => commands::run_cache_clear(args),
         Command::Version => commands::run_version(),
     };
 

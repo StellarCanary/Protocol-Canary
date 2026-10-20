@@ -82,6 +82,16 @@ impl XdrFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
+        let kind_for_keys = table.get("kind").and_then(toml::Value::as_str);
+        let allowed: &[&str] = if kind_for_keys == Some("encode-equals") {
+            &["type", "kind", "value_base64", "expected_base64"]
+        } else {
+            &["type", "kind", "value_base64"]
+        };
+        if let Some(message) = canary_fixtures::unknown_body_keys(table, allowed) {
+            return Err(invalid(message));
+        }
+
         let type_name: XdrTypeName = table
             .get("type")
             .and_then(toml::Value::as_str)
@@ -164,6 +174,7 @@ impl XdrRunner for DefaultXdrRunner {
             details,
             duration_ms,
             fixture_id: Some(fixture.metadata.id.clone()),
+            source: canary_core::ResultSource::Live,
         })
     }
 }
@@ -264,7 +275,10 @@ mod tests {
         CacheStore, GitContext, NetworkContext, NetworkName, ProjectContext, ProjectType,
         ProtocolVersion, RunOptions,
     };
-    use stellar_xdr::{ContractExecutable, Hash, Limits, ScVal, StellarValue, WriteXdr};
+    use stellar_xdr::{
+        ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, TransactionEnvelope,
+        WriteXdr,
+    };
 
     fn valid_stellar_value_base64() -> String {
         StellarValue::default()
@@ -443,18 +457,19 @@ mod tests {
         assert!(matches!(err, XdrError::InvalidFixtureBody { .. }));
     }
 
-    /// `LedgerEntry` is a real XDR type name — just not one of the ones
-    /// this tool supports. The rejection must surface through fixture
+    /// `LiquidityPoolEntry` is a real XDR type name — just not one of the
+    /// ones this tool supports. The rejection must surface through fixture
     /// parsing with `XdrTypeName::from_str`'s supported-types list intact,
     /// so a fixture author can self-correct from the error alone.
     #[test]
     fn rejects_a_well_formed_but_unsupported_xdr_type_name_and_lists_the_supported_ones() {
-        let body = "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
+        let body =
+            "type = \"LiquidityPoolEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
         let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", body)).unwrap_err();
         match err {
             XdrError::InvalidFixtureBody { reason, .. } => {
-                assert!(reason.contains("LedgerEntry"), "reason: {reason}");
-                for supported in ["StellarValue", "ContractExecutable", "ScVal"] {
+                assert!(reason.contains("LiquidityPoolEntry"), "reason: {reason}");
+                for supported in ["StellarValue", "ContractExecutable", "ScVal", "LedgerEntry"] {
                     assert!(
                         reason.contains(supported),
                         "reason must list supported type {supported:?}: {reason}"
@@ -462,6 +477,93 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_transaction_envelope() {
+        let base64 = TransactionEnvelope::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"TransactionEnvelope\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-envelope-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::TransactionEnvelope);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(
+            result.summary,
+            "TransactionEnvelope round-tripped byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_transaction_envelope() {
+        let base64 = TransactionEnvelope::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"TransactionEnvelope\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-envelope-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded TransactionEnvelope successfully");
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_ledger_entry() {
+        let base64 = LedgerEntry::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body =
+            format!("type = \"LedgerEntry\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n");
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-ledger-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::LedgerEntry);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "LedgerEntry round-tripped byte-for-byte");
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_ledger_entry() {
+        let base64 = LedgerEntry::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerEntry\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-ledger-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded LedgerEntry successfully");
+    }
+
+    #[test]
+    fn roundtrip_fixture_fails_on_garbage_input() {
+        let body =
+            "type = \"StellarValue\"\nkind = \"roundtrip\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-roundtrip-garbage", body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Fail);
+        assert_eq!(
+            result.summary,
+            "failed to decode StellarValue for roundtrip"
+        );
+    }
+
+    #[test]
+    fn encode_equals_fixture_fails_on_garbage_input() {
+        let body = "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"!!!not-xdr!!!\"\nexpected_base64 = \"AAAA\"\n";
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-encode-equals-garbage", body))
+                .unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Fail);
+        assert_eq!(result.summary, "failed to decode StellarValue input");
     }
 
     #[test]

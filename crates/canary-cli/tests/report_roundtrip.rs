@@ -2,6 +2,8 @@ mod support;
 
 use support::{run_in, stderr, stdout, TempProject};
 
+const FIXTURE: &str = "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n";
+
 const OFFLINE_CONFIG: &str = r#"
 version = 1
 protocol = 28
@@ -16,6 +18,7 @@ soroban = false
 fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network() {
     let dir = TempProject::new("report-roundtrip");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));
@@ -31,6 +34,30 @@ fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network()
     assert!(text.contains("**Result: PASS**"));
 }
 
+/// `report --format junit` re-renders a stored JSON report as JUnit XML
+/// for CI test-summary dashboards, without re-running anything.
+#[test]
+fn report_renders_a_saved_json_report_as_junit_xml() {
+    let dir = TempProject::new("report-junit");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
+
+    let check_output = run_in(&dir.path, &["check", "--json"]);
+    assert_eq!(check_output.status.code(), Some(0));
+    dir.write("result.json", &stdout(&check_output));
+
+    let report_output = run_in(&dir.path, &["report", "result.json", "--format", "junit"]);
+    assert_eq!(report_output.status.code(), Some(0));
+    let text = stdout(&report_output);
+    assert!(
+        text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"),
+        "junit output must start with the XML declaration, got: {text}"
+    );
+    assert!(text.contains("<testsuites name=\"stellar-canary\""));
+    assert!(text.contains("name=\"p28-xdr-1\""));
+    assert!(text.trim_end().ends_with("</testsuites>"));
+}
+
 /// `ReportArgs::format` documents Markdown as the default, so a bare
 /// `report <path>` invocation must render Markdown rather than terminal
 /// output. This covers the default that the explicit-`--format markdown`
@@ -39,6 +66,7 @@ fn report_renders_a_saved_json_report_as_markdown_without_touching_the_network()
 fn report_defaults_to_markdown_when_no_format_flag_is_given() {
     let dir = TempProject::new("report-default-format");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));
@@ -50,6 +78,14 @@ fn report_defaults_to_markdown_when_no_format_flag_is_given() {
     assert!(
         text.starts_with("## Stellar Protocol Canary"),
         "report must default to Markdown output, got: {text}"
+    );
+    // The Markdown table delimiter is another Markdown-only marker: the
+    // Terminal and JSON reporters never emit a `|---|` ruler, so this
+    // asserts the shape of the output, not just a single coincidental
+    // substring.
+    assert!(
+        text.contains("|---|---|"),
+        "default output must be Markdown-shaped, got: {text}"
     );
     assert!(text.contains("**Result: PASS**"));
 }
@@ -63,6 +99,7 @@ fn report_defaults_to_markdown_when_no_format_flag_is_given() {
 fn report_renders_a_saved_json_report_as_terminal_output_when_asked() {
     let dir = TempProject::new("report-terminal-format");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/p28-xdr-1.toml", FIXTURE);
 
     let check_output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(check_output.status.code(), Some(0));
@@ -110,4 +147,22 @@ fn report_on_a_malformed_file_exits_with_a_configuration_error() {
         err.contains("error: configuration error: invalid report file:"),
         "stderr: {err}"
     );
+    // A malformed file gets no hint: the message alone says what is wrong.
+    assert!(!err.contains("Hint:"), "stderr: {err}");
+}
+
+#[test]
+fn a_report_from_another_schema_version_is_reported_with_an_actionable_hint() {
+    let dir = TempProject::new("report-schema-mismatch");
+    dir.write(
+        "result.json",
+        "{\n  \"schemaVersion\": 999,\n  \"toolVersion\": \"9.9.9\",\n  \"targetProtocol\": 28,\n  \"project\": { \"name\": \"x\", \"type\": \"unknown\" },\n  \"status\": \"pass\",\n  \"results\": []\n}\n",
+    );
+
+    let output = run_in(&dir.path, &["report", "result.json"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(err.contains("unsupported schema version"), "stderr: {err}");
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains("engine version"), "stderr: {err}");
 }

@@ -291,7 +291,7 @@ from this document.
 
 | Component | State model |
 |---|---|
-| `Protocol-Canary` (`stellar-canary` binary) | Stateless per invocation. The `canary_core::CacheStore` type exists and is unit-tested but is **not** wired into `check`'s execution path (see `CHANGELOG.md`'s "Known gaps") — every run calls RPC/Soroban fresh. |
+| `Protocol-Canary` (`stellar-canary` binary) | No server state. From `0.2.0`, `check` reads and writes a local result cache (`canary_core::CacheStore`, directory `.stellar-canary-cache` in the project root), so a run can replay an earlier result instead of calling RPC/Soroban. The cache key covers fixture contents, so an edited fixture is never answered from an old entry. Offline XDR results are replayed by default; RPC/Soroban results only with `--live-cache-ttl`, and replayed results are marked `source: cache` in the report; see [`contracts/cf-01-report.md`](contracts/cf-01-report.md#6-cached-results). |
 | `ProtocolCanary-Fixtures` | State lives only as version-controlled git history — a fixture pack is a fixed snapshot at a given commit, not a database. |
 | `ProtocolCanary-Action` | Fully ephemeral — runs inside a GitHub-hosted runner VM that is destroyed after the job. Its only durable output is the workflow artifact/job summary GitHub stores. `actions/cache` may cache a built `stellar-canary` binary between runs on the same repo as a best-effort speedup; this is never required for correctness. |
 | Stellar RPC / Testnet | External network state, owned and operated by the Stellar network, outside this project entirely. Protocol Canary only reads from it (`getNetwork`) or simulates against it (`simulateTransaction`) — it never writes to it. |
@@ -307,6 +307,7 @@ storage (no database, no hosted API state).
 | Malformed fixture file | Exit `4` (`InvalidFixture`); the CLI reports which file and the parse error, and does not run any fixtures from that load. |
 | A fixture's compatibility assertion fails | Exit `1`, `status: "fail"`; the specific failing `testId` and detail are reported in both terminal and JSON. |
 | Invalid CLI configuration (e.g. `--config` path does not exist) | Exit `2` (`ConfigurationError`) with a specific message; no checks run. |
+| No fixture applies to the run (missing or empty fixtures directory, or everything skipped), releases after `0.1.1` | Exit `2` with a message naming the cause; no report is printed. `--allow-empty` opts out. `0.1.1` and earlier exited `0` with `status: "pass"`. |
 | The Action cannot install or execute Canary at all (build/timeout/unparseable output) | Action's own `status` output is `"execution-failed"` (distinct from a `fail` compatibility result) — the summary states "Protocol Canary could not be executed" with the real diagnostic, never a fabricated compatibility message. |
 | A report is missing the `counts` field (older `schemaVersion`-1 output) | The Action derives `counts` from `results` rather than erroring — see `ProtocolCanary-Action`'s `tests/unit/output.test.ts`. Backward compatibility is preserved, not removed. |
 | GitHub artifact upload fails | Logged as a warning; the underlying compatibility result and job pass/fail are unaffected — artifact upload is auxiliary, never load-bearing for the result. |
@@ -366,6 +367,11 @@ README's "Supported Canary versions" table. See
 current verified combination.
 
 ## Report generation and exit codes
+
+The interfaces shared by the three repositories (report, fixture registry
+and digest, lockfile, verification evidence, comparison, fixture releases,
+project detection, viewer and Action) are defined in
+[`contracts/`](contracts/README.md).
 
 See [`json-report-contract.md`](json-report-contract.md) for the full JSON
 schema and [`fixture-contract.md`](fixture-contract.md) for how fixtures

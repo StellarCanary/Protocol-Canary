@@ -91,9 +91,11 @@ target project doesn't have is **skipped**, not failed.
 
 | `surface` | Required body fields |
 |---|---|
-| `xdr` | `type` (`StellarValue` \| `ContractExecutable`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `xdr` | `type` (`StellarValue` \| `ContractExecutable` \| `ScVal` \| `LedgerEntry` \| `TransactionEnvelope`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
 | `rpc` | `method` (`get-network` \| `get-latest-ledger`), `assert` — an array of `{kind, field, value?, expected_type?}` |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
+
+For Soroban argument typing and XDR `ScVal` authoring details, see [`docs/fixtures/scval.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixtures/scval.md).
 
 ## ID resolution and protocol filtering
 
@@ -124,7 +126,9 @@ suite.
 
 `Protocol-Canary`'s own loader performs the load-time validation that
 actually gates a `check`/`fixtures` run: a duplicate ID, a dangling
-`input_file`/`expected_file` reference, or a structurally invalid file
+`input_file`/`expected_file` reference, an unsafe reference (absolute, `..`,
+backslash or drive prefix), a symbolic link anywhere in the fixture tree, or
+a structurally invalid file
 (bad TOML, missing required field, unrecognized `surface`) fails the
 whole load with [exit code `4`](./exit-codes.md) — never silently treated
 as a project incompatibility.

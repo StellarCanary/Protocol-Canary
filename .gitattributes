@@ -1,0 +1,10 @@
+# The CA-04 conformance vectors under tests/data/fingerprint are hashed
+# byte-for-byte (CA-04 section 4 hashes raw manifest bytes; a CRLF
+# manifest changes the digest), so their bytes must come out of the
+# checkout identically on every platform. `core.autocrlf` on Windows
+# runners would otherwise rewrite them and fail
+# `reference_vectors_match_the_committed_ca04_digests`.
+crates/canary-project/tests/data/fingerprint/** text eol=lf
+
+# The WASM artifacts are binary inputs: never convert or normalize them.
+crates/canary-project/tests/data/fingerprint/**/*.wasm binary

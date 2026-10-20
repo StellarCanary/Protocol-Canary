@@ -31,6 +31,26 @@ fn decision_label(input: &ReportInput) -> &'static str {
 pub struct TerminalReporter;
 
 impl TerminalReporter {
+    /// Renders a given [`ReportInput`] into a human-readable terminal-friendly string.
+    ///
+    /// The generated report includes project and protocol metadata, detailed test results
+    /// grouped by surface, a summary of skipped fixtures, and an overall compatibility decision.
+    /// Any failures or errors are listed at the end with their associated details.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The structured [`ReportInput`] containing all results and metadata to report.
+    ///
+    /// # Returns
+    ///
+    /// A formatted `String` ready to be printed to `stdout` or `stderr`.
+    ///
+    /// # Examples
+    ///
+    /// ```text
+    /// let text = TerminalReporter::render(&report_input);
+    /// println!("{}", text);
+    /// ```
     pub fn render(input: &ReportInput) -> String {
         let mut out = String::new();
 
@@ -53,7 +73,15 @@ impl TerminalReporter {
                     );
                 }
                 None => {
-                    let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
+                    if let Some(err) = &network.error {
+                        let _ = writeln!(
+                            out,
+                            "Network: {} (protocol not observed: {err})",
+                            network.name
+                        );
+                    } else {
+                        let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
+                    }
                 }
             }
         }
@@ -66,16 +94,32 @@ impl TerminalReporter {
             }
             let _ = writeln!(out, "{}", surface_heading(surface));
             let all_passed = results.iter().all(|r| r.status == Status::Pass);
-            if all_passed {
+            // The compact `N/N PASS` line stays for runs that carry no
+            // verification evidence; when evidence exists, every result
+            // gets a row so its verification badge can be shown (a
+            // fixture without evidence shows `[unverified]` rather than
+            // silently disappearing).
+            let show_verification = !input.verification.is_empty();
+            if all_passed && !show_verification {
                 let _ = writeln!(out, "  {}/{} PASS", results.len(), results.len());
             } else {
                 for result in &results {
-                    let _ = writeln!(
-                        out,
-                        "  {:<28} {}",
-                        result.test_id,
-                        status_badge(result.status)
-                    );
+                    if show_verification {
+                        let _ = writeln!(
+                            out,
+                            "  {:<28} {} {}",
+                            result.test_id,
+                            status_badge(result.status),
+                            input.verification_badge(result)
+                        );
+                    } else {
+                        let _ = writeln!(
+                            out,
+                            "  {:<28} {}",
+                            result.test_id,
+                            status_badge(result.status)
+                        );
+                    }
                 }
             }
             let _ = writeln!(out);
@@ -105,6 +149,9 @@ impl TerminalReporter {
             .count();
         let total = input.results.len();
         let _ = writeln!(out, "{passed}/{total} applicable checks passed.");
+        if let Some(notice) = input.cache_notice() {
+            let _ = writeln!(out, "{notice}");
+        }
         let _ = writeln!(out);
         let _ = writeln!(out, "Status: {}", decision_label(input));
 
@@ -135,7 +182,7 @@ impl TerminalReporter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ProjectSummary, ReportInput};
+    use crate::{ProjectSummary, ReportInput, VerificationSummary};
     use canary_core::{GitContext, PolicyDecision, ProjectType, ProtocolVersion};
 
     fn result(
@@ -152,6 +199,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some(id.into()),
+            source: canary_core::ResultSource::Live,
         }
     }
 
@@ -169,9 +217,20 @@ mod tests {
             network: None,
             results,
             skipped: vec![],
+            verification: vec![],
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
+        }
+    }
+
+    fn verification(fixture_id: &str, method: &str, outcome: &str) -> VerificationSummary {
+        VerificationSummary {
+            fixture_id: fixture_id.into(),
+            method: method.into(),
+            outcome: outcome.into(),
+            checked_at: "2026-09-28T07:20:00Z".into(),
         }
     }
 
@@ -225,16 +284,23 @@ mod tests {
             fixture_id: "p28-soroban-1".into(),
             surface: canary_core::Surface::Soroban,
             reason: "requires a capability not declared by this project".into(),
+            code: canary_core::SkipCode::MissingCapability,
         });
         let text = TerminalReporter::render(&input);
         assert!(text.contains("Skipped fixtures: 1"));
     }
 
-    fn skip(fixture_id: &str, surface: canary_core::Surface, reason: &str) -> crate::SkipSummary {
+    fn skip(
+        fixture_id: &str,
+        surface: canary_core::Surface,
+        reason: &str,
+        code: canary_core::SkipCode,
+    ) -> crate::SkipSummary {
         crate::SkipSummary {
             fixture_id: fixture_id.into(),
             surface,
             reason: reason.into(),
+            code,
         }
     }
 
@@ -246,11 +312,13 @@ mod tests {
             "p28-soroban-1",
             canary_core::Surface::Soroban,
             "requires a capability not declared by this project",
+            canary_core::SkipCode::MissingCapability,
         ));
         input.skipped.push(skip(
             "p28-rpc-2",
             canary_core::Surface::Rpc,
             "no RPC endpoint configured",
+            canary_core::SkipCode::Unknown,
         ));
         let text = TerminalReporter::render(&input);
         assert!(text.contains("Skipped fixtures: 2"));
@@ -267,11 +335,13 @@ mod tests {
             "p28-soroban-1",
             canary_core::Surface::Soroban,
             "requires a capability not declared by this project",
+            canary_core::SkipCode::MissingCapability,
         ));
         input.skipped.push(skip(
             "p28-rpc-2",
             canary_core::Surface::Rpc,
             "no RPC endpoint configured",
+            canary_core::SkipCode::Unknown,
         ));
         let text = TerminalReporter::render(&input);
         assert!(text.contains("Skipped fixtures: 2"));
@@ -279,5 +349,99 @@ mod tests {
         assert!(!text.contains("no RPC endpoint configured"));
         assert!(!text.contains("p28-soroban-1 ("));
         assert!(!text.contains("p28-rpc-2 ("));
+    }
+
+    #[test]
+    fn a_run_with_replayed_results_says_so() {
+        let mut cached = result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass);
+        cached.source = canary_core::ResultSource::Cache;
+        let live = result("p28-xdr-2", canary_core::Surface::Xdr, Status::Pass);
+        let text = TerminalReporter::render(&base_input(vec![cached, live], PolicyDecision::Pass));
+        assert!(text.contains("1 of 2 results were replayed from the local result cache"));
+    }
+
+    #[test]
+    fn a_fully_live_run_has_no_cache_notice() {
+        let live = result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass);
+        let text = TerminalReporter::render(&base_input(vec![live], PolicyDecision::Pass));
+        assert!(!text.contains("result cache"));
+    }
+
+    #[test]
+    fn a_verified_fixture_shows_its_verification_badge() {
+        let mut input = base_input(
+            vec![result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass)],
+            PolicyDecision::Pass,
+        );
+        input
+            .verification
+            .push(verification("p28-xdr-1", "live-simulation", "matched"));
+        let text = TerminalReporter::render(&input);
+        assert!(text.contains("[verified: live-simulation]"), "{text}");
+        // With evidence present even a fully passing surface lists its
+        // results, so the badge has somewhere to appear.
+        assert!(text.contains("p28-xdr-1"), "{text}");
+    }
+
+    #[test]
+    fn an_unverified_fixture_shows_an_unverified_indicator() {
+        let mut input = base_input(
+            vec![
+                result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass),
+                result("p28-xdr-2", canary_core::Surface::Xdr, Status::Pass),
+            ],
+            PolicyDecision::Pass,
+        );
+        input
+            .verification
+            .push(verification("p28-xdr-1", "source-checked", "matched"));
+        let text = TerminalReporter::render(&input);
+        assert!(text.contains("[verified: source-checked]"), "{text}");
+        assert!(text.contains("[unverified]"), "{text}");
+        // The unverified result keeps its own row, not silence.
+        assert!(
+            text.contains("p28-xdr-2") && text.contains("✓ PASS"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_mismatched_record_is_shown_as_unverified_naming_its_method() {
+        let mut input = base_input(
+            vec![result("p28-rpc-1", canary_core::Surface::Rpc, Status::Pass)],
+            PolicyDecision::Pass,
+        );
+        input
+            .verification
+            .push(verification("p28-rpc-1", "live-read-only", "mismatched"));
+        let text = TerminalReporter::render(&input);
+        assert!(
+            text.contains("[unverified: live-read-only record mismatched]"),
+            "{text}"
+        );
+        assert!(!text.contains("[verified:"), "{text}");
+    }
+
+    #[test]
+    fn a_run_without_verification_records_keeps_the_compact_pass_line() {
+        let input = base_input(
+            vec![
+                result("p28-xdr-1", canary_core::Surface::Xdr, Status::Pass),
+                result("p28-xdr-2", canary_core::Surface::Xdr, Status::Pass),
+            ],
+            PolicyDecision::Pass,
+        );
+        let text = TerminalReporter::render(&input);
+        assert!(text.contains("2/2 PASS"), "{text}");
+        assert!(!text.contains("[unverified]"), "{text}");
+    }
+
+    #[test]
+    fn a_failure_row_is_unchanged_when_the_run_carries_no_verification() {
+        let mut failing = result("p28-xdr-1", canary_core::Surface::Xdr, Status::Fail);
+        failing.details = Some("decode mismatch".to_string());
+        let text = TerminalReporter::render(&base_input(vec![failing], PolicyDecision::Fail));
+        assert!(text.contains("p28-xdr-1"), "{text}");
+        assert!(!text.contains("[unverified]"), "{text}");
     }
 }

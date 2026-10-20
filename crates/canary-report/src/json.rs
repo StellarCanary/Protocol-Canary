@@ -10,10 +10,10 @@ use serde::{Deserialize, Serialize};
 
 use canary_core::{
     CompatibilityResult, GitContext, NetworkName, PolicyDecision, ProjectType, ProtocolVersion,
-    Status, Surface,
+    ResultSource, SkipCode, Status, Surface,
 };
 
-use crate::{NetworkSummary, ProjectSummary, ReportInput, SkipSummary};
+use crate::{NetworkSummary, ProjectSummary, ReportInput, RunSummary, SkipSummary};
 
 /// The current JSON report schema version. Bump this, and keep the old
 /// shape available if practical, whenever a change here would not be
@@ -40,6 +40,21 @@ struct JsonReport {
     skipped: Vec<JsonSkip>,
     #[serde(default)]
     git: JsonGit,
+    #[serde(default)]
+    verbose: bool,
+    /// Build provenance of the engine (CF-01 `run`). Absent in reports
+    /// written before the field existed, which means *not recorded*.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    run: Option<JsonRun>,
+}
+
+/// `run` in the report. `toolBuildCommit` is always written when `run` is,
+/// as a string or an explicit `null`, so "recorded, unknown" is
+/// distinguishable from "not recorded" (no `run` at all).
+#[derive(Debug, Serialize, Deserialize)]
+struct JsonRun {
+    #[serde(rename = "toolBuildCommit", default)]
+    tool_build_commit: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,6 +69,8 @@ struct JsonNetwork {
     name: String,
     #[serde(rename = "observedProtocol", skip_serializing_if = "Option::is_none")]
     observed_protocol: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -70,6 +87,11 @@ struct JsonResult {
     duration_ms: u64,
     #[serde(rename = "fixtureId", skip_serializing_if = "Option::is_none", default)]
     fixture_id: Option<String>,
+    /// `"live"` or `"cache"`. Absent in reports written before the field
+    /// existed (and when the source is not recorded), which is not a claim
+    /// that the result was live.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    source: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -78,6 +100,13 @@ struct JsonSkip {
     fixture_id: String,
     surface: String,
     reason: String,
+    /// The stable machine-readable skip code (CF-01). Always written by
+    /// this version. It is absent only in reports written before the field
+    /// existed, and an unrecognized spelling reads back as
+    /// [`SkipCode::Unknown`] — like `results[].source`, a value this build
+    /// does not know is tolerated rather than rejected.
+    #[serde(default)]
+    code: String,
 }
 
 /// Aggregate counts over `results` (never over `skipped`, which is
@@ -141,6 +170,7 @@ impl From<&ReportInput> for JsonReport {
             network: input.network.as_ref().map(|n| JsonNetwork {
                 name: n.name.to_string(),
                 observed_protocol: n.observed_protocol.map(|p| p.0),
+                error: n.error.clone(),
             }),
             status: input.overall_status().as_str().to_string(),
             counts: JsonCounts::from_results(&input.results, input.skipped.len()),
@@ -156,6 +186,10 @@ impl From<&ReportInput> for JsonReport {
                     details: r.details.clone(),
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id.clone(),
+                    source: match r.source {
+                        ResultSource::Unknown => None,
+                        known => Some(known.as_str().to_string()),
+                    },
                 })
                 .collect(),
             skipped: input
@@ -165,6 +199,7 @@ impl From<&ReportInput> for JsonReport {
                     fixture_id: s.fixture_id.clone(),
                     surface: s.surface.to_string(),
                     reason: s.reason.clone(),
+                    code: s.code.as_str().to_string(),
                 })
                 .collect(),
             git: JsonGit {
@@ -172,20 +207,59 @@ impl From<&ReportInput> for JsonReport {
                 branch: input.git.branch.clone(),
                 is_dirty: input.git.is_dirty,
             },
+            verbose: input.verbose,
+            run: input.run.as_ref().map(|run| JsonRun {
+                tool_build_commit: run.tool_build_commit.clone(),
+            }),
         }
     }
 }
 
+/// Why a rendered JSON report could not be read back into a
+/// [`ReportInput`], as returned by [`JsonReporter::parse`].
+///
+/// The variants separate input this version cannot even decode
+/// ([`JsonReportError::Parse`]) from input that is well-formed but was
+/// produced by a different version of the tool
+/// ([`JsonReportError::UnsupportedSchemaVersion`]), carries an enum
+/// spelling introduced after this version was built
+/// ([`JsonReportError::UnknownSurface`], [`JsonReportError::UnknownStatus`]),
+/// or repeats a `(surface, id)` result identity that CF-01 section 4
+/// requires to be unique ([`JsonReportError::DuplicateResultIdentity`]).
 #[derive(Debug, thiserror::Error)]
 pub enum JsonReportError {
+    /// The text is not valid JSON, or it does not match the report
+    /// schema: a field is missing, has the wrong type, or is otherwise
+    /// rejected by the deserializer.
     #[error("failed to parse JSON report: {0}")]
     Parse(#[from] serde_json::Error),
+
+    /// The report was written against a schema version other than
+    /// [`SCHEMA_VERSION`]: `found` is the version in the document,
+    /// `expected` is the one this build understands.
     #[error("unsupported schema version (found {found}, expected {expected})")]
     UnsupportedSchemaVersion { found: u32, expected: u32 },
+
+    /// A result or skipped entry names a surface this version does not
+    /// know; the offending spelling is carried for the error message.
     #[error("unrecognized surface {0:?} in JSON report")]
     UnknownSurface(String),
+
+    /// A result entry names a status this version does not know; the
+    /// offending spelling is carried for the error message.
     #[error("unrecognized status {0:?} in JSON report")]
     UnknownStatus(String),
+
+    /// Two entries in `results` share the same `(surface, id)` identity.
+    ///
+    /// CF-01 section 4 requires every check result to be identified by its
+    /// surface and fixture id; a report that repeats one is corrupted or
+    /// manipulated, so it is rejected outright rather than silently
+    /// truncating or merging the conflicting entries. `surface` is the
+    /// spelling as it appears in the document and `id` is the duplicated
+    /// `testId`.
+    #[error("duplicate result identity in JSON report: surface {surface:?}, id {id:?}")]
+    DuplicateResultIdentity { surface: String, id: String },
 }
 
 fn parse_surface(value: &str) -> Result<Surface, JsonReportError> {
@@ -205,6 +279,16 @@ fn parse_status(value: &str) -> Result<Status, JsonReportError> {
         "skipped" => Ok(Status::Skipped),
         "error" => Ok(Status::Error),
         other => Err(JsonReportError::UnknownStatus(other.to_string())),
+    }
+}
+
+/// An unrecognized spelling is kept as "not recorded" rather than rejected:
+/// `source` is an open string field, so a later version may add values.
+fn parse_source(value: Option<&str>) -> ResultSource {
+    match value {
+        Some("live") => ResultSource::Live,
+        Some("cache") => ResultSource::Cache,
+        _ => ResultSource::Unknown,
     }
 }
 
@@ -231,10 +315,21 @@ impl TryFrom<JsonReport> for ReportInput {
     type Error = JsonReportError;
 
     fn try_from(report: JsonReport) -> Result<Self, Self::Error> {
+        // CF-01 section 4: each (surface, id) identity may appear at most
+        // once among the check results. The spelling is tracked before any
+        // conversion so a duplicate is rejected with the identity as it
+        // appears in the document.
+        let mut seen_identities = std::collections::HashSet::new();
         let results = report
             .results
             .into_iter()
             .map(|r| {
+                if !seen_identities.insert((r.surface.clone(), r.test_id.clone())) {
+                    return Err(JsonReportError::DuplicateResultIdentity {
+                        surface: r.surface,
+                        id: r.test_id,
+                    });
+                }
                 Ok(CompatibilityResult {
                     test_id: r.test_id,
                     protocol: ProtocolVersion(r.protocol),
@@ -244,6 +339,7 @@ impl TryFrom<JsonReport> for ReportInput {
                     details: r.details,
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id,
+                    source: parse_source(r.source.as_deref()),
                 })
             })
             .collect::<Result<Vec<_>, JsonReportError>>()?;
@@ -256,6 +352,10 @@ impl TryFrom<JsonReport> for ReportInput {
                     fixture_id: s.fixture_id,
                     surface: parse_surface(&s.surface)?,
                     reason: s.reason,
+                    // An absent or unrecognized code (a report from a newer
+                    // build, or one written before the field existed) reads
+                    // back as the safe fallback, never as an empty string.
+                    code: SkipCode::parse(&s.code),
                 })
             })
             .collect::<Result<Vec<_>, JsonReportError>>()?;
@@ -282,16 +382,24 @@ impl TryFrom<JsonReport> for ReportInput {
             network: report.network.map(|n| NetworkSummary {
                 name: parse_network_name(&n.name),
                 observed_protocol: n.observed_protocol.map(ProtocolVersion),
+                error: n.error,
             }),
             results,
             skipped,
+            // A stored JSON report carries no verification evidence:
+            // that lives with the fixture pack, not with a run (CF-04
+            // section 2).
+            verification: Vec::new(),
             decision,
             git: GitContext {
                 commit: report.git.commit,
                 branch: report.git.branch,
                 is_dirty: report.git.is_dirty,
             },
-            verbose: false,
+            verbose: report.verbose,
+            run: report.run.map(|run| RunSummary {
+                tool_build_commit: run.tool_build_commit,
+            }),
         })
     }
 }
@@ -346,7 +454,9 @@ mod tests {
             network: Some(NetworkSummary {
                 name: NetworkName::Testnet,
                 observed_protocol: Some(ProtocolVersion(28)),
+                error: None,
             }),
+            verification: Vec::new(),
             results: vec![CompatibilityResult {
                 test_id: "p28-xdr-1".into(),
                 protocol: ProtocolVersion(28),
@@ -356,16 +466,91 @@ mod tests {
                 details: None,
                 duration_ms: 3,
                 fixture_id: Some("p28-xdr-1".into()),
+                source: canary_core::ResultSource::Live,
             }],
             skipped: vec![SkipSummary {
                 fixture_id: "p28-soroban-1".into(),
                 surface: Surface::Soroban,
                 reason: "requires a capability not declared by this project".into(),
+                code: SkipCode::MissingCapability,
             }],
             decision: PolicyDecision::Pass,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         }
+    }
+
+    fn rendered_value(input: &ReportInput) -> serde_json::Value {
+        serde_json::from_str(&JsonReporter::render(input)).expect("rendered JSON parses")
+    }
+
+    const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    #[test]
+    fn run_is_absent_when_the_build_commit_was_not_recorded() {
+        let value = rendered_value(&input());
+        assert!(value.get("run").is_none());
+    }
+
+    #[test]
+    fn run_records_the_tool_build_commit() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: Some(COMMIT.to_string()),
+        });
+        let value = rendered_value(&report);
+        assert_eq!(value["run"]["toolBuildCommit"], COMMIT);
+        // The additive field must not disturb the fields CF-01 already fixes.
+        assert_eq!(value["schemaVersion"], 1);
+        assert_eq!(value["toolVersion"], "0.1.0");
+    }
+
+    #[test]
+    fn run_records_an_unknown_commit_as_an_explicit_null() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: None,
+        });
+        let value = rendered_value(&report);
+        let run = value["run"].as_object().expect("run is an object");
+        assert!(run.contains_key("toolBuildCommit"));
+        assert!(run["toolBuildCommit"].is_null());
+        assert!(!JsonReporter::render(&report).contains("unknown"));
+    }
+
+    #[test]
+    fn run_survives_a_render_and_parse_round_trip() {
+        let mut report = input();
+        report.run = Some(RunSummary {
+            tool_build_commit: Some(COMMIT.to_string()),
+        });
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(
+            parsed.run,
+            Some(RunSummary {
+                tool_build_commit: Some(COMMIT.to_string())
+            })
+        );
+
+        report.run = Some(RunSummary::default());
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(parsed.run, Some(RunSummary::default()));
+    }
+
+    #[test]
+    fn a_report_without_run_parses_as_not_recorded() {
+        // A report written before the field existed has no `run` at all.
+        let parsed = JsonReporter::parse(&JsonReporter::render(&input())).unwrap();
+        assert_eq!(parsed.run, None);
+    }
+
+    #[test]
+    fn a_run_object_without_the_commit_key_parses_as_unknown() {
+        let mut value = rendered_value(&input());
+        value["run"] = serde_json::json!({});
+        let parsed = JsonReporter::parse(&value.to_string()).unwrap();
+        assert_eq!(parsed.run, Some(RunSummary::default()));
     }
 
     #[test]
@@ -433,6 +618,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-rpc-1".into()),
+            source: canary_core::ResultSource::Live,
         });
         mixed.results.push(CompatibilityResult {
             test_id: "p28-soroban-1".into(),
@@ -443,6 +629,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-soroban-1".into()),
+            source: canary_core::ResultSource::Live,
         });
 
         let json_text = JsonReporter::render(&mixed);
@@ -514,6 +701,18 @@ mod tests {
     }
 
     #[test]
+    fn parsing_preserves_verbose_flag() {
+        let mut original = input();
+        original.verbose = true;
+        let json_text = JsonReporter::render(&original);
+        let parsed = JsonReporter::parse(&json_text).expect("parses");
+        assert!(parsed.verbose);
+
+        let value: serde_json::Value = serde_json::from_str(&json_text).unwrap();
+        assert_eq!(value["verbose"], true);
+    }
+
+    #[test]
     fn rejects_malformed_json() {
         let err = JsonReporter::parse("not json").unwrap_err();
         assert!(matches!(err, JsonReportError::Parse(_)));
@@ -553,5 +752,119 @@ mod tests {
             }
             _ => panic!("Expected UnsupportedSchemaVersion error, got {:?}", err),
         }
+    }
+
+    #[test]
+    fn a_live_and_a_cached_result_render_their_source() {
+        let mut report = input();
+        report.results.push(CompatibilityResult {
+            test_id: "p28-xdr-2".into(),
+            fixture_id: Some("p28-xdr-2".into()),
+            source: ResultSource::Cache,
+            ..report.results[0].clone()
+        });
+        let value: serde_json::Value =
+            serde_json::from_str(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(value["results"][0]["source"], "live");
+        assert_eq!(value["results"][1]["source"], "cache");
+    }
+
+    #[test]
+    fn the_source_survives_a_render_and_parse_round_trip() {
+        let mut report = input();
+        report.results[0].source = ResultSource::Cache;
+        let parsed = JsonReporter::parse(&JsonReporter::render(&report)).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Cache);
+        assert_eq!(parsed.cached_count(), 1);
+    }
+
+    #[test]
+    fn a_report_without_source_is_accepted_and_not_assumed_live() {
+        // Every report written by 0.1.1 looks like this.
+        let mut report = input();
+        report.results[0].source = ResultSource::Unknown;
+        let text = JsonReporter::render(&report);
+        assert!(!text.contains("\"source\""), "unknown is omitted: {text}");
+
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Unknown);
+        assert_eq!(parsed.cached_count(), 0);
+    }
+
+    #[test]
+    fn an_unrecognized_source_value_is_tolerated_as_not_recorded() {
+        let text = JsonReporter::render(&input())
+            .replace("\"source\": \"live\"", "\"source\": \"from-the-future\"");
+        assert!(text.contains("from-the-future"));
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.results[0].source, ResultSource::Unknown);
+    }
+
+    #[test]
+    fn every_skipped_entry_carries_a_standard_code_string() {
+        let value = rendered_value(&input());
+        let entry = &value["skipped"][0];
+        assert_eq!(entry["code"], "MISSING_CAPABILITY");
+        // The free-form prose is still there beside the code.
+        assert!(entry["reason"].is_string());
+
+        // No skipped entry may ever omit `code` or emit an empty string.
+        let mut report = input();
+        report.skipped.push(SkipSummary {
+            fixture_id: "p27-xdr-1".into(),
+            surface: Surface::Xdr,
+            reason: "fixture targets protocol 27, this run targets protocol 28".into(),
+            code: SkipCode::UnsupportedProtocol,
+        });
+        let value = rendered_value(&report);
+        let entries = value["skipped"].as_array().expect("skipped is an array");
+        assert_eq!(entries.len(), 2);
+        for entry in entries {
+            let code = entry["code"].as_str().expect("code is a string");
+            assert!(!code.is_empty(), "code must never be empty: {entry}");
+        }
+        assert_eq!(entries[1]["code"], "UNSUPPORTED_PROTOCOL");
+    }
+
+    #[test]
+    fn the_skip_code_survives_a_render_and_parse_round_trip() {
+        let original = input();
+        let parsed = JsonReporter::parse(&JsonReporter::render(&original)).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::MissingCapability);
+        assert_eq!(parsed.skipped, original.skipped);
+    }
+
+    #[test]
+    fn an_unrecognized_skip_code_falls_back_to_unknown_rather_than_empty() {
+        // A code written by a newer build: tolerated, read as unknown.
+        let text =
+            JsonReporter::render(&input()).replace("\"MISSING_CAPABILITY\"", "\"FROM_THE_FUTURE\"");
+        assert!(text.contains("FROM_THE_FUTURE"));
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
+
+        // An empty string is equally unusable, so it must fall back too —
+        // never surface as an empty `code` to a consumer.
+        let text = JsonReporter::render(&input()).replace("\"MISSING_CAPABILITY\"", "\"\"");
+        let parsed = JsonReporter::parse(&text).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
+
+        // And re-rendering the fallback writes a real, non-empty code.
+        let rerendered = rendered_value(&parsed);
+        assert_eq!(rerendered["skipped"][0]["code"], "UNKNOWN");
+    }
+
+    #[test]
+    fn a_report_written_before_the_code_field_parses_as_unknown() {
+        let mut value = rendered_value(&input());
+        let entry = &mut value["skipped"][0];
+        entry
+            .as_object_mut()
+            .expect("skip is an object")
+            .remove("code");
+        assert!(entry.get("code").is_none());
+
+        let parsed = JsonReporter::parse(&value.to_string()).unwrap();
+        assert_eq!(parsed.skipped[0].code, SkipCode::Unknown);
     }
 }

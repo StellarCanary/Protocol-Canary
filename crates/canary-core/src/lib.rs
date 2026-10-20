@@ -7,19 +7,23 @@
 //! dependency on any other crate in this workspace.
 
 pub mod cache;
+pub mod digest;
 pub mod engine;
 pub mod errors;
 pub mod model;
 pub mod policy;
+pub mod report;
 
-pub use cache::{CacheKey, CacheStore};
+pub use cache::{CacheKey, CachePolicy, CacheStore};
+pub use digest::sha256_hex;
 pub use engine::ExecutionContext;
 pub use errors::{CanaryError, ErrorCategory, ExitCode};
 pub use model::{
     Capability, CompatibilityResult, FixtureMetadata, FixtureStore, GitContext, NetworkContext,
-    NetworkName, ProjectContext, ProjectType, ProtocolPack, ProtocolVersion, RunOptions, Status,
-    Surface,
+    NetworkName, ProjectContext, ProjectType, ProtocolPack, ProtocolVersion, ResultSource,
+    RunOptions, Status, Surface,
 };
 pub use policy::{
     exit_code_for_run, DefaultPolicyEvaluator, Policy, PolicyDecision, PolicyEvaluator,
 };
+pub use report::SkipCode;

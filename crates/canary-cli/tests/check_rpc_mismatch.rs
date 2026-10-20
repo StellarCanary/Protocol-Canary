@@ -62,7 +62,14 @@ fn a_protocol_mismatch_between_the_target_and_observed_protocol_is_surfaced_to_t
     let rpc_url = server.uri();
     let output = run_in(
         &dir.path,
-        &["check", "--rpc-url", &rpc_url, "--network", "testnet"],
+        &[
+            "check",
+            "--allow-empty",
+            "--rpc-url",
+            &rpc_url,
+            "--network",
+            "testnet",
+        ],
     );
 
     let err = stderr(&output);
@@ -115,12 +122,22 @@ fn a_matching_network_and_protocol_produce_no_mismatch_warning() {
     let rpc_url = server.uri();
     let output = run_in(
         &dir.path,
-        &["check", "--rpc-url", &rpc_url, "--network", "testnet"],
+        &[
+            "check",
+            "--allow-empty",
+            "--rpc-url",
+            &rpc_url,
+            "--network",
+            "testnet",
+        ],
     );
 
     assert_eq!(output.status.code(), Some(0));
     let err = stderr(&output);
-    assert!(!err.contains("warning:"), "stderr: {err}");
+    assert!(
+        !err.contains("RPC endpoint reports protocol"),
+        "stderr: {err}"
+    );
     let text = stdout(&output);
     assert!(text.contains("Network: testnet (observed protocol 28)"));
 }

@@ -1,4 +1,13 @@
 //! Summarizing a set of [`CompatibilityResult`]s.
+//!
+//! This module is public API intended for **external consumers of
+//! `canary-runner`** — for example a CI integration or dashboard that runs
+//! the scheduler itself and wants aggregate counts without depending on
+//! the `canary-cli` binary. The CLI's own reporters deliberately do not
+//! use it: `canary-report` computes its JSON counts independently so that
+//! it never depends on this crate (see the comment on `JsonCounts` in
+//! `canary-report/src/json.rs`). The two count structures are kept in sync
+//! by hand.
 
 use canary_core::{CompatibilityResult, Status};
 
@@ -6,6 +15,16 @@ use canary_core::{CompatibilityResult, Status};
 ///
 /// Skipped fixtures are never included here: they are neither pass nor
 /// fail and are tracked separately by the planner.
+///
+/// # Examples
+///
+/// ```
+/// use canary_runner::summarize;
+///
+/// let summary = summarize(&[]);
+/// assert_eq!(summary.passed_fraction(), (0, 0));
+/// assert!(!summary.has_required_failure());
+/// ```
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ResultSummary {
     pub total: usize,
@@ -24,6 +43,11 @@ impl ResultSummary {
 
     pub fn has_required_failure(&self) -> bool {
         self.failed > 0 || self.errors > 0
+    }
+
+    /// Whether at least one executed fixture produced a warning.
+    pub fn has_warnings(&self) -> bool {
+        self.warnings > 0
     }
 }
 
@@ -61,6 +85,7 @@ impl ResultSummary {
 ///         details: None,
 ///         duration_ms: 5,
 ///         fixture_id: None,
+///         source: canary_core::ResultSource::Live,
 ///     },
 ///     CompatibilityResult {
 ///         test_id: "rpc-01".into(),
@@ -71,6 +96,7 @@ impl ResultSummary {
 ///         details: None,
 ///         duration_ms: 12,
 ///         fixture_id: None,
+///         source: canary_core::ResultSource::Live,
 ///     },
 /// ];
 ///
@@ -115,6 +141,7 @@ mod tests {
             details: None,
             duration_ms: 0,
             fixture_id: None,
+            source: canary_core::ResultSource::Live,
         }
     }
 
@@ -133,11 +160,13 @@ mod tests {
         assert_eq!(summary.failed, 1);
         assert_eq!(summary.warnings, 1);
         assert_eq!(summary.errors, 1);
+        assert!(summary.has_warnings());
     }
 
     #[test]
     fn empty_results_are_not_a_required_failure() {
         assert!(!summarize(&[]).has_required_failure());
+        assert!(!summarize(&[]).has_warnings());
     }
 
     #[test]

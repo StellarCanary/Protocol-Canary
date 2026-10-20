@@ -6,10 +6,6 @@ contributor) picks them up.
 
 ## Near term
 
-- **Wire `CacheStore` into `check`.** The local, file-backed result cache
-  in `canary-core` is implemented and unit-tested but not yet used by
-  `check`'s execution path; every run currently calls RPC/Soroban fresh.
-  Useful once fixture counts or CI frequency make rate limits a concern.
 - **Additional Protocol 28 fixtures.** CAP-0086 sparse-map host functions
   have no fixture yet — the currently published Soroban SDK surface does
   not expose the host functionality the intended fixture would need. See

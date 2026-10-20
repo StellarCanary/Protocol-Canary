@@ -19,21 +19,6 @@ fn xdr_fixture(id: &str, kind: &str, value_base64: &str) -> String {
 }
 
 #[test]
-fn an_offline_run_with_no_fixtures_passes_trivially() {
-    let dir = TempProject::new("check-empty");
-    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
-
-    let output = run_in(&dir.path, &["check"]);
-    assert!(output.status.success());
-    assert_eq!(output.status.code(), Some(0));
-    let text = stdout(&output);
-    assert!(text.contains("0/0 applicable checks passed."));
-    assert!(text.contains("Status: PASS"));
-    // An offline (xdr-only) run must never mention the network.
-    assert!(!text.contains("Network:"));
-}
-
-#[test]
 fn a_passing_xdr_fixture_exits_zero() {
     let dir = TempProject::new("check-xdr-pass");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
@@ -121,7 +106,12 @@ fn a_protocol_mismatched_fixture_is_skipped_not_run() {
         ),
     );
 
-    let output = run_in(&dir.path, &["check", "--verbose"]);
+    // The only fixture targets another protocol, so nothing applies: that is
+    // an empty run, which is refused unless explicitly allowed.
+    let refused = run_in(&dir.path, &["check", "--verbose"]);
+    assert_eq!(refused.status.code(), Some(2));
+
+    let output = run_in(&dir.path, &["check", "--verbose", "--allow-empty"]);
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
     assert!(text.contains("0/0 applicable checks passed."));
@@ -132,6 +122,11 @@ fn a_protocol_mismatched_fixture_is_skipped_not_run() {
 fn json_output_is_valid_json_with_the_expected_top_level_fields() {
     let dir = TempProject::new("check-json");
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
 
     let output = run_in(&dir.path, &["check", "--json"]);
     assert_eq!(output.status.code(), Some(0));
@@ -283,6 +278,217 @@ fn quiet_with_json_still_prints_the_full_json_report() {
     assert_eq!(value["results"][0]["status"], "pass");
 }
 
+// ---------------------------------------------------------------------------
+// `check --offline`: local XDR checks run, network fixtures are skipped,
+// and no socket is ever opened.
+// ---------------------------------------------------------------------------
+
+const LIVE_SURFACES_CONFIG: &str = r#"
+version = 1
+protocol = 28
+
+[tests]
+xdr = true
+rpc = true
+soroban = true
+"#;
+
+fn rpc_fixture(id: &str) -> String {
+    format!(
+        "id = \"{id}\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"test\"\ndescription = \"test\"\nmethod = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n"
+    )
+}
+
+/// A well-formed Soroban fixture (the strkeys are the reserved Testnet
+/// Stellar Asset Contract address and a null account, borrowed from the
+/// repository's own `tests/fixtures/protocol-28` pack).
+fn soroban_fixture(id: &str) -> String {
+    format!(
+        "id = \"{id}\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"test\"\ndescription = \"test\"\nsource_account = \"GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF\"\ncontract_id = \"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC\"\nfunction = \"name\"\nsequence_number = 1\n\n[expect]\nkind = \"simulation-success\"\n"
+    )
+}
+
+/// The core promise of `--offline`: the XDR fixture executes, the RPC and
+/// Soroban fixtures are reported as skipped, and the endpoint — pointed at
+/// a port that refuses connections instantly — is never contacted. If any
+/// socket were opened the run would end in an execution error (exit 3),
+/// not a pass.
+#[test]
+fn offline_check_runs_xdr_and_skips_rpc_and_soroban_with_zero_network_calls() {
+    let dir = TempProject::new("check-offline-flag");
+    dir.write(".stellar-canary.toml", LIVE_SURFACES_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+    dir.write("fixtures/p28-rpc-1.toml", &rpc_fixture("p28-rpc-1"));
+    dir.write(
+        "fixtures/p28-soroban-1.toml",
+        &soroban_fixture("p28-soroban-1"),
+    );
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--offline",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an offline run must pass without touching the network: {}",
+        stderr(&output)
+    );
+
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("valid json");
+    assert_eq!(report["status"], "pass");
+    assert_eq!(report["counts"]["total"], 1, "only the XDR fixture runs");
+    assert_eq!(report["counts"]["passed"], 1);
+    assert_eq!(report["counts"]["skipped"], 2);
+    assert_eq!(report["results"][0]["testId"], "p28-xdr-1");
+    assert_eq!(report["results"][0]["surface"], "xdr");
+
+    let skipped: Vec<&serde_json::Value> = report["skipped"]
+        .as_array()
+        .expect("skipped array")
+        .iter()
+        .collect();
+    assert_eq!(skipped.len(), 2);
+    for entry in skipped {
+        assert!(
+            entry["reason"].as_str().unwrap_or("").contains("--offline"),
+            "skip reason must name the flag: {entry}"
+        );
+    }
+}
+
+/// Control for the test above: without `--offline`, the same run against
+/// the same dead endpoint fails with an execution error — proving it is
+/// the flag, not the environment, that keeps the run socket-free.
+#[test]
+fn the_same_run_without_the_flag_does_contact_the_network_and_errors() {
+    let dir = TempProject::new("check-offline-control");
+    dir.write(
+        ".stellar-canary.toml",
+        "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = true\nsoroban = false\n",
+    );
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+    dir.write("fixtures/p28-rpc-1.toml", &rpc_fixture("p28-rpc-1"));
+
+    let output = run_in(
+        &dir.path,
+        &["check", "--rpc-url", "http://127.0.0.1:1", "--json"],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "without --offline the unreachable endpoint must surface as an execution error"
+    );
+}
+
+/// The issue's negative case: a pack with only live RPC fixtures, run with
+/// `--offline`, marks every fixture skipped without an error. The empty-run
+/// invariant still applies (nothing executed is not evidence of
+/// compatibility), so `--allow-empty` is required — and then the run
+/// exits 0 with all fixtures skipped.
+#[test]
+fn offline_against_a_pack_with_only_live_fixtures_marks_all_skipped_without_error() {
+    let dir = TempProject::new("check-offline-rpc-only");
+    dir.write(
+        ".stellar-canary.toml",
+        "version = 1\nprotocol = 28\n\n[tests]\nxdr = false\nrpc = true\nsoroban = true\n",
+    );
+    dir.write("fixtures/p28-rpc-1.toml", &rpc_fixture("p28-rpc-1"));
+    dir.write(
+        "fixtures/p28-soroban-1.toml",
+        &soroban_fixture("p28-soroban-1"),
+    );
+
+    // Without --allow-empty: refused as an empty run (exit 2), and the
+    // diagnostic names --offline as the reason nothing applies.
+    let refused = run_in(&dir.path, &["check", "--offline"]);
+    assert_eq!(refused.status.code(), Some(2));
+    let err = stderr(&refused);
+    assert!(
+        err.contains("2 require network access and were skipped because --offline was given"),
+        "stderr: {err}"
+    );
+
+    // With --allow-empty: every fixture is marked skipped, no error.
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--offline",
+            "--allow-empty",
+            "--rpc-url",
+            "http://127.0.0.1:1",
+            "--json",
+        ],
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "all-skipped must not be an error: {}",
+        stderr(&output)
+    );
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("valid json");
+    assert_eq!(report["status"], "pass");
+    assert_eq!(report["counts"]["total"], 0);
+    assert_eq!(report["counts"]["skipped"], 2);
+    assert_eq!(report["results"].as_array().unwrap().len(), 0);
+}
+
+/// `--offline` with an XDR-only configuration is behaviorally identical to
+/// a normal run: the flag changes nothing when nothing would have touched
+/// the network anyway.
+#[test]
+fn offline_flag_is_transparent_for_an_xdr_only_pack() {
+    let dir = TempProject::new("check-offline-xdr-only");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let plain = run_in(&dir.path, &["check"]);
+    let offline = run_in(&dir.path, &["check", "--offline"]);
+    assert_eq!(plain.status.code(), Some(0));
+    assert_eq!(offline.status.code(), Some(0), "{}", stderr(&offline));
+    let text = stdout(&offline);
+    assert!(text.contains("1/1 PASS"), "{text}");
+}
+
+/// `check --format junit` wires the JUnit reporter into the check path
+/// end-to-end (the reporter itself is unit-tested in canary-report).
+#[test]
+fn junit_format_outputs_junit_xml_for_check() {
+    let dir = TempProject::new("check-junit");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-1.toml",
+        &xdr_fixture("p28-xdr-1", "decode-success", VALID_STELLAR_VALUE_BASE64),
+    );
+
+    let output = run_in(&dir.path, &["check", "--format", "junit"]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>"),
+        "junit output must start with the XML declaration, got: {text}"
+    );
+    assert!(text.contains("<testsuites name=\"stellar-canary\""));
+    assert!(text.contains("name=\"p28-xdr-1\""));
+    assert!(text.trim_end().ends_with("</testsuites>"));
+}
+
 #[test]
 fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
     let dir = TempProject::new("check-protocol-zero");
@@ -297,4 +503,23 @@ fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
     let err = stderr(&output);
     assert!(err.contains("configuration error"), "stderr: {err}");
     assert!(err.contains("--protocol"), "stderr: {err}");
+    // Negative case for the `Hint:` line: an error with no advice to give
+    // prints exactly one clean error line, with no hint boilerplate.
+    assert!(!err.contains("Hint:"), "stderr: {err}");
+}
+
+#[test]
+fn a_missing_config_file_is_reported_with_an_actionable_hint() {
+    let dir = TempProject::new("check-missing-config-hint");
+
+    let output = run_in(&dir.path, &["check", "--config", "no-such-config.toml"]);
+    assert_eq!(output.status.code(), Some(2));
+    let err = stderr(&output);
+    assert!(
+        err.contains("failed to read configuration file") && err.contains("no-such-config.toml"),
+        "stderr: {err}"
+    );
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains(".stellar-canary.toml"), "stderr: {err}");
+    assert!(err.contains("--config"), "stderr: {err}");
 }

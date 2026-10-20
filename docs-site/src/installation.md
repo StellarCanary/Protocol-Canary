@@ -1,8 +1,6 @@
 # Installation
 
-Protocol Canary does not yet publish prebuilt binaries or checksums (see
-[Releases](./releases.md)). The documented install path is `cargo install`
-against a pinned release tag.
+Prebuilt binaries and checksum manifests for Linux x86_64 are published on GitHub [Releases](./releases.md). Checksums are verified via `sha256sum -c SHA256SUMS`. Alternatively, install the current release from source using `cargo install` against the pinned release tag.
 
 ## Prerequisites
 
@@ -21,10 +19,10 @@ what the Rust toolchain itself supports.
 ## Install the current release
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
 ```
 
-- `--tag v0.1.1` pins the exact, currently verified release — never
+- `--tag v0.2.0` pins the exact, currently verified release — never
   `main`, and never an unpinned "latest".
 - `--locked` uses the exact dependency versions in the repository's own
   committed `Cargo.lock`, rather than whatever the latest compatible
@@ -37,7 +35,7 @@ stellar-canary version
 ```
 
 ```text
-stellar-canary 0.1.1
+stellar-canary 0.2.0
 ```
 
 ## Alternative: build from a local checkout

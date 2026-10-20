@@ -33,7 +33,7 @@ configured dependencies and RPC endpoint.
 ## Quick example
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
 stellar-canary check --fixtures-dir <checkout-of-ProtocolCanary-Fixtures>/protocol-28 --protocol 28
 ```
 
@@ -68,7 +68,7 @@ This is a real run's output (not illustrative text) — see
 
 | | |
 |---|---|
-| CLI release | `Protocol-Canary` [`v0.1.1`](./releases.md) |
+| CLI release | `Protocol-Canary` [`v0.2.0`](./releases.md) |
 | GitHub Action | `ProtocolCanary-Action` [`v1`](./github-action.md) (currently resolves to `v0.1.1`) |
 | Fixture pack | [`ProtocolCanary-Fixtures`](https://github.com/StellarCanary/ProtocolCanary-Fixtures) `protocol-28/` — 5 currently implemented checks |
 | Protocol coverage | [Protocol 28](./protocol-28.md) only. CAP-0086 is a documented gap, not silently skipped. |

@@ -106,6 +106,7 @@ mod tests {
             details: None,
             duration_ms: 0,
             fixture_id: None,
+            source: crate::model::ResultSource::Live,
         }
     }
 

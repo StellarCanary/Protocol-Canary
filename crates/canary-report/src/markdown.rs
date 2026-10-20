@@ -68,6 +68,10 @@ impl MarkdownReporter {
             "**Result: {}**",
             input.overall_status().as_str().to_uppercase()
         );
+        if let Some(notice) = input.cache_notice() {
+            let _ = writeln!(out);
+            let _ = writeln!(out, "_{notice}_");
+        }
 
         let failures: Vec<_> = input
             .results
@@ -91,6 +95,11 @@ impl MarkdownReporter {
         if !input.skipped.is_empty() {
             let _ = writeln!(out);
             let _ = writeln!(out, "Skipped {} fixture(s).", input.skipped.len());
+            if input.verbose {
+                for skip in &input.skipped {
+                    let _ = writeln!(out, "- **{}**: {}", skip.fixture_id, skip.reason);
+                }
+            }
         }
 
         out
@@ -115,6 +124,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some(id.into()),
+            source: canary_core::ResultSource::Live,
         }
     }
 
@@ -129,9 +139,11 @@ mod tests {
             network: None,
             results,
             skipped: vec![],
+            verification: vec![],
             decision,
             git: GitContext::default(),
             verbose: false,
+            run: None,
         }
     }
 
@@ -196,9 +208,27 @@ mod tests {
             fixture_id: "p28-soroban-1".into(),
             surface: Surface::Soroban,
             reason: "requires a capability not declared by this project".into(),
+            code: canary_core::SkipCode::MissingCapability,
         });
         let text = MarkdownReporter::render(&input);
         assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(!text.contains("requires a capability"));
+    }
+
+    #[test]
+    fn mentions_skipped_fixture_reasons_when_verbose() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.verbose = true;
+        input.skipped.push(SkipSummary {
+            fixture_id: "p28-soroban-1".into(),
+            surface: Surface::Soroban,
+            reason: "requires a capability not declared by this project".into(),
+            code: canary_core::SkipCode::MissingCapability,
+        });
+        let text = MarkdownReporter::render(&input);
+        assert!(text.contains("Skipped 1 fixture(s)."));
+        assert!(text
+            .contains("- **p28-soroban-1**: requires a capability not declared by this project"));
     }
 
     /// The mirror of the test above: `render` guards the line with

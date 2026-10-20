@@ -44,7 +44,7 @@ Download a prebuilt binary and its checksum from the [Releases](https://github.c
 Alternatively, install a released version from source:
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
 stellar-canary check
 ```
 
@@ -117,6 +117,10 @@ soroban = true
 warnings_are_failures = false
 ```
 
+From `0.2.0` an unknown section or key is an error (exit code `2`, naming the
+field), not ignored. Before, a misspelling such as `[test]` for `[tests]` left
+every surface enabled without a word.
+
 ## Protocol 28
 
 The first compatibility pack targets Stellar Protocol 28: a real CAP-0083
@@ -167,6 +171,7 @@ supplied via `--fixtures-dir`.
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
 Only combinations that have actually been run together are listed here.
@@ -207,17 +212,19 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
-The local result cache (`canary_core::CacheStore`) exists and is tested,
-but is not yet wired into `check`'s execution path — every run currently
-calls RPC/Soroban fresh rather than reusing a prior result. See
-[CHANGELOG.md](CHANGELOG.md) for the full known-gaps list.
+From `0.2.0`, `check` reuses results from a local cache (`canary_core::CacheStore`,
+written to `.stellar-canary-cache` in the project root). The cache key covers
+the fixture's contents, the network, the tool version and the project's
+detected shape, so editing a fixture cannot return an old result. Only offline
+XDR results are replayed by default; RPC and Soroban results are replayed only
+with `--live-cache-ttl <SECONDS>`, and any replayed result is marked
+`"source": "cache"` in the JSON report. `--no-cache` skips the cache. See
+[`docs/contracts/cf-01-report.md`](docs/contracts/cf-01-report.md#6-cached-results).
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for planned work. Highlights: Protocol 29
-support once its CAPs are finalized upstream, wiring the existing
-`CacheStore` into `check`'s execution path, and additional RPC/Soroban
-compatibility assertions.
+support once evidence-backed fixtures exist, and additional RPC/Soroban compatibility assertions.
 
 ## Workspace layout
 

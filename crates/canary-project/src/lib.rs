@@ -2,11 +2,30 @@
 
 pub mod capabilities;
 pub mod detector;
+pub mod fingerprint;
 pub mod manifest;
+pub mod workspace;
 
-pub use capabilities::{detect_capabilities, DetectionSignals};
-pub use detector::{detect, resolve_project_type};
-pub use manifest::{read_cargo_manifest, read_package_json, ProjectManifest};
+pub use capabilities::{
+    detect_capabilities, DetectionSignals, GO_STELLAR_SDK_DEPENDENCY, RPC_CLIENT_DEPENDENCIES,
+    SOROBAN_DEPENDENCIES, STELLAR_SDK_DEPENDENCIES,
+};
+pub use detector::{
+    detect, detect_details, find_wasm_artifacts, resolve_project_type, CapabilityEvidence,
+    DetailedDetection, DetectionEvidence,
+};
+pub use fingerprint::{
+    compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
+};
+pub use manifest::{
+    parse_cargo_dependencies, parse_go_manifest, parse_go_mod, parse_go_mod_dependencies,
+    parse_package_json_dependencies, read_cargo_manifest, read_go_mod, read_package_json,
+    GoModError, ManifestDep, ProjectManifest,
+};
+pub use workspace::{
+    scan_cargo_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode, WorkspaceMember,
+    WorkspaceScan, MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
+};
 
 /// Test-only temp-directory helper shared by this crate's unit tests, so no
 /// crate needs a `tempfile` dev-dependency for simple filesystem fixtures.

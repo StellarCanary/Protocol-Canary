@@ -1,11 +1,19 @@
 //! The RPC compatibility runner: calls a Stellar RPC method and checks its
 //! response shape against a fixture's declared field assertions.
 //!
+//! Assertions are evaluated against the JSON `result` object exactly as the
+//! endpoint returned it (CA-01 section 4.1), not against a typed model of it,
+//! so a field the typed model does not name can still be asserted on and a
+//! `field-absent` assertion is never satisfied just because a model dropped
+//! the field. A `result` that is not an object is an `error`, not a failed
+//! assertion.
+//!
 //! A fixture declares which fields of the response are `required`,
 //! `optional`, or simply not mentioned (and therefore ignored) — an
 //! unrelated new optional field appearing in a response must never fail a
 //! check (see [`FieldAssertion`]).
 
+use std::cmp::Ordering;
 use std::time::Instant;
 
 use serde_json::Value as JsonValue;
@@ -16,7 +24,7 @@ use canary_core::{
 use canary_fixtures::LoadedFixture;
 
 use crate::client::{RpcClient, RpcError};
-use crate::models::{LatestLedger, NetworkInfo};
+use crate::models::{GetHealthResponse, LatestLedger, NetworkInfo};
 
 #[derive(Debug, thiserror::Error)]
 pub enum RpcFixtureError {
@@ -38,6 +46,7 @@ impl From<RpcFixtureError> for CanaryError {
 pub enum RpcMethod {
     GetNetwork,
     GetLatestLedger,
+    GetHealth,
 }
 
 impl std::str::FromStr for RpcMethod {
@@ -47,8 +56,9 @@ impl std::str::FromStr for RpcMethod {
         match s {
             "get-network" => Ok(RpcMethod::GetNetwork),
             "get-latest-ledger" => Ok(RpcMethod::GetLatestLedger),
+            "get-health" => Ok(RpcMethod::GetHealth),
             other => Err(format!(
-                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\""
+                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\", \"get-health\""
             )),
         }
     }
@@ -94,6 +104,92 @@ impl std::str::FromStr for JsonType {
     }
 }
 
+/// The inclusive bounds of a `field-number-range` assertion (CA-01
+/// section 4.2).
+///
+/// At least one bound is always set when the assertion is parsed from a
+/// fixture: an open-ended range is written with only the bound that
+/// exists (`>= min` or `<= max`), and a range with neither bound would
+/// check nothing.
+///
+/// Bounds keep the JSON number they were parsed from (integer or
+/// float), so integer bounds compare exactly and floating point is used
+/// only when a bound or an observed value is genuinely fractional.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FieldRangeAssertion {
+    pub field: String,
+    pub min: Option<serde_json::Number>,
+    pub max: Option<serde_json::Number>,
+}
+
+impl FieldRangeAssertion {
+    /// Checks the observed value of the field against the bounds,
+    /// returning a human-readable failure reason if it does not hold.
+    ///
+    /// A missing field or a value that is not a JSON number fails the
+    /// assertion; nothing is coerced between strings and numbers.
+    pub fn check_value(&self, found: Option<&JsonValue>) -> Result<(), String> {
+        let Some(actual) = found else {
+            return Err(format!(
+                "expected field {:?} to be present, but it was missing",
+                self.field
+            ));
+        };
+        let JsonValue::Number(value) = actual else {
+            return Err(format!(
+                "expected field {:?} to be a number within {}, but found {}",
+                self.field,
+                self.bounds_description(),
+                actual
+            ));
+        };
+        if let Some(min) = &self.min {
+            if compare_numbers(value, min) == Some(Ordering::Less) {
+                return Err(self.out_of_range(actual));
+            }
+        }
+        if let Some(max) = &self.max {
+            if compare_numbers(value, max) == Some(Ordering::Greater) {
+                return Err(self.out_of_range(actual));
+            }
+        }
+        Ok(())
+    }
+
+    /// The bounds as they appear in failure messages: `[min, max]`,
+    /// `>= min`, or `<= max`.
+    fn bounds_description(&self) -> String {
+        match (&self.min, &self.max) {
+            (Some(min), Some(max)) => format!("[{min}, {max}]"),
+            (Some(min), None) => format!(">= {min}"),
+            (None, Some(max)) => format!("<= {max}"),
+            (None, None) => "any number".to_string(),
+        }
+    }
+
+    fn out_of_range(&self, actual: &JsonValue) -> String {
+        format!(
+            "expected field {:?} to be within {}, but found {}",
+            self.field,
+            self.bounds_description(),
+            actual
+        )
+    }
+}
+
+/// Compares two JSON numbers, exactly when both sides are integers and
+/// with `f64` only when at least one side is genuinely fractional.
+/// Returns `None` when either value cannot be read as a number.
+fn compare_numbers(value: &serde_json::Number, bound: &serde_json::Number) -> Option<Ordering> {
+    if let (Some(value), Some(bound)) = (value.as_i64(), bound.as_i64()) {
+        return Some(value.cmp(&bound));
+    }
+    if let (Some(value), Some(bound)) = (value.as_u64(), bound.as_u64()) {
+        return Some(value.cmp(&bound));
+    }
+    value.as_f64()?.partial_cmp(&bound.as_f64()?)
+}
+
 /// One assertion about a field in the RPC response.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FieldAssertion {
@@ -101,6 +197,7 @@ pub enum FieldAssertion {
     Absent { field: String },
     Equals { field: String, value: JsonValue },
     TypeIs { field: String, expected: JsonType },
+    NumberRange(FieldRangeAssertion),
 }
 
 impl FieldAssertion {
@@ -110,6 +207,7 @@ impl FieldAssertion {
             | FieldAssertion::Absent { field }
             | FieldAssertion::Equals { field, .. }
             | FieldAssertion::TypeIs { field, .. } => field,
+            FieldAssertion::NumberRange(assertion) => &assertion.field,
         }
     }
 
@@ -145,6 +243,7 @@ impl FieldAssertion {
                     "expected field {field:?} to have type {expected:?}, but found {actual}"
                 )),
             },
+            FieldAssertion::NumberRange(assertion) => assertion.check_value(found),
         }
     }
 }
@@ -154,6 +253,9 @@ impl FieldAssertion {
 pub struct RpcFixture {
     pub metadata: FixtureMetadata,
     pub method: RpcMethod,
+    /// Validated `[request]` parameters, as the named-params object to
+    /// send. `None` when the fixture has no `[request]` table.
+    pub request: Option<serde_json::Map<String, serde_json::Value>>,
     pub assertions: Vec<FieldAssertion>,
 }
 
@@ -174,6 +276,9 @@ impl RpcFixture {
     /// kind = "field-exists"
     /// field = "passphrase"
     /// ```
+    ///
+    /// A `[request]` table, for methods that take parameters, is validated
+    /// against the CA-01 parameter table (see [`crate::request`]).
     pub fn from_loaded(loaded: &LoadedFixture) -> Result<RpcFixture, RpcFixtureError> {
         let invalid = |reason: String| RpcFixtureError::InvalidFixtureBody {
             source_path: loaded.source_path.clone(),
@@ -185,18 +290,36 @@ impl RpcFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
-        let method: RpcMethod = table
+        if let Some(message) =
+            canary_fixtures::unknown_body_keys(table, &["method", "request", "assert"])
+        {
+            return Err(invalid(message));
+        }
+
+        let method_name = table
             .get("method")
             .and_then(toml::Value::as_str)
-            .ok_or_else(|| invalid("missing required string field \"method\"".to_string()))?
-            .parse()
-            .map_err(invalid)?;
+            .ok_or_else(|| invalid("missing required string field \"method\"".to_string()))?;
+        // A bad `[request]` is reported even for a method the engine does
+        // not run yet, so the author sees it before the method is wired up.
+        let request = if crate::request::is_known_method(method_name) {
+            crate::request::validate_request(method_name, table.get("request")).map_err(&invalid)?
+        } else {
+            None
+        };
+        let method: RpcMethod = method_name.parse().map_err(invalid)?;
 
         let assert_entries = table
             .get("assert")
             .and_then(toml::Value::as_array)
             .cloned()
             .unwrap_or_default();
+
+        if assert_entries.is_empty() {
+            return Err(invalid(
+                "an rpc fixture needs at least one [[assert]] table; without one it would pass while checking nothing (is a section misspelled?)".to_string(),
+            ));
+        }
 
         let mut assertions = Vec::with_capacity(assert_entries.len());
         for entry in &assert_entries {
@@ -206,6 +329,7 @@ impl RpcFixture {
         Ok(RpcFixture {
             metadata: loaded.metadata.clone(),
             method,
+            request,
             assertions,
         })
     }
@@ -218,6 +342,13 @@ fn parse_assertion(
     let table = entry
         .as_table()
         .ok_or_else(|| invalid("each [[assert]] entry must be a table".to_string()))?;
+
+    if let Some(message) = canary_fixtures::unknown_body_keys(
+        table,
+        &["kind", "field", "value", "expected_type", "min", "max"],
+    ) {
+        return Err(invalid(format!("[[assert]] entry: {message}")));
+    }
 
     let kind = table
         .get("kind")
@@ -250,10 +381,58 @@ fn parse_assertion(
                 .map_err(invalid)?;
             Ok(FieldAssertion::TypeIs { field, expected })
         }
+        "field-number-range" => {
+            let min = parse_range_bound(table, "min", &invalid)?;
+            let max = parse_range_bound(table, "max", &invalid)?;
+            if min.is_none() && max.is_none() {
+                return Err(invalid(
+                    "field-number-range assertion requires \"min\" or \"max\" (or both); a range with neither bound would check nothing"
+                        .to_string(),
+                ));
+            }
+            if let (Some(min), Some(max)) = (&min, &max) {
+                if compare_numbers(min, max) == Some(Ordering::Greater) {
+                    return Err(invalid(format!(
+                        "field-number-range assertion has min {min} greater than max {max}"
+                    )));
+                }
+            }
+            Ok(FieldAssertion::NumberRange(FieldRangeAssertion {
+                field,
+                min,
+                max,
+            }))
+        }
         other => Err(invalid(format!(
-            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\""
+            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\", \"field-number-range\""
         ))),
     }
+}
+
+/// Parses one `field-number-range` bound: a TOML integer or float.
+/// Anything else is an invalid fixture rather than a runtime surprise.
+fn parse_range_bound(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    invalid: &impl Fn(String) -> RpcFixtureError,
+) -> Result<Option<serde_json::Number>, RpcFixtureError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let number = match value {
+        toml::Value::Integer(i) => serde_json::Number::from(*i),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f).ok_or_else(|| {
+            invalid(format!(
+                "field-number-range {key:?} must be a finite number"
+            ))
+        })?,
+        other => {
+            return Err(invalid(format!(
+                "field-number-range {key:?} must be a number, but found {other}"
+            )))
+        }
+    };
+    Ok(Some(number))
 }
 
 fn toml_to_json(value: &toml::Value) -> JsonValue {
@@ -289,6 +468,13 @@ pub struct DefaultRpcRunner<C: RpcClient> {
     client: C,
 }
 
+/// Summary reported when the endpoint says the fixture's RPC method does
+/// not exist (JSON-RPC `-32601`): the check is skipped rather than marked
+/// as an error, because an optional or unsupported method says nothing
+/// about the endpoint's health — it is not a connection failure.
+const SKIP_METHOD_NOT_AVAILABLE: &str =
+    "method not available on this endpoint, check skipped (JSON-RPC -32601)";
+
 impl<C: RpcClient> DefaultRpcRunner<C> {
     pub fn new(client: C) -> Self {
         DefaultRpcRunner { client }
@@ -304,18 +490,28 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
         let start = Instant::now();
 
         let response_json = match fixture.method {
-            RpcMethod::GetNetwork => self.client.get_network().await.map(json_of),
-            RpcMethod::GetLatestLedger => self.client.get_latest_ledger().await.map(json_of),
+            RpcMethod::GetNetwork => self.client.get_network_raw().await,
+            RpcMethod::GetLatestLedger => self.client.get_latest_ledger_raw().await,
+            RpcMethod::GetHealth => self.client.get_health_raw().await,
         };
 
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         let (status, summary, details) = match response_json {
-            Err(rpc_error) => (
-                Status::Error,
-                format!("failed to call {:?}", fixture.method),
-                Some(rpc_error.to_string()),
-            ),
+            Err(rpc_error) => match &rpc_error {
+                // The endpoint answered and does not implement this method:
+                // skip the check instead of reporting an endpoint failure.
+                RpcError::MethodNotAvailable { method } => (
+                    Status::Skipped,
+                    format!("{SKIP_METHOD_NOT_AVAILABLE}: {method}"),
+                    Some(rpc_error.to_string()),
+                ),
+                _ => (
+                    Status::Error,
+                    format!("failed to call {:?}", fixture.method),
+                    Some(rpc_error.to_string()),
+                ),
+            },
             Ok(response) => evaluate(fixture, &response),
         };
 
@@ -328,12 +524,9 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
             details,
             duration_ms,
             fixture_id: Some(fixture.metadata.id.clone()),
+            source: canary_core::ResultSource::Live,
         })
     }
-}
-
-fn json_of<T: serde::Serialize>(value: T) -> JsonValue {
-    serde_json::to_value(value).unwrap_or(JsonValue::Null)
 }
 
 fn evaluate(fixture: &RpcFixture, response: &JsonValue) -> (Status, String, Option<String>) {
@@ -382,6 +575,11 @@ pub async fn observe_network(client: &impl RpcClient) -> Result<NetworkInfo, Rpc
 /// against [`observe_network`].
 pub async fn observe_latest_ledger(client: &impl RpcClient) -> Result<LatestLedger, RpcError> {
     client.get_latest_ledger().await
+}
+
+/// Fetches endpoint health via `getHealth`.
+pub async fn observe_health(client: &impl RpcClient) -> Result<GetHealthResponse, RpcError> {
+    client.get_health().await
 }
 
 #[cfg(test)]
@@ -496,9 +694,60 @@ mod tests {
     async fn a_transport_failure_produces_an_error_status_not_a_fail() {
         let runner = DefaultRpcRunner::new(HttpRpcClient::new("http://127.0.0.1:0"));
         let fixture =
-            RpcFixture::from_loaded(&fixture("p28-rpc-3", "method = \"get-network\"\n")).unwrap();
+            RpcFixture::from_loaded(&fixture("p28-rpc-3", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
         let result = runner.run(&fixture, &context()).await.unwrap();
         assert_eq!(result.status, Status::Error);
+    }
+
+    #[tokio::test]
+    async fn method_not_available_skips_the_check_instead_of_erroring() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": { "code": -32601, "message": "Method not found" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture =
+            RpcFixture::from_loaded(&fixture("p28-rpc-method-missing", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Skipped);
+        assert!(
+            result.summary.contains(SKIP_METHOD_NOT_AVAILABLE),
+            "{}",
+            result.summary
+        );
+        assert!(result.summary.contains("getNetwork"), "{}", result.summary);
+        let details = result.details.expect("skip carries the diagnostic");
+        assert!(details.contains("-32601"), "{details}");
+    }
+
+    #[tokio::test]
+    async fn other_json_rpc_errors_stay_errors_rather_than_skips() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "error": { "code": -32602, "message": "invalid params" }
+            })))
+            .mount(&server)
+            .await;
+
+        let fixture =
+            RpcFixture::from_loaded(&fixture("p28-rpc-bad-params", "method = \"get-network\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n")).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Error);
+        assert!(result.summary.starts_with("failed to call"));
+        let details = result.details.expect("error carries the diagnostic");
+        assert!(details.contains("code -32602"), "{details}");
     }
 
     #[test]
@@ -506,5 +755,447 @@ mod tests {
         let err =
             RpcFixture::from_loaded(&fixture("bad", "method = \"not-a-method\"\n")).unwrap_err();
         assert!(matches!(err, RpcFixtureError::InvalidFixtureBody { .. }));
+    }
+
+    #[test]
+    fn parses_and_checks_array_field_equals() {
+        let body = r#"
+        method = "get-network"
+
+        [[assert]]
+        kind = "field-equals"
+        field = "history"
+        value = ["a", "b", "c"]
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-array", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "history".into(),
+            value: json!(["a", "b", "c"])
+        }));
+
+        let assertion = &fixture.assertions[0];
+
+        let match_response = json!({ "history": ["a", "b", "c"] });
+        assert!(assertion.check(&match_response).is_ok());
+
+        let mismatch_response = json!({ "history": ["a", "b", "d"] });
+        assert!(assertion.check(&mismatch_response).is_err());
+    }
+
+    /// Parses a single `[[assert]]` entry of the given kind into a
+    /// [`FieldAssertion`], the way a fixture author's entry reaches the
+    /// runner.
+    fn range_assertion(entry_toml: &str) -> FieldAssertion {
+        RpcFixture::from_loaded(&fixture(
+            "p28-rpc-range",
+            &format!("method = \"get-network\"\n\n[[assert]]\n{entry_toml}"),
+        ))
+        .expect("valid range assertion")
+        .assertions
+        .remove(0)
+    }
+
+    fn range_err(entry_toml: &str) -> String {
+        RpcFixture::from_loaded(&fixture(
+            "p28-rpc-range-bad",
+            &format!("method = \"get-network\"\n\n[[assert]]\n{entry_toml}"),
+        ))
+        .expect_err("invalid range assertion")
+        .to_string()
+    }
+
+    #[test]
+    fn field_number_range_passes_at_both_inclusive_boundaries() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"protocolVersion\"\nmin = 20\nmax = 30\n",
+        );
+        assert!(assertion.check(&json!({ "protocolVersion": 20 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 30 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 25 })).is_ok());
+    }
+
+    #[test]
+    fn field_number_range_reports_the_observed_value_and_the_expected_range() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 20\nmax = 30\n",
+        );
+        let below = assertion.check(&json!({ "sequence": 19 })).unwrap_err();
+        assert!(below.contains("[20, 30]"), "{below}");
+        assert!(below.contains("but found 19"), "{below}");
+        let above = assertion.check(&json!({ "sequence": 31 })).unwrap_err();
+        assert!(above.contains("[20, 30]"), "{above}");
+        assert!(above.contains("but found 31"), "{above}");
+    }
+
+    #[test]
+    fn field_number_range_fails_when_the_field_is_missing() {
+        let assertion =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\n");
+        let err = assertion.check(&json!({})).unwrap_err();
+        assert!(err.contains("\"sequence\" to be present"), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_non_numerical_values_without_coercion() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\nmax = 100\n",
+        );
+        for value in [
+            json!("30"),
+            json!(true),
+            json!(null),
+            json!([30]),
+            json!({ "sequence": 30 }),
+        ] {
+            let response = json!({ "sequence": value });
+            let err = assertion.check(&response).unwrap_err();
+            assert!(
+                err.contains("\"sequence\" to be a number within [1, 100]"),
+                "{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn field_number_range_supports_fractional_bounds_and_values() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"fee\"\nmin = 0.5\nmax = 2.5\n",
+        );
+        assert!(assertion.check(&json!({ "fee": 0.5 })).is_ok());
+        assert!(assertion.check(&json!({ "fee": 1.75 })).is_ok());
+        // An integer value still compares exactly against float bounds.
+        assert!(assertion.check(&json!({ "fee": 2 })).is_ok());
+        let err = assertion.check(&json!({ "fee": 3.0 })).unwrap_err();
+        assert!(err.contains("[0.5, 2.5]"), "{err}");
+        assert!(err.contains("but found 3.0"), "{err}");
+        assert!(assertion.check(&json!({ "fee": 0.25 })).is_err());
+    }
+
+    #[test]
+    fn field_number_range_accepts_integer_values_against_float_bounds_exactly() {
+        let assertion = range_assertion(
+            "kind = \"field-number-range\"\nfield = \"protocolVersion\"\nmin = 28.0\nmax = 29.0\n",
+        );
+        assert!(assertion.check(&json!({ "protocolVersion": 28 })).is_ok());
+        assert!(assertion.check(&json!({ "protocolVersion": 29 })).is_ok());
+    }
+
+    #[test]
+    fn field_number_range_supports_open_ended_bounds() {
+        let min_only =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\n");
+        assert!(min_only.check(&json!({ "sequence": 1_000_000 })).is_ok());
+        let min_err = min_only.check(&json!({ "sequence": 0 })).unwrap_err();
+        assert!(min_err.contains(">= 1"), "{min_err}");
+
+        let max_only =
+            range_assertion("kind = \"field-number-range\"\nfield = \"sequence\"\nmax = 10\n");
+        assert!(max_only.check(&json!({ "sequence": 0 })).is_ok());
+        let max_err = max_only.check(&json!({ "sequence": 11 })).unwrap_err();
+        assert!(max_err.contains("<= 10"), "{max_err}");
+    }
+
+    #[test]
+    fn field_number_range_requires_at_least_one_bound() {
+        let err = range_err("kind = \"field-number-range\"\nfield = \"sequence\"\n");
+        assert!(err.contains("requires \"min\" or \"max\""), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_min_greater_than_max() {
+        let err =
+            range_err("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 10\nmax = 5\n");
+        assert!(err.contains("min 10 greater than max 5"), "{err}");
+    }
+
+    #[test]
+    fn field_number_range_rejects_non_numerical_bounds() {
+        let err =
+            range_err("kind = \"field-number-range\"\nfield = \"sequence\"\nmin = \"twenty\"\n");
+        assert!(
+            err.contains("field-number-range \"min\" must be a number"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn field_number_range_rejects_unknown_keys_in_the_entry() {
+        let err = range_err(
+            "kind = \"field-number-range\"\nfield = \"sequence\"\nmin = 1\nexpect = \"x\"\n",
+        );
+        assert!(err.contains("unknown key(s) \"expect\""), "{err}");
+    }
+
+    #[tokio::test]
+    async fn field_number_range_passes_a_live_ledger_sequence_within_bounds() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "protocolVersion": 28,
+                    "sequence": 100
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let body = r#"
+        method = "get-latest-ledger"
+
+        [[assert]]
+        kind = "field-number-range"
+        field = "sequence"
+        min = 1
+        max = 200
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-range-pass", body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Pass);
+    }
+
+    #[tokio::test]
+    async fn field_number_range_out_of_bounds_is_a_fail_with_the_range_in_details() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "id": "0000000000000000000000000000000000000000000000000000000000000000",
+                    "protocolVersion": 28,
+                    "sequence": 100
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let body = r#"
+        method = "get-latest-ledger"
+
+        [[assert]]
+        kind = "field-number-range"
+        field = "sequence"
+        min = 1
+        max = 10
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-range-fail", body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        let result = runner.run(&fixture, &context()).await.unwrap();
+        assert_eq!(result.status, Status::Fail);
+        let details = result.details.expect("failure details");
+        assert!(details.contains("[1, 10]"), "{details}");
+        assert!(details.contains("but found 100"), "{details}");
+    }
+
+    #[test]
+    fn parses_and_checks_table_and_datetime_field_equals() {
+        let body = r#"
+        method = "get-network"
+
+        [[assert]]
+        kind = "field-equals"
+        field = "nested"
+        value = { key1 = "value1", key2 = 42 }
+
+        [[assert]]
+        kind = "field-equals"
+        field = "timestamp"
+        value = 2023-01-01T12:00:00Z
+        "#;
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-table", body)).unwrap();
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "nested".into(),
+            value: json!({ "key1": "value1", "key2": 42 })
+        }));
+        assert!(fixture.assertions.contains(&FieldAssertion::Equals {
+            field: "timestamp".into(),
+            value: json!("2023-01-01T12:00:00Z")
+        }));
+
+        let assertion_nested = &fixture.assertions[0];
+        let assertion_timestamp = &fixture.assertions[1];
+
+        let match_response = json!({
+            "nested": { "key1": "value1", "key2": 42 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&match_response).is_ok());
+        assert!(assertion_timestamp.check(&match_response).is_ok());
+
+        let mismatch_response = json!({
+            "nested": { "key1": "value1", "key2": 99 },
+            "timestamp": "2023-01-01T12:00:00Z"
+        });
+        assert!(assertion_nested.check(&mismatch_response).is_err());
+        assert!(assertion_timestamp.check(&mismatch_response).is_ok());
+    }
+
+    /// Serves `result` as the JSON-RPC result and runs a fixture with the
+    /// given assertion tables against it.
+    async fn run_against(
+        result: serde_json::Value,
+        method_name: &str,
+        assertions: &str,
+    ) -> CompatibilityResult {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": result
+            })))
+            .mount(&server)
+            .await;
+
+        let body = format!("method = \"{method_name}\"\n{assertions}");
+        let fixture = RpcFixture::from_loaded(&fixture("p28-rpc-raw", &body)).unwrap();
+        let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+        runner.run(&fixture, &context()).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn assertions_can_name_a_field_the_typed_model_does_not() {
+        // `closeTime`, `headerXdr` and `metadataXdr` are real getLatestLedger
+        // fields that `LatestLedger` does not model, so the old typed
+        // projection dropped them before any assertion saw them.
+        let result = run_against(
+            json!({
+                "id": "e9f5c2a1",
+                "protocolVersion": 28,
+                "sequence": 1234,
+                "closeTime": "1700000000",
+                "headerXdr": "AAAA",
+                "metadataXdr": "BBBB"
+            }),
+            "get-latest-ledger",
+            r#"
+            [[assert]]
+            kind = "field-equals"
+            field = "closeTime"
+            value = "1700000000"
+
+            [[assert]]
+            kind = "field-exists"
+            field = "headerXdr"
+
+            [[assert]]
+            kind = "field-type"
+            field = "metadataXdr"
+            expected_type = "string"
+            "#,
+        )
+        .await;
+        assert_eq!(result.status, Status::Pass, "{:?}", result.details);
+    }
+
+    #[tokio::test]
+    async fn field_absent_is_not_satisfied_by_a_field_the_typed_model_drops() {
+        // On the typed projection this assertion passed for the wrong reason:
+        // the model had already dropped `closeTime`.
+        let result = run_against(
+            json!({
+                "id": "e9f5c2a1",
+                "protocolVersion": 28,
+                "sequence": 1234,
+                "closeTime": "1700000000"
+            }),
+            "get-latest-ledger",
+            r#"
+            [[assert]]
+            kind = "field-absent"
+            field = "closeTime"
+            "#,
+        )
+        .await;
+        assert_eq!(result.status, Status::Fail);
+        assert!(result
+            .details
+            .as_deref()
+            .is_some_and(|d| d.contains("closeTime") && d.contains("absent")));
+    }
+
+    #[tokio::test]
+    async fn a_result_that_is_not_an_object_is_an_error_not_a_failed_assertion() {
+        let assertions = "[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n";
+        for (result, kind) in [
+            (json!([1, 2]), "an array"),
+            (json!("text"), "a string"),
+            (json!(28), "a number"),
+            (json!(true), "a boolean"),
+            (json!(null), "null"),
+        ] {
+            let outcome = run_against(result, "get-network", assertions).await;
+            assert_eq!(outcome.status, Status::Error, "{kind}");
+            let details = outcome.details.unwrap_or_default();
+            assert!(details.contains("JSON object"), "{details:?}");
+            assert!(details.contains(kind), "{details:?} should name {kind}");
+        }
+    }
+
+    /// CA-01 section 9: the shipped `p28-*` RPC fixtures must yield the same
+    /// status on the raw `result` as they did on the typed projection. The
+    /// responses below are recorded shapes of a real Testnet `getNetwork`.
+    #[test]
+    fn shipped_p28_get_network_fixture_has_the_same_outcome_on_the_raw_result() {
+        const SHIPPED: &str =
+            include_str!("../../../tests/fixtures/protocol-28/rpc/p28-rpc-get-network.toml");
+        let loaded =
+            canary_fixtures::parse_fixture_str(SHIPPED, std::path::Path::new("shipped.toml"))
+                .unwrap();
+        let fixture = RpcFixture::from_loaded(&loaded).unwrap();
+
+        let recorded = [
+            (
+                "protocol 28 with friendbotUrl",
+                json!({
+                    "friendbotUrl": "https://friendbot.stellar.org",
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28
+                }),
+                Status::Pass,
+            ),
+            (
+                "protocol 28 without friendbotUrl",
+                json!({
+                    "passphrase": "Public Global Stellar Network ; September 2015",
+                    "protocolVersion": 28
+                }),
+                Status::Pass,
+            ),
+            (
+                "protocol 29",
+                json!({
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 29
+                }),
+                Status::Fail,
+            ),
+            (
+                "an unrelated new field is ignored",
+                json!({
+                    "passphrase": "Test SDF Network ; September 2015",
+                    "protocolVersion": 28,
+                    "someNewField": 1
+                }),
+                Status::Pass,
+            ),
+        ];
+
+        for (label, raw, expected) in recorded {
+            let typed: NetworkInfo = serde_json::from_value(raw.clone()).unwrap();
+            let projection = serde_json::to_value(typed).unwrap();
+
+            let on_raw = evaluate(&fixture, &raw).0;
+            let on_projection = evaluate(&fixture, &projection).0;
+            assert_eq!(on_raw, on_projection, "{label}: raw and typed disagree");
+            assert_eq!(on_raw, expected, "{label}");
+        }
     }
 }

@@ -14,12 +14,21 @@ this path via `--fixtures-dir` (default: `fixtures`, resolved relative to
 the current working directory). There is no other loading mechanism —
 no network fetch, no package registry, no database.
 
-If `--fixtures-dir` does not exist, the CLI treats that as zero fixtures
-(not an error): `check` still runs (with `0/0 applicable checks`, a
-trivial pass) and `fixtures` reports "no fixtures found". Calling
-`canary_fixtures::load_directory` directly on a nonexistent path, however,
-*does* return an error (`FixtureError::ReadDir`) — the CLI's
-`is_dir()` guard is what makes a missing directory non-fatal.
+If `--fixtures-dir` does not exist, the CLI loads zero fixtures rather than
+failing the load, and `fixtures` reports "no fixtures found". What `check` does
+with zero fixtures depends on the release:
+
+- **`0.1.1` and earlier:** `check` ran with `0/0 applicable checks` and exited
+  `0` with `status: pass`.
+- **Releases after `0.1.1`:** a run in which no fixture applies (no directory,
+  no fixture files, or every fixture filtered out by protocol, disabled surface
+  or missing capability) exits `2` with a diagnostic saying which, because
+  executing nothing is not evidence of compatibility. `--allow-empty` restores
+  the old exit code for runs that are meant to be empty.
+
+Calling `canary_fixtures::load_directory` directly on a nonexistent path
+*does* return an error (`FixtureError::ReadDir`) — the CLI's `is_dir()` guard
+is what makes a missing directory non-fatal at load time.
 
 ## 2. Directory structure
 
@@ -28,8 +37,20 @@ collects every file ending in `.toml`, in every subdirectory, at any
 depth. Subdirectory names (e.g. `xdr/`, `rpc/`, `soroban/`, or
 `protocol-28/xdr/`) are a convention for human organization only — the
 loader does not read directory names to determine a fixture's surface or
-protocol. Non-`.toml` files (READMEs, licenses, etc.) are silently
-ignored.
+protocol. Non-`.toml` files (READMEs, licenses, etc.) are ignored.
+
+Traversal is deliberately narrow and behaves the same on Linux, macOS and
+Windows:
+
+- **No symbolic links below the root.** A symbolic link or junction
+  anywhere under `--fixtures-dir`, whether it points at a file or a
+  directory and whatever its name, is rejected with
+  `FixtureError::SymbolicLink` (exit code 4). Links are never followed, so a
+  link cannot reach outside the fixture directory or create a loop. The
+  directory passed as `--fixtures-dir` may itself be a link.
+- **`.git` is not entered.** Pointing `--fixtures-dir` at a repository
+  checkout is supported; its history is not fixture data. Other hidden
+  directories are walked.
 
 Fixtures are loaded in sorted-by-path order, which is what makes
 `stellar-canary fixtures` and `stellar-canary check`'s output
@@ -74,12 +95,33 @@ before anything runs:
   one file) — a duplicate is `FixtureError::DuplicateId`, exit code 4;
 - every `input_file`/`expected_file`, if present, resolves to a file that
   actually exists — a dangling reference is
-  `FixtureError::MissingReferencedFile`, exit code 4.
+  `FixtureError::MissingReferencedFile`, exit code 4;
+- every `input_file`/`expected_file` is a plain relative path that stays
+  inside the fixture file's directory. Checked when the file is parsed, with
+  no filesystem access, so the answer is the same on every platform: the
+  path may not be empty, start with `/`, carry a drive prefix such as `C:`,
+  contain a backslash or NUL, or have an empty, `.` or `..` segment. The
+  separator is `/`. A violation is `FixtureError::UnsafeReference`, exit
+  code 4. A referenced file that is a symbolic link is
+  `FixtureError::SymbolicLink`.
 
 A structurally invalid fixture (bad TOML, missing a required field, an
 unrecognized `surface` string) fails at parse time with
 `FixtureError::Parse`/`Read`, also exit code 4 — never silently treated
 as a project incompatibility.
+
+Since `0.2.0` the surface-specific part of a fixture is checked as strictly as the
+common part, and a body the surface cannot read is exit code 4 (before, it was
+reported as an execution error, exit 3, which contradicted the paragraph above):
+
+- an unknown key in the body is an error that names it and lists the accepted keys
+  (`type`, `kind`, `value_base64`, and `expected_base64` for `encode-equals` on
+  `xdr`; `method` and `assert` on `rpc`; `source_account`, `contract_id`,
+  `function`, `sequence_number`, `args`, `expect` on `soroban`), and likewise in an
+  `[[assert]]`, `[[args]]` or `[expect]` entry. A misspelled `[[asert]]` used to be
+  dropped silently;
+- an `rpc` fixture needs at least one `[[assert]]`; one with none used to pass while
+  checking nothing.
 
 ## 4. Fixture ID resolution
 
@@ -113,9 +155,11 @@ which surface crate parses its body:
 
 | `surface` | Parsed by | Expected body fields |
 |---|---|---|
-| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (currently `"StellarValue"` or `"ContractExecutable"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (`"StellarValue"`, `"ContractExecutable"`, `"ScVal"`, `"LedgerEntry"`, or `"TransactionEnvelope"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
 | `"rpc"` | `canary_rpc::RpcFixture::from_loaded` | `method` (`"get-network"` \| `"get-latest-ledger"`), `[[assert]]` array of `{kind, field, value?, expected_type?}` |
 | `"soroban"` | `canary_soroban::SorobanFixture::from_loaded` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]`, and `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
+
+For detailed authoring rules, supported types, base64 XDR payloads, and composite structures (`vec`, `map`) for Soroban arguments (`[[args]]`) and XDR `ScVal` fixtures, see [`fixtures/scval.md`](fixtures/scval.md).
 
 An unrecognized `surface` string fails to parse (`serde` rejects it at
 the `RawFixtureFile` level, surfacing as `FixtureError::Parse`) before it

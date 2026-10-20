@@ -7,6 +7,17 @@ and verified by running the built CLI against the real fixtures in
 [`ProtocolCanary-Action`](https://github.com/StellarCanary/ProtocolCanary-Action)
 consumes to build its GitHub job summary and annotations.
 
+Compatibility, identity and failure rules for this report are defined in
+[`contracts/cf-01-report.md`](contracts/cf-01-report.md).
+
+The formal JSON Schema (draft 2020-12) for this shape at `schemaVersion` 1
+is published at [`schemas/report-v1.schema.json`](schemas/report-v1.schema.json):
+it requires exactly the fields CF-01 section 3 requires, pins the closed
+sets (`status`, `surface`, `project.type`) to their current values, and —
+like every conforming consumer — ignores properties it does not know, so
+an additively extended report still validates. The conformance tests in
+`crates/canary-report/tests/schema.rs` keep the two honest.
+
 ## Command
 
 ```bash
@@ -54,10 +65,10 @@ a compatibility failure.
       "status": "pass",
       "summary": "StellarValue round-tripped byte-for-byte",
       "durationMs": 1,
-      "fixtureId": "p28-xdr-cap83-empty-tx-set"
+      "fixtureId": "p28-xdr-cap83-empty-tx-set",
+      "source": "live"
     }
   ],
-  "skipped": [],
   "git": {
     "commit": "68a5f8d52573fa741e095bc321443015f0f21250",
     "branch": "main",
@@ -83,7 +94,8 @@ a compatibility failure.
 | `counts.total` | integer | yes | `results.length`. |
 | `counts.passed` / `.failed` / `.warnings` / `.errors` | integer | yes | Count of each `Status` value among `results`. |
 | `counts.skipped` | integer | yes | `skipped.length`. |
-| `results` | array | yes | One entry per fixture that actually ran (never includes skipped fixtures). Empty array is valid (e.g. no fixtures found) and is a pass, not an error. |
+| `results` | array | yes | One entry per fixture that actually ran (never includes skipped fixtures). An empty array is a valid report shape, but `check` only produces it from a release after `0.1.1` when `--allow-empty` is given: without that flag a run with no applicable fixture exits `2` and prints no report. In `0.1.1` and earlier an empty run was reported as `status: "pass"`. Never read `counts.total == 0` as compatibility. |
+| `results[].source` | string \| absent | `"live"` or `"cache"` from the release after `0.1.1` | `"live"`: executed during this run. `"cache"`: replayed from the local result cache, so it records an earlier run and is not an observation made now. Absent in reports written by `0.1.1` and earlier: that means *not recorded*, never "live". Consumers must ignore values they do not know. Added without a `schemaVersion` change because it is optional and additive. |
 | `results[].testId` / `.fixtureId` | string | yes (`fixtureId` may be `null`) | Currently always equal to each other and to the fixture's `id`; treat them as the same identifier. |
 | `results[].protocol` | integer | yes | The fixture's own declared protocol (matches `targetProtocol`, since non-matching fixtures are skipped before this point). |
 | `results[].surface` | string | yes | `"xdr"`, `"rpc"`, or `"soroban"` (always lowercase — contrast with the capitalized headings in the terminal/Markdown reporters). |
@@ -95,6 +107,7 @@ a compatibility failure.
 | `skipped[].fixtureId` | string | yes | |
 | `skipped[].surface` | string | yes | |
 | `skipped[].reason` | string | yes | Human-readable, e.g. `"fixture targets protocol 27, this run targets protocol 28"` or `"rpc checks are disabled in configuration"`. |
+| `skipped[].code` | string | yes (absent only in reports written before the field existed) | The stable machine-readable skip reason, so CI summaries can group skips without parsing prose: `"UNSUPPORTED_PROTOCOL"`, `"SURFACE_DISABLED"`, `"MISSING_CAPABILITY"`, `"OFFLINE"` (a network fixture skipped by `check --offline`), or `"UNKNOWN"` when the reason is not recognized. `"NETWORK_MISMATCH"` is reserved for a network-identity skip and is not emitted by the planner yet. An absent or unrecognized value reads back as `"UNKNOWN"` — never an empty string — and consumers must ignore codes they do not know. Added without a `schemaVersion` change because it is optional and additive. |
 | `git` | object | yes | Always present, with `null` fields when unavailable (not a Git repository, detached HEAD, etc.) — never omitted, never an error. |
 | `git.commit` / `.branch` | string \| null | yes | |
 | `git.isDirty` | boolean \| null | yes | |
@@ -111,6 +124,9 @@ a compatibility failure.
   (this project's own reporters deliberately never do).
 - **Protocol mismatch detection**: compare `targetProtocol` to
   `network.observedProtocol` when both are present.
+- **Grouping skipped fixtures in a CI summary**: iterate `skipped` and key
+  off `code`, not the free-form `reason` (that is what the field exists
+  for); group unknown codes under `UNKNOWN`.
 
 ### Verified failure-case example
 

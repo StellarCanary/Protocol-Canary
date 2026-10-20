@@ -173,6 +173,60 @@ pub fn parse_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
     Some(deps)
 }
 
+/// Parses runtime and development dependencies from a workspace member manifest.
+pub(crate) fn parse_workspace_package_json_dependencies(raw: &str) -> Option<Vec<ManifestDep>> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let mut deps = Vec::new();
+    for section in ["dependencies", "devDependencies"] {
+        if let Some(obj) = value.get(section).and_then(|value| value.as_object()) {
+            for key in obj.keys() {
+                deps.push(ManifestDep {
+                    name: key.clone(),
+                    section: section.to_string(),
+                });
+            }
+        }
+    }
+    Some(deps)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PnpmWorkspaceParseError {
+    InvalidYaml,
+    Unsupported,
+}
+
+/// Parses the contract's minimal pnpm YAML subset: one top-level packages list
+/// containing only string patterns.
+pub(crate) fn parse_pnpm_workspace_patterns(
+    raw: &str,
+) -> Result<Vec<String>, PnpmWorkspaceParseError> {
+    let value: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(raw).map_err(|_| PnpmWorkspaceParseError::InvalidYaml)?;
+    let Some(mapping) = value.as_mapping() else {
+        return Err(PnpmWorkspaceParseError::Unsupported);
+    };
+    if mapping.len() != 1 || !mapping.contains_key(serde_yaml_ng::Value::String("packages".into()))
+    {
+        return Err(PnpmWorkspaceParseError::Unsupported);
+    }
+    let Some(packages) = value
+        .get("packages")
+        .and_then(serde_yaml_ng::Value::as_sequence)
+    else {
+        return Err(PnpmWorkspaceParseError::Unsupported);
+    };
+    packages
+        .iter()
+        .map(|pattern| {
+            pattern
+                .as_str()
+                .map(str::to_string)
+                .ok_or(PnpmWorkspaceParseError::Unsupported)
+        })
+        .collect()
+}
+
 /// An error encountered while parsing a `go.mod` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoModError {

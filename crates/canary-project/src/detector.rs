@@ -10,9 +10,12 @@ use crate::capabilities::{
 };
 use crate::manifest::{
     parse_cargo_dependencies, parse_cargo_manifest, parse_go_mod_dependencies,
-    parse_package_json_dependencies, read_package_json, ProjectManifest,
+    parse_package_json_dependencies, parse_workspace_package_json_dependencies, read_package_json,
+    ProjectManifest,
 };
-use crate::workspace::scan_cargo_workspace;
+use crate::workspace::{
+    scan_cargo_workspace, scan_pnpm_workspace_with_limit, MAX_WORKSPACE_MEMBERS,
+};
 
 pub use crate::capabilities::GO_STELLAR_SDK_DEPENDENCY;
 
@@ -112,6 +115,38 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
                         &dep.section,
                         &member_rel,
                         "cargo",
+                        &mut all_evidence,
+                    );
+                }
+            }
+        }
+        manifests.push(member.manifest.clone());
+    }
+
+    // 2b. pnpm workspace members
+    let pnpm_workspace_scan = scan_pnpm_workspace_with_limit(
+        root,
+        MAX_WORKSPACE_MEMBERS.saturating_sub(workspace_scan.members.len()),
+    );
+    diagnostics.extend(pnpm_workspace_scan.diagnostics);
+    if std::fs::symlink_metadata(root.join("pnpm-workspace.yaml"))
+        .is_ok_and(|meta| meta.is_file() && !meta.file_type().is_symlink())
+    {
+        inspected.push("pnpm-workspace.yaml".to_string());
+    }
+    for member in &pnpm_workspace_scan.members {
+        workspace_members.push(member.path.clone());
+        let member_rel = format!("{}/package.json", member.path);
+        let member_path = root.join(&member_rel);
+        if let Ok(raw) = std::fs::read_to_string(&member_path) {
+            inspected.push(member_rel.clone());
+            if let Some(deps) = parse_workspace_package_json_dependencies(&raw) {
+                for dep in deps {
+                    record_dep_evidence(
+                        &dep.name,
+                        &dep.section,
+                        &member_rel,
+                        "npm",
                         &mut all_evidence,
                     );
                 }

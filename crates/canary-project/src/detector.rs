@@ -277,7 +277,6 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         }
     }
 
-
     // 4b. pyproject.toml
     let root_pyproject = root.join("pyproject.toml");
     if let Ok(meta) = std::fs::symlink_metadata(&root_pyproject) {
@@ -1245,5 +1244,4 @@ mod tests {
         );
         assert!(unparseable.unwrap().detail.contains("pyproject.toml"));
     }
-
 }

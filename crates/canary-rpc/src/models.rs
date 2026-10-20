@@ -121,6 +121,26 @@ pub struct SimulationResponse {
     pub transaction_data: Option<String>,
     #[serde(default)]
     pub min_resource_fee: Option<String>,
+    /// One entry per simulated invocation, empty when the endpoint
+    /// reports none (including on every failed simulation).
+    #[serde(default)]
+    pub results: Vec<SimulationResult>,
+}
+
+/// One entry of a `simulateTransaction` response's `results` array.
+///
+/// Only the `auth` array is modeled. The sibling `xdr` field and any
+/// future addition are ignored rather than rejected, per the rule that
+/// an unrelated new optional field must not break a check.
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SimulationResult {
+    /// The authorization entries the simulation reports as required,
+    /// exactly as the endpoint returned them, so that fields this model
+    /// does not name (nonce, signature, rootInvocation, ...) stay
+    /// assertable downstream (CA-01 section 4.1).
+    #[serde(default)]
+    pub auth: Vec<serde_json::Value>,
 }
 
 impl SimulationResponse {
@@ -170,6 +190,38 @@ mod tests {
         let json = r#"{"latestLedger":100,"transactionData":"AAAA"}"#;
         let resp: SimulationResponse = serde_json::from_str(json).unwrap();
         assert!(resp.succeeded());
+    }
+
+    #[test]
+    fn simulation_response_defaults_results_to_empty() {
+        let json = r#"{"latestLedger":100,"transactionData":"AAAA"}"#;
+        let resp: SimulationResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.results.is_empty());
+    }
+
+    #[test]
+    fn simulation_response_parses_results_auth_entries_verbatim() {
+        let json = r#"{
+            "latestLedger": 100,
+            "transactionData": "AAAA",
+            "results": [{
+                "auth": [{
+                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "nonce": 42,
+                    "signature": {"tag": "v0", "entries": []},
+                    "rootInvocation": {"functionName": "hello", "subInvocations": []}
+                }],
+                "xdr": "AAAA"
+            }]
+        }"#;
+        let resp: SimulationResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.results.len(), 1);
+        assert_eq!(resp.results[0].auth.len(), 1);
+        assert_eq!(resp.results[0].auth[0]["nonce"], serde_json::json!(42));
+        assert_eq!(
+            resp.results[0].auth[0]["rootInvocation"]["functionName"],
+            serde_json::json!("hello")
+        );
     }
 
     #[test]

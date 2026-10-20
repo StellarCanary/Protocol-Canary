@@ -9,6 +9,7 @@ pub mod runner;
 pub use client::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};
 pub use models::{
     GetHealthResponse, LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse,
+    SimulationResult,
 };
 pub use runner::{
     observe_health, observe_latest_ledger, observe_network, DefaultRpcRunner, EventTopicsAssertion,

@@ -2,6 +2,7 @@
 //! transaction, simulates it via Stellar RPC, and checks the outcome
 //! against a fixture's declared expectation.
 
+use std::str::FromStr;
 use std::time::Instant;
 
 use canary_core::{
@@ -9,10 +10,12 @@ use canary_core::{
 };
 use canary_fixtures::LoadedFixture;
 use canary_rpc::RpcClient;
+use stellar_strkey::Strkey;
 
 use crate::builder::{
     build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
 };
+use crate::models::{parse_auth_results, SimulationAuthEntry};
 use crate::simulation::simulate;
 
 /// Errors raised while turning a [`LoadedFixture`] into a [`SorobanFixture`].
@@ -58,11 +61,33 @@ impl From<BuilderError> for CanaryError {
 /// What a [`SorobanFixture`] expects the simulation to do.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SorobanAssertion {
-    /// Simulation must succeed (no `error` field in the response).
+    /// Simulation must succeed (no `error` field in the response). When
+    /// the fixture also declares `[[expect.required_auth]]` entries, the
+    /// simulation's reported authorization entries must satisfy each of
+    /// them (see [`SorobanFixture::required_auth`]).
     SimulationSuccess,
     /// Simulation must fail, optionally with an error message containing
     /// `message_contains`.
     SimulationError { message_contains: Option<String> },
+}
+
+/// One authorization entry a fixture requires the simulation to report.
+///
+/// Parsed from a `[[expect.required_auth]]` entry of a
+/// `simulation-success` fixture. Only `address` is mandatory; the other
+/// fields are optional checks that apply to the matched entry when
+/// present.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuthExpectation {
+    /// The `G...`/`C...` strkey address that must appear among the
+    /// simulation's required authorization entries.
+    pub address: String,
+    /// When set, the matched entry's `rootInvocation.functionName` must
+    /// equal this exactly.
+    pub function_name: Option<String>,
+    /// When set, the matched entry must report at least this many
+    /// `rootInvocation.subInvocations`.
+    pub min_sub_invocations: Option<u64>,
 }
 
 /// A fully parsed Soroban compatibility fixture.
@@ -71,6 +96,13 @@ pub struct SorobanFixture {
     pub metadata: FixtureMetadata,
     pub invocation: InvocationSpec,
     pub assertion: SorobanAssertion,
+    /// Authorization entries the simulation must report as required,
+    /// empty for fixtures that assert nothing about auth. Every entry is
+    /// checked against the `auth` array of the simulation's `results`
+    /// (see [`crate::models::SimulationAuthEntry`]); an expectation the
+    /// simulation does not meet is a failed check with a diagnostic, not
+    /// an engine error.
+    pub required_auth: Vec<AuthExpectation>,
 }
 
 impl SorobanFixture {
@@ -90,6 +122,11 @@ impl SorobanFixture {
     ///
     /// [expect]
     /// kind = "simulation-success" # or "simulation-error"
+    ///
+    /// [[expect.required_auth]] # optional; simulation-success only
+    /// address = "C..."              # required
+    /// function_name = "hello"       # optional
+    /// min_sub_invocations = 0       # optional
     /// ```
     pub fn from_loaded(loaded: &LoadedFixture) -> Result<SorobanFixture, SorobanFixtureError> {
         let invalid = |reason: String| SorobanFixtureError::InvalidFixtureBody {
@@ -148,9 +185,10 @@ impl SorobanFixture {
             .get("expect")
             .and_then(toml::Value::as_table)
             .ok_or_else(|| invalid("missing required table \"expect\"".to_string()))?;
-        if let Some(message) =
-            canary_fixtures::unknown_body_keys(expect, &["kind", "message_contains"])
-        {
+        if let Some(message) = canary_fixtures::unknown_body_keys(
+            expect,
+            &["kind", "message_contains", "required_auth"],
+        ) {
             return Err(invalid(format!("[expect]: {message}")));
         }
         let assertion = match expect.get("kind").and_then(toml::Value::as_str) {
@@ -169,6 +207,26 @@ impl SorobanFixture {
             None => return Err(invalid("expect.kind is required".to_string())),
         };
 
+        let required_auth = match expect.get("required_auth") {
+            None => Vec::new(),
+            Some(value) => {
+                if !matches!(assertion, SorobanAssertion::SimulationSuccess) {
+                    return Err(invalid(
+                        "expect.required_auth is only supported with kind = \"simulation-success\""
+                            .to_string(),
+                    ));
+                }
+                let entries = value.as_array().ok_or_else(|| {
+                    invalid("expect.required_auth must be an array of tables".to_string())
+                })?;
+                let mut expectations = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    expectations.push(parse_auth_expectation(entry, &invalid)?);
+                }
+                expectations
+            }
+        };
+
         Ok(SorobanFixture {
             metadata: loaded.metadata.clone(),
             invocation: InvocationSpec {
@@ -179,8 +237,59 @@ impl SorobanFixture {
                 sequence_number,
             },
             assertion,
+            required_auth,
         })
     }
+}
+
+/// Parses one `[[expect.required_auth]]` entry into an
+/// [`AuthExpectation`], rejecting an unknown key, a missing or invalid
+/// `address`, and a negative `min_sub_invocations`.
+fn parse_auth_expectation(
+    entry: &toml::Value,
+    invalid: &impl Fn(String) -> SorobanFixtureError,
+) -> Result<AuthExpectation, SorobanFixtureError> {
+    let table = entry.as_table().ok_or_else(|| {
+        invalid("each [[expect.required_auth]] entry must be a table".to_string())
+    })?;
+    if let Some(message) = canary_fixtures::unknown_body_keys(
+        table,
+        &["address", "function_name", "min_sub_invocations"],
+    ) {
+        return Err(invalid(format!(
+            "[[expect.required_auth]] entry: {message}"
+        )));
+    }
+    let address = table
+        .get("address")
+        .and_then(toml::Value::as_str)
+        .ok_or_else(|| invalid("required_auth entry missing \"address\"".to_string()))?;
+    match Strkey::from_str(address) {
+        Ok(Strkey::PublicKeyEd25519(_) | Strkey::Contract(_)) => {}
+        _ => {
+            return Err(invalid(format!(
+                "required_auth address {address:?} is not a valid G... or C... strkey"
+            )))
+        }
+    }
+    let function_name = table
+        .get("function_name")
+        .and_then(toml::Value::as_str)
+        .map(str::to_string);
+    let min_sub_invocations = table
+        .get("min_sub_invocations")
+        .and_then(toml::Value::as_integer)
+        .map(|count| {
+            u64::try_from(count).map_err(|_| {
+                invalid("min_sub_invocations must be a non-negative integer".to_string())
+            })
+        })
+        .transpose()?;
+    Ok(AuthExpectation {
+        address: address.to_string(),
+        function_name,
+        min_sub_invocations,
+    })
 }
 
 fn parse_arg(
@@ -464,17 +573,42 @@ fn evaluate(
 ) -> (Status, String, Option<String>) {
     match &fixture.assertion {
         SorobanAssertion::SimulationSuccess => {
-            if response.succeeded() {
-                (
+            if !response.succeeded() {
+                return (
+                    Status::Fail,
+                    "expected simulation to succeed, but it failed".to_string(),
+                    response.error.clone(),
+                );
+            }
+            if fixture.required_auth.is_empty() {
+                return (
                     Status::Pass,
                     "simulation succeeded as expected".to_string(),
+                    None,
+                );
+            }
+            // Auth assertions run against the parsed `auth` entries of
+            // the simulation's `results` (see [`crate::models`]): an
+            // unmet expectation is a failed check with a diagnostic,
+            // never an engine error or a panic.
+            let entries = parse_auth_results(&response.results);
+            let unmet = unmet_auth_requirements(&fixture.required_auth, &entries);
+            if unmet.is_empty() {
+                let count = fixture.required_auth.len();
+                (
+                    Status::Pass,
+                    format!(
+                        "simulation succeeded with all {count} required authorization entr{} as expected",
+                        if count == 1 { "y" } else { "ies" }
+                    ),
                     None,
                 )
             } else {
                 (
                     Status::Fail,
-                    "expected simulation to succeed, but it failed".to_string(),
-                    response.error.clone(),
+                    "simulation succeeded, but required authorization entries were not satisfied"
+                        .to_string(),
+                    Some(unmet.join("\n")),
                 )
             }
         }
@@ -513,6 +647,61 @@ fn evaluate(
             }
         }
     }
+}
+
+/// Returns one diagnostic line per unmet expectation, or none when every
+/// expectation is satisfied.
+///
+/// A malformed entry reads as a missing field here rather than an error:
+/// an entry without an `address` is reported as `<missing address>` and
+/// can never satisfy an address expectation, so missing auth fields fail
+/// assertions gracefully.
+fn unmet_auth_requirements(
+    expectations: &[AuthExpectation],
+    entries: &[SimulationAuthEntry],
+) -> Vec<String> {
+    let observed_addresses: Vec<&str> = entries
+        .iter()
+        .map(|entry| entry.address.as_deref().unwrap_or("<missing address>"))
+        .collect();
+    let mut unmet = Vec::new();
+    for expectation in expectations {
+        let matched = entries
+            .iter()
+            .find(|entry| entry.address.as_deref() == Some(expectation.address.as_str()));
+        let Some(entry) = matched else {
+            unmet.push(format!(
+                "address {}: not required by the simulation (observed addresses: [{}])",
+                expectation.address,
+                observed_addresses.join(", ")
+            ));
+            continue;
+        };
+        if let Some(expected) = &expectation.function_name {
+            match &entry.root_function_name {
+                Some(actual) if actual == expected => {}
+                Some(actual) => unmet.push(format!(
+                    "address {}: root invocation function name expected {expected:?}, observed {actual:?}",
+                    expectation.address
+                )),
+                None => unmet.push(format!(
+                    "address {}: root invocation function name expected {expected:?}, but the simulation reported none",
+                    expectation.address
+                )),
+            }
+        }
+        if let Some(minimum) = expectation.min_sub_invocations {
+            let observed = entry.sub_invocation_count as u64;
+            if observed < minimum {
+                unmet.push(format!(
+                    "address {}: expected at least {minimum} sub-invocation{}, observed {observed}",
+                    expectation.address,
+                    if minimum == 1 { "" } else { "s" }
+                ));
+            }
+        }
+    }
+    unmet
 }
 
 #[cfg(test)]

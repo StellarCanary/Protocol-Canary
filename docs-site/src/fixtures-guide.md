@@ -93,7 +93,7 @@ target project doesn't have is **skipped**, not failed.
 |---|---|
 | `xdr` | `type` (`StellarValue` \| `ContractExecutable` \| `ScVal` \| `LedgerEntry` \| `TransactionEnvelope`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
 | `rpc` | `method` (`get-network` \| `get-latest-ledger`), `assert` — an array of `{kind, field, value?, expected_type?}` |
-| `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
+| `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`; `simulation-success` may additionally declare `[[expect.required_auth]]` entries — `{address, function_name?, min_sub_invocations?}` — checked against the simulation's reported authorization entries) |
 
 For Soroban argument typing and XDR `ScVal` authoring details, see [`docs/fixtures/scval.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixtures/scval.md).
 

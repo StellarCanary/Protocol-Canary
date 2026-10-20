@@ -4,13 +4,16 @@
 //! this crate only builds unsigned envelopes and simulates them.
 
 pub mod builder;
+pub mod models;
 pub mod runner;
 pub mod simulation;
 
 pub use builder::{
     build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
 };
+pub use models::{parse_auth_results, SimulationAuthEntry};
 pub use runner::{
-    DefaultSorobanRunner, SorobanAssertion, SorobanFixture, SorobanFixtureError, SorobanRunner,
+    AuthExpectation, DefaultSorobanRunner, SorobanAssertion, SorobanFixture, SorobanFixtureError,
+    SorobanRunner,
 };
 pub use simulation::simulate;

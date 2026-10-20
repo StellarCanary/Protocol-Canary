@@ -185,7 +185,7 @@ fn members_at_the_depth_limit_are_found_and_deeper_ones_are_reported() {
     dir.workspace(&[&too_deep]);
     let scan = scan_cargo_workspace(dir.path());
     assert!(scan.members.is_empty());
-    assert_eq!(codes(&scan), ["scan-bound-reached"]);
+    assert_eq!(codes(&scan), ["scan-bound-hit"]);
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn more_than_64_members_are_truncated_with_a_boundary_warning() {
     let bound: Vec<_> = scan
         .diagnostics
         .iter()
-        .filter(|d| d.code == DiagnosticCode::ScanBoundReached)
+        .filter(|d| d.code == DiagnosticCode::ScanBoundHit)
         .collect();
     assert_eq!(bound.len(), 1);
     assert!(bound[0].detail.contains("64"), "{}", bound[0].detail);

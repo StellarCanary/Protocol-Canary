@@ -696,7 +696,6 @@ pub fn read_requirements_txt(root: &Path) -> Option<ProjectManifest> {
     read_requirements_manifest(&root.join("requirements.txt"))
 }
 
-
 fn extract_python_package_name(spec: &str) -> Option<String> {
     let trimmed = spec.trim().trim_matches(|c| c == '\'' || c == '"');
     if trimmed.is_empty() {
@@ -1362,5 +1361,4 @@ fastapi>=0.100.0
         assert_eq!(original_content, after_content);
         assert_eq!(before_metadata.len(), after_metadata.len());
     }
-
 }

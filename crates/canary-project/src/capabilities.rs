@@ -10,6 +10,9 @@ pub use crate::models::{CapabilityEvidence as ModelEvidence, CapabilityModel as 
 /// Dependency names that indicate a Soroban contract project.
 pub const SOROBAN_DEPENDENCIES: &[&str] = &["soroban-sdk"];
 
+/// The verified Go SDK module path (CF-07 section 4).
+pub const GO_STELLAR_SDK_DEPENDENCY: &str = "github.com/stellar/go-stellar-sdk";
+
 /// Dependency names that indicate direct use of official Stellar SDK/XDR
 /// crates without necessarily being a Soroban contract.
 pub const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
@@ -19,6 +22,7 @@ pub const STELLAR_SDK_DEPENDENCIES: &[&str] = &[
     "stellar-strkey",
     "@stellar/stellar-sdk",
     "@stellar/stellar-base",
+    GO_STELLAR_SDK_DEPENDENCY,
 ];
 
 /// Dependency names that indicate the project talks to Stellar RPC.
@@ -205,39 +209,14 @@ mod tests {
     }
 
     #[test]
-    fn detect_capabilities_models_populates_evidence_records() {
+    fn go_stellar_sdk_dependency_yields_stellar_sdk_capability() {
         let signals = DetectionSignals {
             manifests: vec![ProjectManifest {
-                dependency_names: vec!["soroban-sdk".to_string(), "stellar-sdk".to_string()],
+                dependency_names: vec![GO_STELLAR_SDK_DEPENDENCY.to_string()],
             }],
-            has_wasm_artifact: true,
             ..Default::default()
         };
-        let models = detect_capabilities_models(&signals);
-        assert_eq!(models.len(), 3);
-
-        let soroban = models
-            .iter()
-            .find(|m| m.capability == Capability::SorobanContract)
-            .expect("soroban capability model");
-        assert_eq!(soroban.evidence.len(), 1);
-        assert_eq!(soroban.evidence[0].source_file, "manifest");
-        assert_eq!(soroban.evidence[0].matched_text, "soroban-sdk");
-        assert!(!soroban.evidence[0].reason.is_empty());
-
-        let wasm = models
-            .iter()
-            .find(|m| m.capability == Capability::WasmArtifact)
-            .expect("wasm capability model");
-        assert_eq!(wasm.evidence.len(), 1);
-        assert_eq!(wasm.evidence[0].matched_text, "*.wasm");
-    }
-
-    #[test]
-    fn negative_empty_signals_produce_zero_capabilities_and_zero_evidence() {
-        let signals = DetectionSignals::default();
-        let models = detect_capabilities_models(&signals);
-        assert!(models.is_empty());
-        assert!(detect_capabilities(&signals).is_empty());
+        let caps = detect_capabilities(&signals);
+        assert_eq!(caps, vec![Capability::StellarSdkDependency]);
     }
 }

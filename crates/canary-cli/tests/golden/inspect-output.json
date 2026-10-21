@@ -1,0 +1,79 @@
+{
+  "inspectVersion": 1,
+  "toolVersion": "0.2.0",
+  "offline": true,
+  "project": {
+    "root": ".",
+    "rootSelectedBy": "current-directory",
+    "type": "unknown",
+    "typeSource": "detected",
+    "detectedType": "unknown",
+    "capabilities": [],
+    "workspace": {
+      "members": []
+    },
+    "detection": {
+      "evidenceVersion": 1,
+      "root": ".",
+      "capabilities": [],
+      "inspected": [
+        "Cargo.toml"
+      ],
+      "diagnostics": [],
+      "projectType": {
+        "value": "unknown",
+        "source": "detected"
+      }
+    }
+  },
+  "config": {
+    "found": true,
+    "path": ".stellar-canary.toml",
+    "version": 1,
+    "protocol": 28,
+    "projectType": "auto",
+    "tests": {
+      "xdr": true,
+      "rpc": false,
+      "soroban": false
+    },
+    "policy": {
+      "warningsAreFailures": false
+    }
+  },
+  "target": {
+    "protocol": 28,
+    "source": "config"
+  },
+  "fixtures": {
+    "directoryFound": true,
+    "loaded": 2
+  },
+  "plan": {
+    "wouldRun": [
+      {
+        "id": "p28-xdr-1",
+        "surface": "xdr"
+      }
+    ],
+    "skipped": [
+      {
+        "id": "p27-xdr-old",
+        "surface": "xdr",
+        "code": "UNSUPPORTED_PROTOCOL",
+        "reason": "fixture targets protocol 27, this run targets protocol 28"
+      }
+    ],
+    "checkWouldRefuse": false,
+    "refusal": null
+  },
+  "workspace": {
+    "members": []
+  },
+  "fingerprint": {
+    "fingerprintVersion": 1,
+    "detector": 1,
+    "digest": "sha256:859e9ac27cdbe3ee8bbaac66355d2e4ab98879e7c27f5d8a099e5a34ec0144bc",
+    "inputs": 1
+  }
+}

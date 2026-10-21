@@ -499,6 +499,14 @@ pub struct FixturesArgs {
     /// Shorthand for --format json.
     #[arg(long)]
     pub json: bool,
+
+    /// Filter fixtures by compatibility surface.
+    #[arg(long, value_enum)]
+    pub surface: Option<SurfaceFilter>,
+
+    /// Filter fixtures by category.
+    #[arg(long)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -931,5 +939,23 @@ mod tests {
             .map(|shell| shell.to_possible_value().unwrap().get_name().to_string())
             .collect();
         assert_eq!(names, ["bash", "zsh", "fish", "powershell"]);
+    }
+
+    #[test]
+    fn fixtures_flags_parse_surface_and_category() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "fixtures",
+            "--surface",
+            "rpc",
+            "--category",
+            "network",
+        ]);
+        if let Command::Fixtures(args) = cli.command {
+            assert_eq!(args.surface, Some(SurfaceFilter::Rpc));
+            assert_eq!(args.category.as_deref(), Some("network"));
+        } else {
+            panic!("Expected Fixtures command");
+        }
     }
 }

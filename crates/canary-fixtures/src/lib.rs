@@ -16,7 +16,7 @@ pub use archive::{
     ExtractionSummary, MAX_ENTRIES, MAX_FILE_BYTES, MAX_PATH_DEPTH, MAX_TOTAL_BYTES,
 };
 pub use digest::{pack_digest, PackDigest, PackError, PackFile};
-pub use loader::{load_directory, FixtureError, MAX_FIXTURE_BYTES};
+pub use loader::{filter_fixtures, load_directory, FixtureError, MAX_FIXTURE_BYTES};
 pub use manifest::{
     content_digest, parse_fixture_file, parse_fixture_str, unknown_body_keys, LoadedFixture,
 };

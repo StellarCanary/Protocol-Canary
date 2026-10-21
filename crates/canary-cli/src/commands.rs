@@ -1117,7 +1117,12 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     } else {
         Vec::new()
     };
-    let store = canary_fixtures::validate(&loaded_fixtures)?;
+    let _store = canary_fixtures::validate(&loaded_fixtures)?;
+
+    let surface_filter: Option<Surface> = args.surface.map(Into::into);
+    let category_filter = args.category.as_deref();
+    let filtered_fixtures =
+        canary_fixtures::filter_fixtures(&loaded_fixtures, surface_filter, category_filter);
 
     let format = if args.json {
         FixturesFormat::Json
@@ -1132,10 +1137,15 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
             let target = canary_core::ProtocolVersion(protocol);
             let mut any = false;
             for surface in canary_report::SURFACE_ORDER {
-                let ids: Vec<&str> = store
-                    .for_protocol(target)
-                    .filter(|f| f.surface == surface)
-                    .map(|f| f.id.as_str())
+                if let Some(expected) = surface_filter {
+                    if surface != expected {
+                        continue;
+                    }
+                }
+                let ids: Vec<&str> = filtered_fixtures
+                    .iter()
+                    .filter(|f| f.metadata.protocol == target && f.metadata.surface == surface)
+                    .map(|f| f.metadata.id.as_str())
                     .collect();
                 if ids.is_empty() {
                     continue;
@@ -1157,7 +1167,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
                 protocol,
                 fixtures_dir.is_dir(),
                 &fixtures_dir,
-                &loaded_fixtures,
+                &filtered_fixtures,
             );
             print!("{}", fixtures_json::render(&inventory));
         }
@@ -1538,6 +1548,8 @@ mod tests {
             config: config.map(PathBuf::from),
             format: crate::cli::FixturesFormat::Terminal,
             json: false,
+            surface: None,
+            category: None,
         }
     }
 

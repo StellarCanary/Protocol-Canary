@@ -378,6 +378,11 @@ impl FixtureStore {
         &self.fixtures
     }
 
+    /// Returns the number of fixture metadata entries in the store.
+    ///
+    /// This counts all entries regardless of protocol or compatibility
+    /// surface. Use [`FixtureStore::is_empty`] when only checking whether
+    /// any fixtures are present.
     pub fn len(&self) -> usize {
         self.fixtures.len()
     }

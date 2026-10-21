@@ -174,9 +174,12 @@ impl CacheStore {
         }
         if surface != Surface::Xdr {
             let max_age = self.policy.live_max_age?;
-            let created = UNIX_EPOCH + Duration::from_secs(entry.created_at);
             // An entry stamped in the future (a clock that moved back, or a
             // hand-edited file) has no trustworthy age, so it is not used.
+            // A stamp too large for `SystemTime` (whose range is platform
+            // dependent, and much narrower on Windows) is the same case:
+            // `checked_add` makes it a miss instead of an overflow panic.
+            let created = UNIX_EPOCH.checked_add(Duration::from_secs(entry.created_at))?;
             let age = now.duration_since(created).ok()?;
             if age > max_age {
                 return None;
@@ -628,6 +631,23 @@ mod tests {
 
         let long_ago = SystemTime::now() - Duration::from_secs(7200);
         assert!(store.get_at(&key, Surface::Soroban, long_ago).is_none());
+    }
+
+    #[test]
+    fn a_live_entry_with_an_unrepresentable_timestamp_is_a_miss_not_a_panic() {
+        let dir = tempdir();
+        let store = live_store(&dir, 3600);
+        let key = sample_key();
+        store
+            .put(&key, Surface::Rpc, &sample_result(Status::Pass))
+            .unwrap();
+        let path = dir.path().join(format!("{}.json", key.to_file_stem()));
+        let mut entry: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        entry["created_at"] = serde_json::json!(u64::MAX);
+        std::fs::write(&path, serde_json::to_vec(&entry).unwrap()).unwrap();
+
+        assert!(store.get(&key, Surface::Rpc).is_none());
     }
 
     #[test]

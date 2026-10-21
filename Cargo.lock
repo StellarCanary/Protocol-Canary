@@ -216,6 +216,7 @@ name = "canary-fixtures"
 version = "0.2.0"
 dependencies = [
  "canary-core",
+ "canary-rpc",
  "flate2",
  "serde",
  "sha2 0.11.0",

@@ -654,10 +654,36 @@ async fn a_live_entry_stamped_in_the_future_is_not_replayed() {
     ));
 
     run_one(&plan, &context(cache.store(live_policy())), &server.uri()).await;
-    edit_entry(&cache.only_entry(), "created_at", json!(u64::MAX / 2));
+    let tomorrow = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        + 24 * 3600;
+    edit_entry(&cache.only_entry(), "created_at", json!(tomorrow));
 
     let result = run_one(&plan, &context(cache.store(live_policy())), &server.uri()).await;
     assert_eq!(result.source, ResultSource::Live);
+    assert_eq!(request_count(&server).await, 2);
+}
+
+#[tokio::test]
+async fn a_live_entry_with_an_unrepresentable_timestamp_re_executes() {
+    // `u64::MAX` seconds is past the end of `SystemTime` on every platform
+    // (Windows' range is far narrower than Unix's). Reading the entry must
+    // be a miss, not an overflow panic that takes the run down.
+    let server = server_answering(simulation_ok()).await;
+    let cache = TempCache::new("soroban-overflow");
+    let plan = soroban_plan(soroban_fixture(
+        "soroban-overflow",
+        "kind = \"simulation-success\"\n",
+    ));
+
+    run_one(&plan, &context(cache.store(live_policy())), &server.uri()).await;
+    edit_entry(&cache.only_entry(), "created_at", json!(u64::MAX));
+
+    let result = run_one(&plan, &context(cache.store(live_policy())), &server.uri()).await;
+    assert_eq!(result.source, ResultSource::Live);
+    assert_eq!(result.status, Status::Pass);
     assert_eq!(request_count(&server).await, 2);
 }
 

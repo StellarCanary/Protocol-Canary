@@ -50,6 +50,11 @@ pub enum XdrAssertion {
         value_base64: String,
         expected_base64: String,
     },
+    /// Decoding the value must produce a JSON structure matching `expected_json`.
+    DecodeJsonEquals {
+        value_base64: String,
+        expected_json: serde_json::Value,
+    },
 }
 
 /// A fully parsed XDR compatibility fixture.
@@ -103,9 +108,17 @@ impl XdrFixture {
         };
 
         let assertion = match kind {
-            "decode-success" => XdrAssertion::DecodeSuccess {
-                value_base64: string_field("value_base64")?,
-            },
+            "decode-success" => {
+                let value_base64 = string_field("value_base64")?;
+                if let Some(expected_json_val) = table.get("expected_json") {
+                    XdrAssertion::DecodeJsonEquals {
+                        value_base64,
+                        expected_json: toml_to_json(expected_json_val),
+                    }
+                } else {
+                    XdrAssertion::DecodeSuccess { value_base64 }
+                }
+            }
             "decode-failure" => XdrAssertion::DecodeFailure {
                 value_base64: string_field("value_base64")?,
             },
@@ -116,10 +129,20 @@ impl XdrFixture {
                 value_base64: string_field("value_base64")?,
                 expected_base64: string_field("expected_base64")?,
             },
+            "decode-json-equals" => {
+                let value_base64 = string_field("value_base64")?;
+                let expected_json_val = table.get("expected_json").ok_or_else(|| {
+                    invalid("decode-json-equals assertion missing \"expected_json\"".to_string())
+                })?;
+                XdrAssertion::DecodeJsonEquals {
+                    value_base64,
+                    expected_json: toml_to_json(expected_json_val),
+                }
+            }
             other => {
                 return Err(invalid(format!(
                     "unsupported assertion kind {other:?}: expected one of \"decode-success\", \
-                     \"decode-failure\", \"roundtrip\", \"encode-equals\""
+                     \"decode-failure\", \"roundtrip\", \"encode-equals\", \"decode-json-equals\""
                 )))
             }
         };
@@ -254,6 +277,155 @@ fn evaluate(fixture: &XdrFixture) -> (canary_core::Status, String, Option<String
                 ),
             },
         },
+        XdrAssertion::DecodeJsonEquals {
+            value_base64,
+            expected_json,
+        } => match decode(fixture.type_name, value_base64) {
+            Err(e) => (
+                Status::Fail,
+                format!("failed to decode {} input", fixture.type_name),
+                Some(e.to_string()),
+            ),
+            Ok(decoded) => match decoded.to_json() {
+                Err(e) => (
+                    Status::Error,
+                    "failed to serialize decoded XDR value to JSON".to_string(),
+                    Some(e.to_string()),
+                ),
+                Ok(actual_json) => {
+                    let diffs = compare_json_values("$", expected_json, &actual_json);
+                    if diffs.is_empty() {
+                        (
+                            Status::Pass,
+                            format!("decoded {} JSON matched expectations", fixture.type_name),
+                            None,
+                        )
+                    } else {
+                        (
+                            Status::Fail,
+                            format!(
+                                "decoded {} JSON did not match expected structure ({} mismatch(es))",
+                                fixture.type_name,
+                                diffs.len()
+                            ),
+                            Some(diffs.join("\n")),
+                        )
+                    }
+                }
+            },
+        },
+    }
+}
+
+pub fn compare_json_values(
+    path: &str,
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+) -> Vec<String> {
+    let mut diffs = Vec::new();
+    compare_inner(path, expected, actual, &mut diffs);
+    diffs
+}
+
+fn json_type_name(val: &serde_json::Value) -> &'static str {
+    match val {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "boolean",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
+}
+
+fn path_join(parent: &str, key: &str) -> String {
+    let is_simple_ident = !key.is_empty()
+        && key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if is_simple_ident {
+        format!("{parent}.{key}")
+    } else {
+        format!("{parent}[\"{key}\"]")
+    }
+}
+
+fn compare_inner(
+    path: &str,
+    expected: &serde_json::Value,
+    actual: &serde_json::Value,
+    diffs: &mut Vec<String>,
+) {
+    match (expected, actual) {
+        (serde_json::Value::Object(exp_map), serde_json::Value::Object(act_map)) => {
+            for (key, exp_val) in exp_map {
+                let key_path = path_join(path, key);
+                match act_map.get(key) {
+                    None => {
+                        diffs.push(format!(
+                            "at {key_path}: missing expected field (expected {exp_val})"
+                        ));
+                    }
+                    Some(act_val) => {
+                        compare_inner(&key_path, exp_val, act_val, diffs);
+                    }
+                }
+            }
+            for (key, act_val) in act_map {
+                let key_path = path_join(path, key);
+                if !exp_map.contains_key(key) {
+                    diffs.push(format!(
+                        "at {key_path}: unexpected field in actual value (found {act_val})"
+                    ));
+                }
+            }
+        }
+        (serde_json::Value::Array(exp_arr), serde_json::Value::Array(act_arr)) => {
+            if exp_arr.len() != act_arr.len() {
+                diffs.push(format!(
+                    "at {path}: array length mismatch (expected {}, found {})",
+                    exp_arr.len(),
+                    act_arr.len()
+                ));
+            }
+            let min_len = exp_arr.len().min(act_arr.len());
+            for i in 0..min_len {
+                let elem_path = format!("{path}[{i}]");
+                compare_inner(&elem_path, &exp_arr[i], &act_arr[i], diffs);
+            }
+        }
+        (exp, act) if json_type_name(exp) != json_type_name(act) => {
+            diffs.push(format!(
+                "at {path}: type mismatch (expected {}, found {})",
+                json_type_name(exp),
+                json_type_name(act)
+            ));
+        }
+        (exp, act) => {
+            if exp != act {
+                diffs.push(format!("at {path}: expected {exp}, found {act}"));
+            }
+        }
+    }
+}
+
+fn toml_to_json(value: &toml::Value) -> serde_json::Value {
+    match value {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::Value::Number((*i).into()),
+        toml::Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map_or(serde_json::Value::Null, serde_json::Value::Number),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Array(items) => {
+            serde_json::Value::Array(items.iter().map(toml_to_json).collect())
+        }
+        toml::Value::Table(table) => serde_json::Value::Object(
+            table
+                .iter()
+                .map(|(k, v)| (k.clone(), toml_to_json(v)))
+                .collect(),
+        ),
     }
 }
 

@@ -302,14 +302,21 @@ fn an_unknown_flag_is_a_usage_error_with_the_subcommand_usage() {
     let project = TempProject::new("cli-err-unknown-flag");
     for command in COMMANDS {
         let output = run(&project, command, &["--no-such-flag"]);
-        assert_usage_error(
-            &output,
-            command,
-            &[
-                "unexpected argument '--no-such-flag'",
-                &format!("Usage: stellar-canary {command}"),
-            ],
+        assert_usage_error(&output, command, &["unexpected argument '--no-such-flag'"]);
+        // clap names the binary as it was invoked, so on Windows the usage
+        // line reads `stellar-canary.exe <command>`.
+        let err = stderr(&output);
+        let usage = err
+            .lines()
+            .find(|line| line.starts_with("Usage: "))
+            .unwrap_or_else(|| panic!("{command}: no usage line:\n{err}"));
+        let mut words = usage.split_whitespace().skip(1);
+        let binary = words.next().unwrap_or_default();
+        assert!(
+            binary == "stellar-canary" || binary == "stellar-canary.exe",
+            "{command}: {usage}"
         );
+        assert_eq!(words.next(), Some(command), "{command}: {usage}");
     }
 }
 

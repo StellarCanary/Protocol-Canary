@@ -28,8 +28,9 @@ pub use manifest::{
 };
 pub use models::{CapabilityEvidence as ModelCapabilityEvidence, CapabilityModel};
 pub use workspace::{
-    scan_cargo_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode, WorkspaceMember,
-    WorkspaceScan, MAX_DIRECTORIES_VISITED, MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
+    scan_cargo_workspace, scan_npm_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode,
+    WorkspaceMember, WorkspaceScan, MAX_DIRECTORIES_VISITED, MAX_WORKSPACE_DEPTH,
+    MAX_WORKSPACE_MEMBERS,
 };
 
 /// Test-only temp-directory helper shared by this crate's unit tests, so no

@@ -60,6 +60,45 @@
       </div>
     </section>
 
+    <section id="compare">
+      <h2>Compare two reports</h2>
+      <p>
+        Load a baseline (earlier run) and a current (later run) report. The check-by-check
+        outcome table uses the same transition table as the engine. Both files are read in
+        this browser tab and are not uploaded anywhere.
+      </p>
+      <div id="compare-decision" class="compare-picks">
+        <div id="baseline-drop" class="drop">
+          <label for="baseline-file">Baseline report (earlier run), or drop it here</label>
+          <input id="baseline-file" type="file" accept=".json,application/json">
+        </div>
+        <div id="current-drop" class="drop">
+          <label for="current-file">Current report (later run), or drop it here</label>
+          <input id="current-file" type="file" accept=".json,application/json">
+        </div>
+      </div>
+      <p id="compare-status" hidden></p>
+    </section>
+
+    <section id="compare-result" hidden aria-live="polite">
+      <div id="compare-ineligible" class="mismatch-banner" role="alert" hidden></div>
+      <h3 id="compare-verdict" hidden></h3>
+      <p id="compare-summary"></p>
+      <table id="compare-table" hidden>
+        <caption>Check-by-check comparison</caption>
+        <thead>
+          <tr>
+            <th scope="col">Surface</th>
+            <th scope="col">Check</th>
+            <th scope="col">Baseline</th>
+            <th scope="col">Current</th>
+            <th scope="col">Outcome</th>
+          </tr>
+        </thead>
+        <tbody id="compare-body"></tbody>
+      </table>
+    </section>
+
     <aside>
       <h2>Before you share a report</h2>
       <p>A report can contain the project directory name and the Git branch name. Check it before posting it publicly. This page has no upload, copy or print feature.</p>

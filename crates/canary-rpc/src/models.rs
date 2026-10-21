@@ -87,6 +87,63 @@ pub struct Event {
     pub value: String,
 }
 
+/// The result of `getLedgers`.
+///
+/// Reference: <https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLedgers>
+///
+/// The range bounds are optional because the endpoint may answer a range it
+/// retains nothing of with only `ledgers: []`: an empty range is a valid,
+/// successful answer, not a malformed one.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetLedgersResponse {
+    /// The ledgers in the requested range, in ascending sequence order.
+    /// Empty when the endpoint returns no ledger for that range.
+    #[serde(default)]
+    pub ledgers: Vec<LedgerHeaderInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger_close_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger_close_time: Option<String>,
+    /// Opaque cursor for the page after this one, when the endpoint returns
+    /// one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor: Option<String>,
+}
+
+impl GetLedgersResponse {
+    /// Whether the response carries no ledger for the requested range.
+    pub fn is_empty(&self) -> bool {
+        self.ledgers.is_empty()
+    }
+}
+
+/// One ledger header in a `getLedgers` response.
+///
+/// `header_xdr` and `metadata_xdr` stay base64 strings here, like every
+/// other XDR-bearing field in this crate; callers decode them with
+/// `canary-xdr`/`stellar-xdr` rather than this crate reimplementing XDR.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LedgerHeaderInfo {
+    /// Hex-encoded ledger hash.
+    pub hash: String,
+    /// The ledger's sequence number.
+    pub sequence: u32,
+    /// The ledger's closing time as the endpoint reports it — a
+    /// string-encoded Unix timestamp, not a number.
+    pub ledger_close_time: String,
+    /// Base64-encoded `LedgerHeader` XDR.
+    pub header_xdr: String,
+    /// Base64-encoded `LedgerCloseMeta` XDR, when the endpoint includes it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metadata_xdr: Option<String>,
+}
+
 /// The result of `getTransactions`.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -210,6 +267,113 @@ mod tests {
         assert!(json.contains("type"));
         assert!(json.contains("contractIds"));
         assert!(json.contains("topics"));
+    }
+
+    #[test]
+    fn get_ledgers_response_parses_the_ledger_list_and_sequence_numbers() {
+        let json = r#"{
+            "ledgers": [
+                {
+                    "hash": "26a4b6c1",
+                    "sequence": 456,
+                    "ledgerCloseTime": "1722464376",
+                    "headerXdr": "AAAA",
+                    "metadataXdr": "BBBB"
+                },
+                {
+                    "hash": "26a4b6c2",
+                    "sequence": 457,
+                    "ledgerCloseTime": "1722464377",
+                    "headerXdr": "CCCC"
+                }
+            ],
+            "latestLedger": 500,
+            "latestLedgerCloseTime": "1722464400",
+            "oldestLedger": 1,
+            "oldestLedgerCloseTime": "1722460000",
+            "cursor": "457"
+        }"#;
+        let response: GetLedgersResponse = serde_json::from_str(json).unwrap();
+        assert!(!response.is_empty());
+        assert_eq!(response.ledgers.len(), 2);
+        assert_eq!(response.ledgers[0].sequence, 456);
+        assert_eq!(response.ledgers[1].sequence, 457);
+        assert_eq!(response.ledgers[0].ledger_close_time, "1722464376");
+        assert_eq!(response.ledgers[0].header_xdr, "AAAA");
+        assert_eq!(response.ledgers[0].metadata_xdr.as_deref(), Some("BBBB"));
+        assert!(response.ledgers[1].metadata_xdr.is_none());
+        assert_eq!(response.latest_ledger, Some(500));
+        assert_eq!(response.oldest_ledger, Some(1));
+        assert_eq!(response.cursor.as_deref(), Some("457"));
+    }
+
+    #[test]
+    fn get_ledgers_response_tolerates_an_empty_range() {
+        for json in [
+            r#"{"ledgers": []}"#,
+            r#"{"ledgers": [], "latestLedger": 500, "oldestLedger": 1}"#,
+        ] {
+            let response: GetLedgersResponse = serde_json::from_str(json).unwrap();
+            assert!(response.is_empty(), "{json}");
+        }
+    }
+
+    #[test]
+    fn get_ledgers_response_tolerates_unrecognized_extra_fields() {
+        let json = r#"{
+            "ledgers": [{
+                "hash": "26a4b6c1",
+                "sequence": 456,
+                "ledgerCloseTime": "1722464376",
+                "headerXdr": "AAAA",
+                "someNewField": true
+            }],
+            "someOtherNewField": { "nested": 1 }
+        }"#;
+        let response: GetLedgersResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(response.ledgers.len(), 1);
+    }
+
+    #[test]
+    fn get_ledgers_response_requires_the_header_fields_it_asserts_on() {
+        // Each case drops one field from an otherwise complete ledger entry.
+        for (missing, json) in [
+            (
+                "sequence",
+                r#"{"ledgers":[{"hash":"abc","ledgerCloseTime":"1722464376","headerXdr":"AAAA"}]}"#,
+            ),
+            (
+                "ledgerCloseTime",
+                r#"{"ledgers":[{"hash":"abc","sequence":1,"headerXdr":"AAAA"}]}"#,
+            ),
+            (
+                "headerXdr",
+                r#"{"ledgers":[{"hash":"abc","sequence":1,"ledgerCloseTime":"1722464376"}]}"#,
+            ),
+            (
+                "hash",
+                r#"{"ledgers":[{"sequence":1,"ledgerCloseTime":"1722464376","headerXdr":"AAAA"}]}"#,
+            ),
+        ] {
+            let err = serde_json::from_str::<GetLedgersResponse>(json)
+                .expect_err(&format!("missing {missing} must not deserialize"));
+            assert!(err.to_string().contains(missing), "{missing}: {err}");
+        }
+    }
+
+    #[test]
+    fn get_ledgers_response_serializes_back_to_camel_case() {
+        let json = r#"{"ledgers":[{"hash":"abc","sequence":7,"ledgerCloseTime":"1722464376","headerXdr":"AAAA"}],"latestLedger":9,"cursor":"7"}"#;
+        let response: GetLedgersResponse = serde_json::from_str(json).unwrap();
+        let roundtripped = serde_json::to_string(&response).unwrap();
+        assert!(
+            roundtripped.contains("\"ledgerCloseTime\""),
+            "{roundtripped}"
+        );
+        assert!(roundtripped.contains("\"headerXdr\""), "{roundtripped}");
+        assert!(roundtripped.contains("\"latestLedger\""), "{roundtripped}");
+        let reparsed: GetLedgersResponse = serde_json::from_str(&roundtripped).unwrap();
+        assert_eq!(reparsed, response);
     }
 
     #[test]

@@ -178,6 +178,325 @@
     return validate(value);
   }
 
+  // ---------------------------------------------------------------
+  // Comparison (CF-05, viewer role per CF-08 section 2.4)
+  // ---------------------------------------------------------------
+  //
+  // These functions reimplement the transition table of CF-05 section 4
+  // for display only, exactly as `crates/canary-report/src/diff.rs`
+  // `classify` does. A hidden divergence is prevented by the shared
+  // golden transition table in the viewer's tests (CF-05-F).
+
+  var DIFF_VERSION = 1;
+
+  /* One side of an incomparable pair, for messages. */
+  var SIDE_LABELS = { baseline: "the baseline report", current: "the current report" };
+
+  function isGood(state) {
+    return state === "pass" || state === "warning";
+  }
+
+  function isFailing(state) {
+    return state === "fail" || state === "error";
+  }
+
+  /* Classifies one identity's transition and says whether it counts as a
+   * regression. `warningsAreFailures` is the policy the *current* run was
+   * evaluated under: with it, `pass` to `warning` is a regression.
+   * Mirrors `diff.rs::classify`; every row has a golden test. */
+  function classifyTransition(from, to, warningsAreFailures) {
+    if (from === to) return { classification: "unchanged", regression: false };
+    if (from === "pass" && to === "warning") {
+      return { classification: "degraded", regression: warningsAreFailures };
+    }
+    if (from === "warning" && to === "pass") {
+      return { classification: "improved", regression: false };
+    }
+    if (isGood(from) && isFailing(to)) {
+      return { classification: "regressed", regression: true };
+    }
+    if (from === "fail" && to === "error") {
+      return { classification: "degraded", regression: true };
+    }
+    if (from === "error" && to === "fail") {
+      return { classification: "improved", regression: false };
+    }
+    if (isFailing(from) && isGood(to)) {
+      return { classification: "resolved", regression: false };
+    }
+    if ((from === "skipped" && isGood(to)) || (from === "absent" && to === "pass")) {
+      return { classification: "added", regression: false };
+    }
+    if ((from === "absent" || from === "skipped") && isFailing(to)) {
+      return { classification: "added-failing", regression: true };
+    }
+    if (from === "absent" && to === "warning") {
+      return { classification: "added-failing", regression: true };
+    }
+    if (isGood(from) && to === "absent") {
+      return { classification: "removed", regression: false };
+    }
+    if (isFailing(from) && to === "absent") {
+      return { classification: "removed-failing", regression: false };
+    }
+    if (isGood(from) && to === "skipped") {
+      return { classification: "skipped", regression: false };
+    }
+    if (isFailing(from) && to === "skipped") {
+      return { classification: "skipped-failing", regression: true };
+    }
+    if ((from === "skipped" && to === "absent") || (from === "absent" && to === "skipped")) {
+      return { classification: "unchanged-skip", regression: false };
+    }
+    return { classification: "unchanged", regression: false };
+  }
+
+  /* UTF-8 byte order comparison of two strings (CF-05 section 5 wants
+   * `(surface, id)` sorted in UTF-8 byte order). `TextEncoder` exists in
+   * every browser that matters and in Node; the fallback covers the rest
+   * by encoding each character to UTF-8 by hand. */
+  var textEncoder = typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+  function utf8BytesOf(text) {
+    if (textEncoder) return textEncoder.encode(text);
+    var bytes = [];
+    for (var i = 0; i < text.length; i++) {
+      var encoded = unescape(encodeURIComponent(text.charAt(i)));
+      for (var k = 0; k < encoded.length; k++) bytes.push(encoded.charCodeAt(k) & 0xff);
+    }
+    return bytes;
+  }
+
+  function utf8Less(first, second) {
+    var a = utf8BytesOf(first);
+    var b = utf8BytesOf(second);
+    for (var i = 0; i < a.length && i < b.length; i++) {
+      if (a[i] !== b[i]) return a[i] < b[i];
+    }
+    return a.length !== b.length && a.length < b.length;
+  }
+
+  /* Identifies one side: `(surface, id)` -> state, where `id` is
+   * `fixtureId` or `testId` when `fixtureId` is absent and skipped entries
+   * use `fixtureId` (CF-05 section 3). Duplicate identities are refused
+   * with the side named. Mirrors `diff.rs::index`. */
+  function stateIndex(report, side) {
+    var index = Object.create(null);
+    var insert = function (surface, id, state, source) {
+      var key = surface + "\u0000" + id;
+      if (index[key] !== undefined) {
+        return fail(
+          SIDE_LABELS[side] + " repeats the result identity " + surface + "/" + id
+        );
+      }
+      index[key] = { state: state, source: source };
+      return null;
+    };
+    var results = Array.isArray(report.results) ? report.results : [];
+    for (var i = 0; i < results.length; i++) {
+      var entry = results[i];
+      var id = entry.fixtureId !== undefined ? entry.fixtureId : entry.testId;
+      var problem = insert(entry.surface, id, entry.status, entry.source);
+      if (problem !== null) return fail(problem.reason);
+    }
+    var skips = Array.isArray(report.skipped) ? report.skipped : [];
+    for (var j = 0; j < skips.length; j++) {
+      var skipEntry = skips[j];
+      var skipProblem = insert(skipEntry.surface, skipEntry.fixtureId, "skipped", undefined);
+      if (skipProblem !== null) return fail(skipProblem.reason);
+    }
+    return { ok: true, index: index };
+  }
+
+  /* The observed protocol of one report, or `null` when it did not
+   * observe one. */
+  function observedProtocol(report) {
+    if (isObject(report.network) && typeof report.network.observedProtocol === "number") {
+      return report.network.observedProtocol;
+    }
+    return null;
+  }
+
+  /* Compares two *validated* CF-01 reports (issue #461).
+   *
+   * Returns `{ ok: true, comparison }` or `{ ok: false, reason }`, exactly
+   * the shapes `parseReport` makes. The comparison mirrors
+   * `crates/canary-report/src/diff.rs::compare` for `diffVersion` 1:
+   * eligibility first (different `targetProtocol` is refused; each side's
+   * schema must be 1), then one entry per identity sorted by
+   * `(surface, id)` in UTF-8 byte order, the missing set, the summary
+   * counts, and the first-match-wins verdict.
+   *
+   * Options: `warningsAreFailures` (mirror of `CompareOptions`), defaulting
+   * to false when not given.
+   */
+  function compareReports(baseline, current, options) {
+    var warningPolicy = options === true || (options && options.warningsAreFailures === true);
+
+    if (!isObject(baseline) || baseline.schemaVersion !== 1) {
+      return fail("the baseline report must be a validated CF-01 report (schemaVersion 1)");
+    }
+    if (!isObject(current) || current.schemaVersion !== 1) {
+      return fail("the current report must be a validated CF-01 report (schemaVersion 1)");
+    }
+    if (baseline.targetProtocol !== current.targetProtocol) {
+      return fail(
+        "these reports cannot be compared: the baseline is about target protocol " +
+          baseline.targetProtocol +
+          " and the current report is about target protocol " +
+          current.targetProtocol +
+          ". Results about different protocols are not comparable."
+      );
+    }
+
+    var before = stateIndex(baseline, "baseline");
+    if (!before.ok) return before;
+    var after = stateIndex(current, "current");
+    if (!after.ok) return after;
+    before = before.index;
+    after = after.index;
+
+    var emptyBaseline = Array.isArray(baseline.results) && baseline.results.length === 0;
+    var emptyCurrent = Array.isArray(current.results) && current.results.length === 0;
+
+    // One sorted key list over the union of both sides.
+    var keys = Object.keys(before).concat(Object.keys(after).filter(function (key) {
+      return before[key] === undefined;
+    }));
+    keys.sort(function (a, b) {
+      var pa = a.split("\u0000");
+      var pb = b.split("\u0000");
+      var surface = utf8Less(pa[0], pb[0]) ? -1 : (utf8Less(pb[0], pa[0]) ? 1 : 0);
+      if (surface !== 0) return surface;
+      return utf8Less(pa[1], pb[1]) ? -1 : (utf8Less(pb[1], pa[1]) ? 1 : 0);
+    });
+
+    var entries = [];
+    var missing = [];
+    for (var i = 0; i < keys.length; i++) {
+      var parts = keys[i].split("\u0000");
+      var surface = parts[0];
+      var id = parts[1];
+      var from = before[keys[i]] || { state: "absent", source: undefined };
+      var to = after[keys[i]] || { state: "absent", source: undefined };
+      var classified = classifyTransition(from.state, to.state, warningPolicy);
+      var regression = classified.regression;
+      // An empty side cannot establish a regression (CF-05 section 2).
+      if (emptyBaseline || emptyCurrent) regression = false;
+      if (isGood(from.state) && (to.state === "absent" || to.state === "skipped")) {
+        missing.push({ surface: surface, id: id });
+      }
+      var cached =
+        from.source === "cache" || to.source === "cache";
+      entries.push({
+        surface: surface,
+        id: id,
+        from: from.state,
+        to: to.state,
+        classification: classified.classification,
+        regression: regression,
+        // `null`, not `false`, when this identity never touched the cache.
+        sourceChanged: cached ? from.source !== to.source : null,
+      });
+    }
+
+    var summary = {
+      regressed: 0,
+      resolved: 0,
+      added: 0,
+      removed: 0,
+      unchanged: 0,
+      missing: missing.length,
+    };
+    for (var e = 0; e < entries.length; e++) {
+      if (entries[e].regression) summary.regressed++;
+      switch (entries[e].classification) {
+        case "resolved": summary.resolved++; break;
+        case "added":
+        case "added-failing": summary.added++; break;
+        case "removed":
+        case "removed-failing": summary.removed++; break;
+        case "unchanged":
+        case "unchanged-skip": summary.unchanged++; break;
+        default: break;
+      }
+    }
+
+    var verdict = "no-change";
+    if (entries.some(function (entry) { return entry.regression; })) {
+      verdict = "regression";
+    } else if (missing.length > 0) {
+      verdict = "coverage-lost";
+    } else if (
+      entries.some(function (entry) {
+        return entry.classification === "resolved" ||
+          entry.classification === "improved" ||
+          entry.classification === "added";
+      })
+    ) {
+      verdict = "improved";
+    }
+
+    var baselineProtocol = observedProtocol(baseline);
+    var currentProtocol = observedProtocol(current);
+    var packOf = function (report) {
+      return isObject(report.fixturePack) &&
+        typeof report.fixturePack.digest === "string"
+        ? report.fixturePack.digest
+        : null;
+    };
+    var baselinePack = packOf(baseline);
+    var currentPack = packOf(current);
+    var fixturePackChanged;
+    if (baselinePack === null || currentPack === null) {
+      fixturePackChanged = null; // unknown, not false (CF-05 section 2)
+    } else {
+      fixturePackChanged = baselinePack !== currentPack;
+    }
+
+    return {
+      ok: true,
+      comparison: {
+        diffVersion: DIFF_VERSION,
+        comparable: true,
+        baseline: {
+          toolVersion: baseline.toolVersion,
+          targetProtocol: baseline.targetProtocol,
+          status: baseline.status,
+        },
+        current: {
+          toolVersion: current.toolVersion,
+          targetProtocol: current.targetProtocol,
+          status: current.status,
+        },
+        fixturePackChanged: fixturePackChanged,
+        observedProtocolChanged:
+          baselineProtocol !== null && currentProtocol !== null
+            ? baselineProtocol !== currentProtocol
+            : false,
+        emptyBaseline: emptyBaseline,
+        emptyCurrent: emptyCurrent,
+        entries: entries,
+        missing: missing,
+        summary: summary,
+        verdict: verdict,
+      },
+    };
+  }
+
+  /* The fixed verdict headings of the comparison view. Incomparable or
+   * refused comparisons never reach one (they get the refusal alert). */
+  function verdictHeading(verdict) {
+    switch (verdict) {
+      case "regression": return "Regression";
+      case "coverage-lost": return "Coverage lost";
+      case "improved": return "Improved";
+      case "no-change": return "No change";
+      case "incomparable": return "Not comparable";
+      default: return "Comparison";
+    }
+  }
+
   var api = {
     MAX_BYTES: MAX_BYTES,
     STORAGE_PREFIX: STORAGE_PREFIX,
@@ -186,7 +505,12 @@
     deriveCounts: deriveCounts,
     countMismatches: countMismatches,
     heading: heading,
-    checkSize: checkSize
+    checkSize: checkSize,
+    DIFF_VERSION: DIFF_VERSION,
+    classifyTransition: classifyTransition,
+    stateIndex: stateIndex,
+    compareReports: compareReports,
+    verdictHeading: verdictHeading
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

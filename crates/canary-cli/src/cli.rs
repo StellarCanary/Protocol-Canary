@@ -16,9 +16,9 @@ use canary_core::Surface;
 ///
 /// `Cli` is the `clap` entry point: it holds the one required subcommand the
 /// user typed — [`Command::Check`], [`Command::Inspect`],
-/// [`Command::Fixtures`], [`Command::Report`], [`Command::Completions`] or
-/// [`Command::Version`] — together with that subcommand's own argument
-/// struct. The binary name and
+/// [`Command::Fixtures`], [`Command::Report`], [`Command::Cache`],
+/// [`Command::Lock`], [`Command::Completions`] or [`Command::Version`] —
+/// together with that subcommand's own argument struct. The binary name and
 /// version banner come from the `#[command(...)]` attributes above, and flags
 /// that apply to a single run live on the per-command `*Args` types rather
 /// than here.
@@ -41,10 +41,11 @@ pub struct Cli {
 ///
 /// `Check` runs compatibility assertions, while `Inspect` and `Fixtures`
 /// provide offline project and fixture information. `Report` renders a
-/// previously generated JSON report, `Completions` prints a shell
-/// completion script, and `Version` prints the tool version. Parsing this
-/// enum is handled by `clap`; the variants themselves do not perform I/O or
-/// panic during argument parsing.
+/// previously generated JSON report, `Cache` manages cached execution
+/// results, `Lock` verifies the fixture-pack pin, `Completions` prints a
+/// shell completion script, and `Version` prints the tool version. Parsing
+/// this enum is handled by `clap`; the variants themselves do not perform
+/// I/O or panic during argument parsing.
 pub enum Command {
     /// Run compatibility checks against the current project.
     Check(CheckArgs),
@@ -57,6 +58,9 @@ pub enum Command {
     /// Manage the local result cache.
     #[command(subcommand)]
     Cache(CacheArgs),
+    /// Manage the fixture-pack lockfile.
+    #[command(subcommand)]
+    Lock(LockArgs),
     /// Print a shell completion script.
     Completions(CompletionsArgs),
     /// Print the tool version.
@@ -272,6 +276,50 @@ impl From<SurfaceFilter> for Surface {
 pub enum CacheArgs {
     /// Delete cached fixture execution results and report reclaimed space.
     Clear(CacheClearArgs),
+}
+
+/// Arguments for the `lock` command group (CF-03).
+///
+/// `lock verify` re-checks the pin a `.stellar-canary.lock` file holds: it
+/// loads the lock under the parser rules of CF-03 section 3, computes the
+/// `canary-pack-v1` digest (CF-02) of the fixture directory the
+/// configuration resolves to, and compares the two. It never writes: the
+/// fixture pack, the lockfile, and the cache are left exactly as they are.
+#[derive(Debug, Subcommand)]
+pub enum LockArgs {
+    /// Verify that the lockfile still matches the fixture pack.
+    Verify(LockVerifyArgs),
+}
+
+/// Arguments for `stellar-canary lock verify`.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary lock verify
+/// stellar-canary lock verify --project-root path/to/project
+/// stellar-canary lock verify --fixtures-dir ci/fixtures
+/// ```
+#[derive(Debug, Parser)]
+pub struct LockVerifyArgs {
+    /// Directory to treat as the project root (default: the current
+    /// directory). Relative `--config` and `--fixtures-dir` paths are
+    /// resolved against it. The root is never searched for in parent
+    /// directories.
+    #[arg(long = "project-root", value_name = "PATH")]
+    pub project_root: Option<PathBuf>,
+
+    /// Directory containing fixture files (overrides `fixtures_dir` in
+    /// .stellar-canary.toml; default: fixtures). Overriding the location
+    /// does not waive the pin: the chosen directory is still verified
+    /// against `packDigest`.
+    #[arg(long = "fixtures-dir", value_name = "PATH")]
+    pub fixtures_dir: Option<PathBuf>,
+
+    /// Path to a configuration file (default: .stellar-canary.toml in the
+    /// project root).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 /// Arguments for `stellar-canary cache clear`.

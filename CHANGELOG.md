@@ -6,6 +6,14 @@ All notable changes to this project are documented in this file.
 
 ### Added
 
+- XDR fixtures can compare a decoded value to expected JSON with
+  `kind = "decode-json-equals"` and an `expected_json` JSON string. The value
+  is converted with `stellar-xdr`'s own serde JSON form and compared
+  structurally (object key order is ignored, everything else is exact); a
+  mismatch lists each difference by JSON Pointer path with the expected and
+  actual values, and malformed `expected_json` is an invalid fixture.
+  Existing fixture kinds are unchanged.
+
 - `stellar-canary check --fixture <ID>` and `--surface <xdr|rpc|soroban>` to
   run a targeted subset of fixtures. The filters may be combined, preserve
   fixture order, and report an error when no fixture matches.

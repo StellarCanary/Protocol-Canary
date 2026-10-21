@@ -94,6 +94,29 @@ impl DecodedValue {
             DecodedValue::LedgerEntry(_) => XdrTypeName::LedgerEntry,
         }
     }
+
+    /// The value as JSON, in `stellar-xdr`'s own serde representation (the
+    /// one the Stellar CLI prints for `xdr decode --output json`): field
+    /// names in `snake_case`, union arms as single-key objects or bare
+    /// strings for arms without a payload, 64-bit integers as decimal
+    /// strings, opaque bytes as lowercase hex, and keys as strkeys.
+    ///
+    /// ```
+    /// use canary_xdr::{decode, XdrTypeName};
+    ///
+    /// // `AAAABQAAAAAAAAAq` is the XDR encoding of `ScVal::U64(42)`.
+    /// let value = decode(XdrTypeName::ScVal, "AAAABQAAAAAAAAAq").unwrap();
+    /// assert_eq!(value.to_json().unwrap(), serde_json::json!({ "u64": "42" }));
+    /// ```
+    pub fn to_json(&self) -> Result<serde_json::Value, serde_json::Error> {
+        match self {
+            DecodedValue::StellarValue(value) => serde_json::to_value(value),
+            DecodedValue::ContractExecutable(value) => serde_json::to_value(value),
+            DecodedValue::ScVal(value) => serde_json::to_value(value),
+            DecodedValue::TransactionEnvelope(value) => serde_json::to_value(value),
+            DecodedValue::LedgerEntry(value) => serde_json::to_value(value),
+        }
+    }
 }
 
 /// Why a base64 XDR value could not be decoded, with the byte offset at

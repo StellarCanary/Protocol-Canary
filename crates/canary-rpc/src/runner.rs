@@ -367,6 +367,7 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
             details,
             duration_ms,
             fixture_id: Some(fixture.metadata.id.clone()),
+            replayed: false,
         })
     }
 }

@@ -82,6 +82,10 @@ pub struct CheckArgs {
     /// Maximum number of concurrent network requests for RPC/Soroban fixtures.
     #[arg(long, default_value_t = 4)]
     pub max_concurrency: u32,
+
+    /// Disable reading from or writing to the local result cache.
+    #[arg(long = "no-cache")]
+    pub no_cache: bool,
 }
 
 #[derive(Debug, Parser)]

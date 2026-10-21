@@ -157,6 +157,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             quiet: args.quiet,
             max_concurrency: args.max_concurrency,
             rpc_timeout: args.rpc_timeout,
+            no_cache: args.no_cache,
         },
     };
 
@@ -625,6 +626,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: None,
+            replayed: false,
         }
     }
 

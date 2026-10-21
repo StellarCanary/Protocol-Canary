@@ -152,6 +152,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some(id.into()),
+            replayed: false,
         }
     }
 

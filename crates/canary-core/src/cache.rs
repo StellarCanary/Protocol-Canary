@@ -142,6 +142,7 @@ mod tests {
             details: None,
             duration_ms: 5,
             fixture_id: Some("p28-xdr-cap83-001".into()),
+            replayed: false,
         }
     }
 

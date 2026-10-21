@@ -60,6 +60,14 @@ impl DecodedValue {
             DecodedValue::ScVal(_) => XdrTypeName::ScVal,
         }
     }
+
+    pub fn to_json(&self) -> Result<serde_json::Value, serde_json::Error> {
+        match self {
+            DecodedValue::StellarValue(v) => serde_json::to_value(v),
+            DecodedValue::ContractExecutable(v) => serde_json::to_value(v),
+            DecodedValue::ScVal(v) => serde_json::to_value(v),
+        }
+    }
 }
 
 /// Decodes `base64` as the named XDR type.

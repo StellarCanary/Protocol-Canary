@@ -82,6 +82,8 @@ pub struct CompatibilityResult {
     pub details: Option<String>,
     pub duration_ms: u64,
     pub fixture_id: Option<String>,
+    #[serde(default)]
+    pub replayed: bool,
 }
 
 impl CompatibilityResult {
@@ -106,6 +108,7 @@ impl CompatibilityResult {
     ///     details: None,
     ///     duration_ms: 1,
     ///     fixture_id: None,
+    ///     replayed: false,
     /// };
     /// assert!(result.is_required_failure());
     /// ```
@@ -217,6 +220,8 @@ pub struct RunOptions {
     pub quiet: bool,
     pub max_concurrency: u32,
     pub rpc_timeout: u64,
+    #[serde(default)]
+    pub no_cache: bool,
 }
 
 impl Default for RunOptions {
@@ -226,6 +231,7 @@ impl Default for RunOptions {
             quiet: false,
             max_concurrency: 4,
             rpc_timeout: 10,
+            no_cache: false,
         }
     }
 }
@@ -365,6 +371,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-xdr-cap83-001".into()),
+            replayed: false,
         };
         let error = CompatibilityResult {
             status: Status::Error,

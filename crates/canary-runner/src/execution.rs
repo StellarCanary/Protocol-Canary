@@ -39,8 +39,11 @@ fn run_xdr(fixtures: &[XdrFixture], context: &ExecutionContext) -> Vec<Compatibi
         .iter()
         .map(|fixture| {
             let cache_key = cache_key(context, &fixture.metadata.id);
-            if let Some(cached) = context.cache.get(&cache_key) {
-                return cached;
+            if !context.options.no_cache {
+                if let Some(mut cached) = context.cache.get(&cache_key) {
+                    cached.replayed = true;
+                    return cached;
+                }
             }
 
             let result = runner.run(fixture, context).unwrap_or_else(|e| {
@@ -52,7 +55,9 @@ fn run_xdr(fixtures: &[XdrFixture], context: &ExecutionContext) -> Vec<Compatibi
                 )
             });
 
-            let _ = context.cache.put(&cache_key, &result);
+            if !context.options.no_cache {
+                let _ = context.cache.put(&cache_key, &result);
+            }
             result
         })
         .collect()
@@ -71,8 +76,11 @@ async fn run_rpc(
             let runner = &runner;
             async move {
                 let cache_key = cache_key(context, &fixture.metadata.id);
-                if let Some(cached) = context.cache.get(&cache_key) {
-                    return (index, cached);
+                if !context.options.no_cache {
+                    if let Some(mut cached) = context.cache.get(&cache_key) {
+                        cached.replayed = true;
+                        return (index, cached);
+                    }
                 }
 
                 let result = runner.run(fixture, context).await.unwrap_or_else(|e| {
@@ -83,7 +91,9 @@ async fn run_rpc(
                         &e.to_string(),
                     )
                 });
-                let _ = context.cache.put(&cache_key, &result);
+                if !context.options.no_cache {
+                    let _ = context.cache.put(&cache_key, &result);
+                }
                 (index, result)
             }
         })
@@ -108,8 +118,11 @@ async fn run_soroban(
             let runner = &runner;
             async move {
                 let cache_key = cache_key(context, &fixture.metadata.id);
-                if let Some(cached) = context.cache.get(&cache_key) {
-                    return (index, cached);
+                if !context.options.no_cache {
+                    if let Some(mut cached) = context.cache.get(&cache_key) {
+                        cached.replayed = true;
+                        return (index, cached);
+                    }
                 }
 
                 let result = runner.run(fixture, context).await.unwrap_or_else(|e| {
@@ -120,7 +133,9 @@ async fn run_soroban(
                         &e.to_string(),
                     )
                 });
-                let _ = context.cache.put(&cache_key, &result);
+                if !context.options.no_cache {
+                    let _ = context.cache.put(&cache_key, &result);
+                }
                 (index, result)
             }
         })
@@ -147,6 +162,7 @@ fn error_result(
         details: Some(message.to_string()),
         duration_ms: 0,
         fixture_id: Some(fixture_id.to_string()),
+        replayed: false,
     }
 }
 

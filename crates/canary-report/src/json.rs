@@ -70,6 +70,8 @@ struct JsonResult {
     duration_ms: u64,
     #[serde(rename = "fixtureId", skip_serializing_if = "Option::is_none", default)]
     fixture_id: Option<String>,
+    #[serde(default)]
+    replayed: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -156,6 +158,7 @@ impl From<&ReportInput> for JsonReport {
                     details: r.details.clone(),
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id.clone(),
+                    replayed: r.replayed,
                 })
                 .collect(),
             skipped: input
@@ -244,6 +247,7 @@ impl TryFrom<JsonReport> for ReportInput {
                     details: r.details,
                     duration_ms: r.duration_ms,
                     fixture_id: r.fixture_id,
+                    replayed: r.replayed,
                 })
             })
             .collect::<Result<Vec<_>, JsonReportError>>()?;
@@ -351,6 +355,7 @@ mod tests {
                 details: None,
                 duration_ms: 3,
                 fixture_id: Some("p28-xdr-1".into()),
+                replayed: false,
             }],
             skipped: vec![SkipSummary {
                 fixture_id: "p28-soroban-1".into(),
@@ -399,6 +404,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-rpc-1".into()),
+            replayed: false,
         });
         mixed.results.push(CompatibilityResult {
             test_id: "p28-soroban-1".into(),
@@ -409,6 +415,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-soroban-1".into()),
+            replayed: false,
         });
 
         let json_text = JsonReporter::render(&mixed);

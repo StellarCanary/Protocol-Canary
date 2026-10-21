@@ -19,8 +19,19 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerDir = path.join(here, "..");
 
 /* Exactly the element kinds the page is allowed to build: the fact list,
- * the findings and skipped rows, and the collapsed-details blocks. */
-export const ALLOWED_TAGS = new Set(["dt", "dd", "li", "span", "details", "summary", "p"]);
+ * the findings and skipped rows, the collapsed-details blocks, and the
+ * comparison table's rows and cells. */
+export const ALLOWED_TAGS = new Set([
+  "dt",
+  "dd",
+  "li",
+  "span",
+  "details",
+  "summary",
+  "p",
+  "tr",
+  "td",
+]);
 
 const HTML_TRAPS = ["innerHTML", "outerHTML"];
 

@@ -48,6 +48,7 @@ pub enum RpcMethod {
     GetLatestLedger,
     GetHealth,
     GetEvents,
+    GetLedgers,
 }
 
 impl std::str::FromStr for RpcMethod {
@@ -59,8 +60,9 @@ impl std::str::FromStr for RpcMethod {
             "get-latest-ledger" => Ok(RpcMethod::GetLatestLedger),
             "get-health" => Ok(RpcMethod::GetHealth),
             "get-events" => Ok(RpcMethod::GetEvents),
+            "get-ledgers" => Ok(RpcMethod::GetLedgers),
             other => Err(format!(
-                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\", \"get-health\", \"get-events\""
+                "unsupported rpc method {other:?}: supported methods are: \"get-network\", \"get-latest-ledger\", \"get-health\", \"get-events\", \"get-ledgers\""
             )),
         }
     }
@@ -613,6 +615,16 @@ pub struct DefaultRpcRunner<C: RpcClient> {
     client: C,
 }
 
+/// The named `params` object to send for a fixture: its validated
+/// `[request]` table, or an empty object when it has none.
+fn request_params(fixture: &RpcFixture) -> serde_json::Value {
+    fixture
+        .request
+        .clone()
+        .map(serde_json::Value::Object)
+        .unwrap_or_else(|| serde_json::Value::Object(Default::default()))
+}
+
 /// Summary reported when the endpoint says the fixture's RPC method does
 /// not exist (JSON-RPC `-32601`): the check is skipped rather than marked
 /// as an error, because an optional or unsupported method says nothing
@@ -638,14 +650,8 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
             RpcMethod::GetNetwork => self.client.get_network_raw().await,
             RpcMethod::GetLatestLedger => self.client.get_latest_ledger_raw().await,
             RpcMethod::GetHealth => self.client.get_health_raw().await,
-            RpcMethod::GetEvents => {
-                let params = fixture
-                    .request
-                    .clone()
-                    .map(serde_json::Value::Object)
-                    .unwrap_or_else(|| serde_json::Value::Object(Default::default()));
-                self.client.get_events_raw(params).await
-            }
+            RpcMethod::GetEvents => self.client.get_events_raw(request_params(fixture)).await,
+            RpcMethod::GetLedgers => self.client.get_ledgers_raw(request_params(fixture)).await,
         };
 
         let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);

@@ -19,8 +19,8 @@ use serde_json::json;
 use canary_core::CanaryError;
 
 use crate::models::{
-    EventFilter, EventResponse, GetHealthResponse, GetTransactionsResponse, LatestLedger,
-    NetworkInfo, SimulationRequest, SimulationResponse,
+    EventFilter, EventResponse, GetHealthResponse, GetLedgersResponse, GetTransactionsResponse,
+    LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse,
 };
 
 /// Errors returned by the Stellar RPC client.
@@ -50,6 +50,10 @@ use crate::models::{
 ///   reports a different network passphrase or protocol version than the run
 ///   targets. Only [`validate_network_info`] constructs these; see its docs
 ///   for how callers are expected to interpret a mismatch.
+///
+/// - **Local validation** ([`RpcError::InvalidArgument`]): the arguments
+///   cannot be sent, so no request was made. Deterministic, and returned
+///   before the transport is involved.
 ///
 /// The [`std::fmt::Display`] implementation (via `thiserror`) always names
 /// the RPC method involved, so the rendered message is safe to log or surface
@@ -139,6 +143,18 @@ pub enum RpcError {
     /// `reason` carries the structural or serde explanation. Never retried.
     #[error("unexpected response shape from {method}: {reason}")]
     InvalidResponse { method: String, reason: String },
+
+    /// An argument the caller passed cannot be sent to the method, so no
+    /// request was made.
+    ///
+    /// Raised before the wire, by the typed method that validates its own
+    /// parameters (for example `getLedgers`' `startLedger`, which must be a
+    /// real ledger sequence). `reason` names the offending value and the
+    /// accepted range. Deterministic, so it is never retried — and because
+    /// nothing was sent, retrying would not help even for a transient
+    /// failure.
+    #[error("invalid argument for {method}: {reason}")]
+    InvalidArgument { method: String, reason: String },
 
     /// The endpoint is on a different network than the run requested.
     ///
@@ -266,6 +282,32 @@ pub trait RpcClient {
         start_ledger: u32,
         filters: &[EventFilter],
     ) -> impl std::future::Future<Output = Result<EventResponse, RpcError>> + Send;
+
+    /// `getLedgers` for the ledgers from `start_ledger` onward.
+    ///
+    /// `start_ledger` is a real ledger sequence and must be greater than
+    /// zero: ledger 0 does not exist, so it is rejected with
+    /// [`RpcError::InvalidArgument`] before a request is sent. A negative
+    /// value cannot be expressed — the parameter is a `u32`.
+    ///
+    /// `limit` bounds the page size and is sent as
+    /// `pagination.limit`; `None` omits the `pagination` object altogether
+    /// so the endpoint applies its own default. A `limit` outside the
+    /// upstream range `1..=200` is also [`RpcError::InvalidArgument`].
+    fn get_ledgers(
+        &self,
+        start_ledger: u32,
+        limit: Option<u32>,
+    ) -> impl std::future::Future<Output = Result<GetLedgersResponse, RpcError>> + Send;
+
+    /// `getLedgers`'s JSON `result` object exactly as the endpoint returned
+    /// it, for the request parameters in `params`. See
+    /// [`RpcClient::get_network_raw`]: the runner asserts on the raw object
+    /// so a field the typed model does not name stays assertable.
+    fn get_ledgers_raw(
+        &self,
+        params: serde_json::Value,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
 
     /// `getEvents`'s JSON `result` object exactly as the endpoint returned
     /// it, for the request parameters in `params`. See
@@ -706,6 +748,49 @@ fn json_kind(value: &serde_json::Value) -> &'static str {
     }
 }
 
+/// The largest `pagination.limit` `getLedgers` accepts upstream.
+///
+/// This is the documented `getLedgers` maximum. The fixture engine's own
+/// bound on a `[request]` limit is lower (see `crate::request::MAX_LIMIT`);
+/// this one only keeps a caller of the typed method within what the
+/// endpoint will accept.
+const MAX_GET_LEDGERS_LIMIT: u32 = 200;
+
+/// Builds the `getLedgers` params object, rejecting arguments the method
+/// cannot accept before anything is sent.
+///
+/// `start_ledger` must be a real ledger sequence, so `0` is an argument
+/// error rather than a round trip: ledger sequences start at 1, and an
+/// endpoint would answer `0` with a protocol-level error that looks like a
+/// failed check instead of a caller mistake.
+fn get_ledgers_params(
+    start_ledger: u32,
+    limit: Option<u32>,
+) -> Result<serde_json::Value, RpcError> {
+    let invalid = |reason: String| RpcError::InvalidArgument {
+        method: "getLedgers".to_string(),
+        reason,
+    };
+    if start_ledger == 0 {
+        return Err(invalid(
+            "startLedger must be greater than 0 (ledger sequences start at 1)".to_string(),
+        ));
+    }
+    if let Some(limit) = limit {
+        if !(1..=MAX_GET_LEDGERS_LIMIT).contains(&limit) {
+            return Err(invalid(format!(
+                "pagination.limit {limit} is outside 1..={MAX_GET_LEDGERS_LIMIT}"
+            )));
+        }
+    }
+
+    let mut params = json!({ "startLedger": start_ledger });
+    if let Some(limit) = limit {
+        params["pagination"] = json!({ "limit": limit });
+    }
+    Ok(params)
+}
+
 fn classify_reqwest_error(method: &str, error: &reqwest::Error) -> RpcError {
     if error.is_timeout() {
         RpcError::Timeout {
@@ -874,6 +959,22 @@ impl RpcClient for HttpRpcClient {
             "filters": filters,
         });
         self.call("getEvents", params).await
+    }
+
+    async fn get_ledgers(
+        &self,
+        start_ledger: u32,
+        limit: Option<u32>,
+    ) -> Result<GetLedgersResponse, RpcError> {
+        self.call("getLedgers", get_ledgers_params(start_ledger, limit)?)
+            .await
+    }
+
+    async fn get_ledgers_raw(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getLedgers", params).await
     }
 
     async fn get_events_raw(

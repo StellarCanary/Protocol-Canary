@@ -14,7 +14,8 @@ use crate::manifest::{
     parse_workspace_package_json_dependencies, read_package_json, ProjectManifest,
 };
 use crate::workspace::{
-    scan_cargo_workspace, scan_pnpm_workspace_with_limit, MAX_WORKSPACE_MEMBERS,
+    scan_cargo_workspace, scan_npm_workspace_with_limit, scan_pnpm_workspace_with_limit,
+    MAX_WORKSPACE_MEMBERS,
 };
 
 pub use crate::capabilities::GO_STELLAR_SDK_DEPENDENCY;
@@ -178,6 +179,33 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
         inspected.push("pnpm-workspace.yaml".to_string());
     }
     for member in &pnpm_workspace_scan.members {
+        workspace_members.push(member.path.clone());
+        let member_rel = format!("{}/package.json", member.path);
+        let member_path = root.join(&member_rel);
+        if let Ok(raw) = std::fs::read_to_string(&member_path) {
+            inspected.push(member_rel.clone());
+            if let Some(deps) = parse_workspace_package_json_dependencies(&raw) {
+                for dep in deps {
+                    record_dep_evidence(
+                        &dep.name,
+                        &dep.section,
+                        &member_rel,
+                        "npm",
+                        &mut all_evidence,
+                    );
+                }
+            }
+        }
+        manifests.push(member.manifest.clone());
+    }
+    // 2c. npm workspace members (root package.json `workspaces`)
+    let npm_workspace_scan = scan_npm_workspace_with_limit(
+        root,
+        MAX_WORKSPACE_MEMBERS
+            .saturating_sub(workspace_scan.members.len() + pnpm_workspace_scan.members.len()),
+    );
+    diagnostics.extend(npm_workspace_scan.diagnostics);
+    for member in &npm_workspace_scan.members {
         workspace_members.push(member.path.clone());
         let member_rel = format!("{}/package.json", member.path);
         let member_path = root.join(&member_rel);

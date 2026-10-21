@@ -18,3 +18,9 @@ serde.workspace = true
 toml.workspace = true
 flate2 = "1.0"
 tar = "0.4"
+
+[dev-dependencies]
+# Used only by the `rpc_parsing` integration tests, which load RPC fixture
+# TOML through this crate and hand the body to the RPC parser. A dev-only
+# edge: canary-rpc still depends on canary-fixtures, never the reverse.
+canary-rpc.workspace = true

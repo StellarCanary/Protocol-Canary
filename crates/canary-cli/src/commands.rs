@@ -18,12 +18,14 @@ use clap::CommandFactory;
 
 use crate::cli::{
     CacheClearArgs, CheckArgs, Cli, CompletionsArgs, FixturesArgs, FixturesFormat, InspectArgs,
-    InspectFormat, OutputFormat, ReportArgs,
+    InspectFormat, LockVerifyArgs, OutputFormat, ReportArgs,
 };
 use crate::error::{hint_for, print_error};
 use crate::fixtures_json;
 use crate::inspect_json;
 use crate::network::{default_rpc_url, parse_network_name, resolve_passphrase};
+
+use canary_config::LockError;
 
 const CACHE_DIR_NAME: &str = ".stellar-canary-cache";
 
@@ -1294,6 +1296,133 @@ fn run_cache_clear_inner(args: CacheClearArgs) -> Result<ExitCode, CanaryError> 
     Ok(ExitCode::Pass)
 }
 
+/// What `lock verify` decided (CF-03-D).
+///
+/// The distinction only shapes the message and which stream it goes to:
+/// every result that leaves the run is an `ExitCode::Pass` or an
+/// `ExitCode::CompatibilityFailure`. Argument and configuration problems
+/// (a missing project root, an unreadable configuration file) never reach
+/// this type — they are `CanaryError`s, which keep exit code 2.
+enum LockVerifyOutcome {
+    /// The lockfile parses under CF-03 section 3 and `packDigest` matches
+    /// the computed `canary-pack-v1` digest (CF-02) of the resolved pack.
+    Verified(String),
+    /// The lockfile is absent, unreadable, not a valid CF-03 lock, or the
+    /// pack digest differs. All of these are the "the pin does not hold"
+    /// outcome, and none of them is repaired by the command.
+    Unverified(String),
+}
+
+/// Verifies that the project's lockfile still matches the fixture pack
+/// (CF-03-D).
+///
+/// The command is deliberately small and read-only: it resolves
+/// `fixtures_dir` like every other command (the flag, then
+/// `.stellar-canary.toml`, then the default), loads `.stellar-canary.lock`
+/// under the CF-03 section 3 parser rules, computes the fixture pack's
+/// digest, and compares. It writes no file, touches no cache and opens no
+/// network socket.
+///
+/// Exit codes: `0` when the pin holds, `1` when it does not (absent lock,
+/// parser failure, changed pack — verification failed, so the CI answer the
+/// caller asked for is "no"), and `2` when verification could not start
+/// because the invocation itself does not resolve (bad `--project-root`,
+/// unreadable configuration file).
+pub fn run_lock_verify(args: LockVerifyArgs) -> ExitCode {
+    let outcome = match run_lock_verify_inner(&args) {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            print_error(&err);
+            return ExitCode::from(&err);
+        }
+    };
+    match outcome {
+        LockVerifyOutcome::Verified(message) => {
+            println!("{message}");
+            ExitCode::Pass
+        }
+        LockVerifyOutcome::Unverified(message) => {
+            eprintln!("error: {message}");
+            ExitCode::CompatibilityFailure
+        }
+    }
+}
+
+fn run_lock_verify_inner(args: &LockVerifyArgs) -> Result<LockVerifyOutcome, CanaryError> {
+    let project_root = ProjectRoot::resolve(args.project_root.as_deref())?;
+    let root = project_root.path.clone();
+
+    let config = match &args.config {
+        Some(path) => canary_config::load(&project_root.resolve_input(path))?,
+        None => canary_config::load_from_root(&root)?.unwrap_or_default(),
+    };
+    // Highest to lowest: flag, configuration file, built-in default
+    // (`fixtures`, issue #474). Overriding the location does not waive the
+    // pin — the chosen directory is still verified (CF-03 section 4).
+    let settings = canary_config::resolve_settings(
+        &config,
+        canary_config::CliOverrides {
+            fixtures_dir: args.fixtures_dir.clone(),
+            ..canary_config::CliOverrides::default()
+        },
+    );
+    let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
+
+    let lock_path = root.join(canary_config::LOCK_FILE_NAME);
+    let lock = match canary_config::load_lock(&lock_path) {
+        Ok(lock) => lock,
+        Err(LockError::Read { path, source }) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LockVerifyOutcome::Unverified(format!(
+                "no lockfile at {}: nothing is pinned, so there is nothing to verify",
+                path.display()
+            )));
+        }
+        Err(err) => return Ok(LockVerifyOutcome::Unverified(err.to_string())),
+    };
+
+    let pack = match canary_fixtures::pack_digest(&fixtures_dir) {
+        Ok(pack) => pack,
+        // A pack that cannot be digested (unreadable directory, a broken
+        // TOML file, a symbolic link) cannot be identified either, so the
+        // pin does not hold and verification fails (exit 1), like every
+        // other verification outcome.
+        Err(err) => {
+            return Ok(LockVerifyOutcome::Unverified(format!(
+                "the fixture pack at {} could not be verified: {err}",
+                fixtures_dir.display()
+            )));
+        }
+    };
+
+    lock_stale_message(&lock, &pack.digest).map_or_else(
+        || {
+            Ok(LockVerifyOutcome::Verified(format!(
+                "Verified: {} matches the fixture pack at {} (fixtures.packDigest {}, protocol {}).",
+                lock_path.display(),
+                fixtures_dir.display(),
+                lock.fixtures.pack_digest,
+                lock.fixtures.protocol
+            )))
+        },
+        |message| Ok(LockVerifyOutcome::Unverified(message)),
+    )
+}
+
+/// The "the pin does not hold" message for a lock whose `packDigest`
+/// differs from the computed one, or `None` when they agree.
+///
+/// Kept pure so the exact wording is pinned by unit tests in this file.
+fn lock_stale_message(lock: &canary_config::LockFile, computed: &str) -> Option<String> {
+    let pinned = &lock.fixtures.pack_digest;
+    if pinned == computed {
+        return None;
+    }
+    Some(format!(
+        "the lockfile pins fixtures.packDigest {pinned}, but the fixture pack hashes to {computed} (protocol {}): the pack must be re-locked before it is trusted",
+        lock.fixtures.protocol
+    ))
+}
+
 /// Generates a shell completion script for `stellar-canary` and writes it
 /// to stdout.
 ///
@@ -1363,6 +1492,39 @@ mod tests {
         CompatibilityResult, GitContext, PolicyDecision, ProjectType, Status, Surface,
     };
     use std::path::PathBuf;
+
+    fn lock_with_digest(digest: &str) -> canary_config::LockFile {
+        canary_config::LockFile {
+            lock_version: 1,
+            tool: None,
+            fixtures: canary_config::LockFixtures {
+                protocol: 28,
+                pack_digest: digest.to_string(),
+                registry_version: 1,
+                source: None,
+                revision: None,
+            },
+        }
+    }
+
+    #[test]
+    fn a_matching_pin_is_not_stale() {
+        let pin = "sha256:5f1d2c0dcc5be904ed88b0f08d9c1f8db4d1d33d5e51b0a42dfe34e0e2e9f9a1";
+        let lock = lock_with_digest(pin);
+        assert!(lock_stale_message(&lock, pin).is_none());
+    }
+
+    #[test]
+    fn a_changed_pack_names_both_digests_and_the_protocol() {
+        let lock = lock_with_digest(
+            "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+        );
+        let computed = "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        let message = lock_stale_message(&lock, computed).expect("stale");
+        assert!(message.contains(&lock.fixtures.pack_digest), "{message}");
+        assert!(message.contains(computed), "{message}");
+        assert!(message.contains("protocol 28"), "{message}");
+    }
 
     fn fixtures_args(
         protocol: Option<u32>,

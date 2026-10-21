@@ -357,6 +357,189 @@
     });
   }
 
+  // ---------------------------------------------------------------
+  // The two-report comparison view (CF-08 section 2.4)
+  // ---------------------------------------------------------------
+
+  /* Each side holds its validated report or its refusal reason. Loading a
+   * side re-runs the comparison only when both sides hold validated
+   * reports; refusal is never replaced by a comparison that would label an
+   * incomparable pair as compared. */
+  var sides = {
+    baseline: { report: null, reason: null },
+    current: { report: null, reason: null },
+  };
+
+  function describeSide(name, slot) {
+    if (slot.report === null && slot.reason === null) return name + ": no file loaded yet.";
+    if (slot.report === null) return name + ": " + slot.reason;
+    return (
+      name +
+      ": loaded. Target protocol " + slot.report.targetProtocol +
+      ", status " + slot.report.status + "."
+    );
+  }
+
+  function hideComparisonPanels() {
+    el("compare-ineligible").hidden = true;
+    el("compare-ineligible").textContent = "";
+    el("compare-verdict").hidden = true;
+    setText("compare-verdict", "");
+    setText("compare-summary", "");
+    el("compare-table").hidden = true;
+    clearChildren(el("compare-body"));
+    el("compare-result").hidden = true;
+    el("compare-result").removeAttribute("data-verdict");
+  }
+
+  function showIneligible(reason) {
+    hideComparisonPanels();
+    el("compare-result").hidden = false;
+    var banner = el("compare-ineligible");
+    banner.textContent = "These reports are not compared: " + reason;
+    banner.hidden = false;
+  }
+
+  function showComparison(comparison) {
+    el("compare-ineligible").hidden = true;
+    el("compare-ineligible").textContent = "";
+    el("compare-result").hidden = false;
+    el("compare-result").setAttribute("data-verdict", comparison.verdict);
+
+    var verdict = el("compare-verdict");
+    verdict.textContent = V.verdictHeading(comparison.verdict);
+    verdict.hidden = false;
+
+    var summary = comparison.summary;
+    var notes = [
+      summary.regressed + " regressed",
+      summary.resolved + " resolved",
+      summary.added + " added",
+      summary.removed + " removed",
+      summary.unchanged + " unchanged",
+      "out of " + comparison.entries.length + " checks",
+      summary.missing + " lost coverage",
+    ].join(", ") + ".";
+    if (comparison.emptyBaseline) {
+      notes += " The baseline ran no checks.";
+    }
+    if (comparison.emptyCurrent) {
+      notes += " The current run ran no checks.";
+    }
+    if (comparison.observedProtocolChanged) {
+      notes += " The network observed protocol changed between runs.";
+    }
+    if (comparison.fixturePackChanged === true) {
+      notes += " The fixture pack changed between runs.";
+    } else if (comparison.fixturePackChanged === null) {
+      notes += " The fixture pack could not be compared between runs.";
+    }
+    setText("compare-summary", notes);
+
+    var body = el("compare-body");
+    clearChildren(body);
+    comparison.entries.forEach(function (entry) {
+      var row = document.createElement("tr");
+
+      var surface = document.createElement("td");
+      surface.textContent = entry.surface;
+      row.appendChild(surface);
+
+      var check = document.createElement("td");
+      check.textContent = entry.id;
+      row.appendChild(check);
+
+      var before = document.createElement("td");
+      before.textContent = entry.from;
+      row.appendChild(before);
+
+      var after = document.createElement("td");
+      after.textContent = entry.to;
+      row.appendChild(after);
+
+      var outcome = document.createElement("td");
+      outcome.setAttribute("data-classification", entry.classification);
+      outcome.textContent = entry.regression
+        ? entry.classification + " — counts as a regression"
+        : entry.classification;
+      row.appendChild(outcome);
+
+      body.appendChild(row);
+    });
+    el("compare-table").hidden = false;
+  }
+
+  function refreshComparison() {
+    var baseline = sides.baseline;
+    var current = sides.current;
+    // An unloaded or refused side keeps the old comparison visible but
+    // never invents one: the state line says what is missing.
+    setText(
+      "compare-status",
+      [describeSide("Baseline", baseline), describeSide("Current", current)].join(" ")
+    );
+    el("compare-status").hidden = false;
+    if (baseline.report === null || current.report === null) {
+      hideComparisonPanels();
+      return;
+    }
+    var outcome = V.compareReports(baseline.report, current.report);
+    if (outcome.ok) {
+      showComparison(outcome.comparison);
+    } else {
+      showIneligible(outcome.reason);
+    }
+  }
+
+  function loadSide(slotName, file) {
+    var slot = sides[slotName];
+    var problem = V.checkSize(file.size);
+    if (problem) {
+      slot.report = null;
+      slot.reason = problem;
+      refreshComparison();
+      return;
+    }
+    file.text().then(function (text) {
+      var parsed = V.parseReport(text);
+      if (parsed.ok) {
+        slot.report = parsed.report;
+        slot.reason = null;
+      } else {
+        slot.report = null;
+        slot.reason = "the report was refused: " + parsed.reason;
+      }
+      refreshComparison();
+    }, function () {
+      slot.report = null;
+      slot.reason = "the file could not be read";
+      refreshComparison();
+    });
+  }
+
+  /* Shared drag-and-drop activation for one drop zone plus its input. */
+  function attachFilePicker(drop, input, onFile) {
+    input.addEventListener("change", function () {
+      if (input.files && input.files[0]) onFile(input.files[0]);
+    });
+    ["dragenter", "dragover"].forEach(function (name) {
+      drop.addEventListener(name, function (event) {
+        event.preventDefault();
+        drop.setAttribute("data-active", "true");
+      });
+    });
+    ["dragleave", "drop"].forEach(function (name) {
+      drop.addEventListener(name, function (event) {
+        event.preventDefault();
+        drop.removeAttribute("data-active");
+      });
+    });
+    drop.addEventListener("drop", function (event) {
+      var files = event.dataTransfer && event.dataTransfer.files;
+      if (files && files[0]) onFile(files[0]);
+    });
+  }
+
   /* --- theme (E-088) --- */
 
   function prefersDark() {
@@ -456,6 +639,13 @@
     drop.addEventListener("drop", function (event) {
       var files = event.dataTransfer && event.dataTransfer.files;
       if (files && files[0]) loadFile(files[0]);
+    });
+
+    attachFilePicker(el("baseline-drop"), el("baseline-file"), function (file) {
+      loadSide("baseline", file);
+    });
+    attachFilePicker(el("current-drop"), el("current-file"), function (file) {
+      loadSide("current", file);
     });
   }
 

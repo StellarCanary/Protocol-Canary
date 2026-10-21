@@ -9,7 +9,7 @@ mod network;
 
 use clap::Parser;
 
-use cli::{CacheArgs, Cli, Command};
+use cli::{CacheArgs, Cli, Command, LockArgs};
 
 #[tokio::main]
 async fn main() {
@@ -21,6 +21,7 @@ async fn main() {
         Command::Fixtures(args) => commands::run_fixtures(args),
         Command::Report(args) => commands::run_report(args),
         Command::Cache(CacheArgs::Clear(args)) => commands::run_cache_clear(args),
+        Command::Lock(LockArgs::Verify(args)) => commands::run_lock_verify(args),
         Command::Completions(args) => commands::run_completions(args),
         Command::Version => commands::run_version(),
     };

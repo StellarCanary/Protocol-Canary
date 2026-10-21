@@ -10,6 +10,7 @@ use canary_fixtures::LoadedFixture;
 
 use crate::decoder::{decode, XdrTypeName};
 use crate::encoder::encode;
+use crate::json::{compare_json, format_differences};
 
 /// Errors raised while turning a [`LoadedFixture`] into an [`XdrFixture`].
 ///
@@ -50,6 +51,14 @@ pub enum XdrAssertion {
         value_base64: String,
         expected_base64: String,
     },
+    /// The value must decode, and its JSON form (see
+    /// [`crate::DecodedValue::to_json`]) must equal `expected_json`
+    /// structurally: object key order is ignored, everything else is
+    /// compared exactly (see [`crate::json`]).
+    DecodeJsonEquals {
+        value_base64: String,
+        expected_json: serde_json::Value,
+    },
 }
 
 /// A fully parsed XDR compatibility fixture.
@@ -67,10 +76,16 @@ impl XdrFixture {
     ///
     /// ```toml
     /// type = "StellarValue"
-    /// kind = "decode-success" # | "decode-failure" | "roundtrip" | "encode-equals"
+    /// kind = "decode-success" # | "decode-failure" | "roundtrip" | "encode-equals" | "decode-json-equals"
     /// value_base64 = "..."
     /// expected_base64 = "..." # only for "encode-equals"
+    /// expected_json = '''{ "tx_set_hash": "..." }''' # only for "decode-json-equals"
     /// ```
+    ///
+    /// `expected_json` is JSON text, not a TOML table, because the decoded
+    /// JSON can contain `null`, which TOML cannot express. It is parsed
+    /// here, so malformed JSON is an invalid fixture rather than a failed
+    /// check.
     pub fn from_loaded(loaded: &LoadedFixture) -> Result<XdrFixture, XdrError> {
         let invalid = |reason: String| XdrError::InvalidFixtureBody {
             source_path: loaded.source_path.clone(),
@@ -83,10 +98,10 @@ impl XdrFixture {
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
         let kind_for_keys = table.get("kind").and_then(toml::Value::as_str);
-        let allowed: &[&str] = if kind_for_keys == Some("encode-equals") {
-            &["type", "kind", "value_base64", "expected_base64"]
-        } else {
-            &["type", "kind", "value_base64"]
+        let allowed: &[&str] = match kind_for_keys {
+            Some("encode-equals") => &["type", "kind", "value_base64", "expected_base64"],
+            Some("decode-json-equals") => &["type", "kind", "value_base64", "expected_json"],
+            _ => &["type", "kind", "value_base64"],
         };
         if let Some(message) = canary_fixtures::unknown_body_keys(table, allowed) {
             return Err(invalid(message));
@@ -126,10 +141,22 @@ impl XdrFixture {
                 value_base64: string_field("value_base64")?,
                 expected_base64: string_field("expected_base64")?,
             },
+            "decode-json-equals" => {
+                let text = string_field("expected_json")?;
+                let expected_json = serde_json::from_str(&text).map_err(|e| {
+                    invalid(format!(
+                        "\"expected_json\" is not valid JSON: {e} (counted from the start of the expected_json text)"
+                    ))
+                })?;
+                XdrAssertion::DecodeJsonEquals {
+                    value_base64: string_field("value_base64")?,
+                    expected_json,
+                }
+            }
             other => {
                 return Err(invalid(format!(
                     "unsupported assertion kind {other:?}: expected one of \"decode-success\", \
-                     \"decode-failure\", \"roundtrip\", \"encode-equals\""
+                     \"decode-failure\", \"roundtrip\", \"encode-equals\", \"decode-json-equals\""
                 )))
             }
         };
@@ -263,6 +290,45 @@ fn evaluate(fixture: &XdrFixture) -> (canary_core::Status, String, Option<String
                     format!("{} did not encode to the expected bytes", fixture.type_name),
                     Some(format!("expected: {expected_base64}\nactual:   {actual}")),
                 ),
+            },
+        },
+        XdrAssertion::DecodeJsonEquals {
+            value_base64,
+            expected_json,
+        } => match decode(fixture.type_name, value_base64) {
+            Err(e) => (
+                Status::Fail,
+                format!("failed to decode {}", fixture.type_name),
+                Some(e.to_string()),
+            ),
+            Ok(decoded) => match decoded.to_json() {
+                // The value decoded, so this is a tool problem, not evidence
+                // about the value.
+                Err(e) => (
+                    Status::Error,
+                    format!("failed to convert decoded {} to JSON", fixture.type_name),
+                    Some(e.to_string()),
+                ),
+                Ok(actual) => {
+                    let differences = compare_json(expected_json, &actual);
+                    if differences.is_empty() {
+                        (
+                            Status::Pass,
+                            format!("decoded {} matched the expected JSON", fixture.type_name),
+                            None,
+                        )
+                    } else {
+                        (
+                            Status::Fail,
+                            format!(
+                                "decoded {} did not match the expected JSON ({} difference(s))",
+                                fixture.type_name,
+                                differences.len()
+                            ),
+                            Some(format_differences(&differences)),
+                        )
+                    }
+                }
             },
         },
     }

@@ -9,16 +9,16 @@ use canary_core::{
 };
 use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
-    JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary, ReportInput,
-    TerminalReporter,
+    diff, JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary,
+    ReportInput, TerminalReporter,
 };
 use canary_rpc::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};
 use canary_runner::{EnabledSurfaces, NetworkMode};
 use clap::CommandFactory;
 
 use crate::cli::{
-    CacheClearArgs, CheckArgs, Cli, CompletionsArgs, FixturesArgs, FixturesFormat, InspectArgs,
-    InspectFormat, LockVerifyArgs, OutputFormat, ReportArgs,
+    CacheClearArgs, CheckArgs, Cli, CompletionsArgs, DiffArgs, FixturesArgs, FixturesFormat,
+    InspectArgs, InspectFormat, LockArgs, LockVerifyArgs, OutputFormat, ReportArgs,
 };
 use crate::error::{hint_for, print_error};
 use crate::fixtures_json;
@@ -1244,6 +1244,135 @@ fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
 
     let exit_code = canary_core::exit_code_for_run(&report_input.results, report_input.decision);
     Ok(exit_code)
+}
+
+/// Exit codes for `stellar-canary diff` (CF-05 section 5).
+///
+/// `diff` gates CI on the same numeric contract as every other command —
+/// CF-05 states its codes "mirror the existing meanings of `1` and `2`"
+/// — read through the comparison's lens: [`ExitCode::Pass`] (0) for
+/// verdict `no-change` or `improved`, [`ExitCode::CompatibilityFailure`]
+/// (1) for verdict `regression` or `coverage-lost`, and
+/// [`ExitCode::ConfigurationError`] (2) when the two reports are not
+/// comparable or an input file is missing or invalid. Callers of `diff`
+/// must be able to rely on *those* numbers.
+struct DiffCommandError {
+    exit_code: ExitCode,
+    message: String,
+}
+
+impl DiffCommandError {
+    fn new(exit_code: ExitCode, message: impl Into<String>) -> Self {
+        DiffCommandError {
+            exit_code,
+            message: message.into(),
+        }
+    }
+}
+
+/// Compares two stored reports (CF-05) and returns the process exit code
+/// through the shared [`ExitCode`] contract.
+pub fn run_diff(args: DiffArgs) -> ExitCode {
+    match run_diff_inner(args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            eprintln!("error: {}", err.message);
+            err.exit_code
+        }
+    }
+}
+
+fn run_diff_inner(args: DiffArgs) -> Result<ExitCode, DiffCommandError> {
+    let read = |path: &Path| -> Result<String, DiffCommandError> {
+        std::fs::read_to_string(path).map_err(|e| {
+            DiffCommandError::new(
+                ExitCode::ConfigurationError,
+                format!("failed to read report file {}: {e}", path.display()),
+            )
+        })
+    };
+
+    let current = read(&args.current_report)?;
+    let baseline = read(&args.baseline_report)?;
+
+    // Eligibility (a supported schemaVersion on both sides, the same
+    // targetProtocol, no duplicate identities) is checked here and
+    // refuses with exit code 2 — never a bogus "diff" full of
+    // cross-protocol noise.
+    let comparison = diff::compare_json(&baseline, &current, diff::CompareOptions::default())
+        .map_err(|err| DiffCommandError::new(ExitCode::ConfigurationError, err.to_string()))?;
+
+    // The diffVersion 1 JSON goes to stdout regardless of the verdict,
+    // mirroring `check --json`: CI consumes stdout, gating on the exit
+    // code.
+    println!("{}", comparison.to_json());
+
+    Ok(match comparison.verdict {
+        diff::Verdict::Regression | diff::Verdict::CoverageLost => ExitCode::CompatibilityFailure,
+        diff::Verdict::Improved | diff::Verdict::NoChange => ExitCode::Pass,
+    })
+}
+
+pub fn run_lock(args: LockArgs) -> ExitCode {
+    match run_lock_inner(args) {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            eprintln!("error: {err}");
+            ExitCode::from(&err)
+        }
+    }
+}
+
+fn run_lock_inner(args: LockArgs) -> Result<ExitCode, CanaryError> {
+    let root = std::env::current_dir()
+        .map_err(|e| CanaryError::Internal(format!("failed to read current directory: {e}")))?;
+
+    let config = match &args.config {
+        Some(path) => canary_config::load(path)?,
+        None => canary_config::load_from_root(&root)?.unwrap_or_default(),
+    };
+    let protocol = validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol);
+
+    // Fully resolve and validate the fixture pack *before* touching the
+    // lockfile: an unreachable or invalid fixture directory must report
+    // a clear error without leaving a partial lockfile behind.
+    if !args.fixtures_dir.is_dir() {
+        return Err(CanaryError::Configuration(format!(
+            "fixtures directory {} does not exist or is not a directory",
+            args.fixtures_dir.display()
+        )));
+    }
+    let loaded_fixtures = canary_fixtures::load_directory(&args.fixtures_dir)?;
+    canary_fixtures::validate(&loaded_fixtures)?;
+    let digest = canary_fixtures::pack_digest(&args.fixtures_dir).map_err(|e| {
+        CanaryError::Configuration(format!("failed to digest the fixture pack: {e}"))
+    })?;
+
+    let lockfile = canary_config::LockFile {
+        lock_version: canary_config::SUPPORTED_LOCK_VERSION,
+        tool: Some(canary_config::LockTool {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        }),
+        fixtures: canary_config::LockFixtures {
+            protocol,
+            pack_digest: digest.digest,
+            registry_version: canary_config::SUPPORTED_REGISTRY_VERSION,
+            source: Some(canary_config::LockSource::Directory),
+            revision: None,
+        },
+    };
+    let path = root.join(canary_config::LOCK_FILE_NAME);
+    canary_config::write_lock(&path, &lockfile)?;
+
+    println!(
+        "Wrote {} (lockVersion {}, protocol {}, packDigest {})",
+        path.display(),
+        lockfile.lock_version,
+        lockfile.fixtures.protocol,
+        lockfile.fixtures.pack_digest
+    );
+
+    Ok(ExitCode::Pass)
 }
 
 pub fn run_version() -> ExitCode {

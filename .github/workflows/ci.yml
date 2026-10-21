@@ -88,6 +88,13 @@ jobs:
   audit:
     name: cargo audit
     runs-on: ubuntu-latest
+    # rustsec/audit-check publishes its report as a check run whenever it has
+    # anything to report (including an informational warning such as an
+    # unmaintained dependency), which needs `checks: write`. Granted to this
+    # job only; the workflow default stays read-only.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v7
 

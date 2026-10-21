@@ -185,6 +185,14 @@ impl RpcFixture {
             .as_table()
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
+        for key in table.keys() {
+            if key != "method" && key != "params" && key != "assert" {
+                return Err(invalid(format!(
+                    "unknown fixture key {key:?}: supported keys are \"method\", \"params\", \"assert\""
+                )));
+            }
+        }
+
         let method: RpcMethod = table
             .get("method")
             .and_then(toml::Value::as_str)
@@ -192,11 +200,34 @@ impl RpcFixture {
             .parse()
             .map_err(invalid)?;
 
-        let assert_entries = table
-            .get("assert")
-            .and_then(toml::Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        if let Some(params) = table.get("params") {
+            match params {
+                toml::Value::Table(_) | toml::Value::Array(_) => {
+                    let method_name = table
+                        .get("method")
+                        .and_then(toml::Value::as_str)
+                        .unwrap_or("");
+                    return Err(invalid(format!(
+                        "method {method_name:?} does not accept params, but params were provided"
+                    )));
+                }
+                _ => {
+                    return Err(invalid(
+                        "field \"params\" must be an array or table".to_string(),
+                    ));
+                }
+            }
+        }
+
+        let assert_entries = match table.get("assert") {
+            None => Vec::new(),
+            Some(toml::Value::Array(arr)) => arr.clone(),
+            Some(_) => {
+                return Err(invalid(
+                    "field \"assert\" must be an array of tables".to_string(),
+                ));
+            }
+        };
 
         let mut assertions = Vec::with_capacity(assert_entries.len());
         for entry in &assert_entries {
@@ -218,6 +249,14 @@ fn parse_assertion(
     let table = entry
         .as_table()
         .ok_or_else(|| invalid("each [[assert]] entry must be a table".to_string()))?;
+
+    for key in table.keys() {
+        if key != "kind" && key != "field" && key != "value" && key != "expected_type" {
+            return Err(invalid(format!(
+                "unknown assertion key {key:?}: supported keys are \"kind\", \"field\", \"value\", \"expected_type\""
+            )));
+        }
+    }
 
     let kind = table
         .get("kind")

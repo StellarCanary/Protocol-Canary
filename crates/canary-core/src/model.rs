@@ -41,6 +41,24 @@ impl fmt::Display for Surface {
     }
 }
 
+/// Error returned when parsing an invalid surface string.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("invalid surface {0:?}: expected one of xdr, rpc, soroban")]
+pub struct ParseSurfaceError(pub String);
+
+impl std::str::FromStr for Surface {
+    type Err = ParseSurfaceError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "xdr" => Ok(Surface::Xdr),
+            "rpc" => Ok(Surface::Rpc),
+            "soroban" => Ok(Surface::Soroban),
+            _ => Err(ParseSurfaceError(s.to_string())),
+        }
+    }
+}
+
 /// The outcome of running a single compatibility test.
 ///
 /// `Fail` means the compatibility assertion ran and failed; `Error` means

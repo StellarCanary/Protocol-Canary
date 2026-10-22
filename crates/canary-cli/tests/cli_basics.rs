@@ -21,6 +21,8 @@ fn help_lists_every_subcommand() {
         "inspect",
         "fixtures",
         "report",
+        "diff",
+        "lock",
         "completions",
         "version",
     ] {

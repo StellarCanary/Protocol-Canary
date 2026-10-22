@@ -16,7 +16,8 @@ use canary_core::Surface;
 ///
 /// `Cli` is the `clap` entry point: it holds the one required subcommand the
 /// user typed — [`Command::Check`], [`Command::Inspect`],
-/// [`Command::Fixtures`], [`Command::Report`], [`Command::Completions`] or
+/// [`Command::Fixtures`], [`Command::Report`], [`Command::Diff`],
+/// [`Command::Cache`], [`Command::Lock`], [`Command::Completions`] or
 /// [`Command::Version`] — together with that subcommand's own argument
 /// struct. The binary name and
 /// version banner come from the `#[command(...)]` attributes above, and flags
@@ -41,10 +42,12 @@ pub struct Cli {
 ///
 /// `Check` runs compatibility assertions, while `Inspect` and `Fixtures`
 /// provide offline project and fixture information. `Report` renders a
-/// previously generated JSON report, `Completions` prints a shell
-/// completion script, and `Version` prints the tool version. Parsing this
-/// enum is handled by `clap`; the variants themselves do not perform I/O or
-/// panic during argument parsing.
+/// previously generated JSON report, `Diff` compares two stored reports
+/// (CF-05), `Cache` manages cached execution results, `Lock` writes and
+/// verifies the fixture-pack pin, `Completions` prints a shell
+/// completion script, and `Version` prints the tool version. Parsing
+/// this enum is handled by `clap`; the variants themselves do not perform
+/// I/O or panic during argument parsing.
 pub enum Command {
     /// Run compatibility checks against the current project.
     Check(CheckArgs),
@@ -54,9 +57,14 @@ pub enum Command {
     Fixtures(FixturesArgs),
     /// Render a previously generated JSON report.
     Report(ReportArgs),
+    /// Compare two stored JSON reports and render the diff (CF-05).
+    Diff(DiffArgs),
     /// Manage the local result cache.
     #[command(subcommand)]
     Cache(CacheArgs),
+    /// Manage the fixture-pack lockfile: bare `lock` writes the pin
+    /// (CF-03-B), `lock verify` re-checks it (CF-03-D).
+    Lock(LockArgs),
     /// Print a shell completion script.
     Completions(CompletionsArgs),
     /// Print the tool version.
@@ -274,6 +282,52 @@ pub enum CacheArgs {
     Clear(CacheClearArgs),
 }
 
+/// Subcommands of the `lock` command group (CF-03).
+///
+/// `lock verify` re-checks the pin a `.stellar-canary.lock` file holds: it
+/// loads the lock under the parser rules of CF-03 section 3, computes the
+/// `canary-pack-v1` digest (CF-02) of the fixture directory the
+/// configuration resolves to, and compares the two. It never writes: the
+/// fixture pack, the lockfile, and the cache are left exactly as they are.
+/// Without a subcommand, the parent [`LockArgs`] performs CF-03-B's
+/// write instead.
+#[derive(Debug, Subcommand)]
+pub enum LockCommand {
+    /// Verify that the lockfile still matches the fixture pack.
+    Verify(LockVerifyArgs),
+}
+
+/// Arguments for `stellar-canary lock verify`.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary lock verify
+/// stellar-canary lock verify --project-root path/to/project
+/// stellar-canary lock verify --fixtures-dir ci/fixtures
+/// ```
+#[derive(Debug, Parser)]
+pub struct LockVerifyArgs {
+    /// Directory to treat as the project root (default: the current
+    /// directory). Relative `--config` and `--fixtures-dir` paths are
+    /// resolved against it. The root is never searched for in parent
+    /// directories.
+    #[arg(long = "project-root", value_name = "PATH")]
+    pub project_root: Option<PathBuf>,
+
+    /// Directory containing fixture files (overrides `fixtures_dir` in
+    /// .stellar-canary.toml; default: fixtures). Overriding the location
+    /// does not waive the pin: the chosen directory is still verified
+    /// against `packDigest`.
+    #[arg(long = "fixtures-dir", value_name = "PATH")]
+    pub fixtures_dir: Option<PathBuf>,
+
+    /// Path to a configuration file (default: .stellar-canary.toml in the
+    /// project root).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+}
+
 /// Arguments for `stellar-canary cache clear`.
 #[derive(Debug, Parser)]
 pub struct CacheClearArgs {
@@ -451,6 +505,14 @@ pub struct FixturesArgs {
     /// Shorthand for --format json.
     #[arg(long)]
     pub json: bool,
+
+    /// Filter fixtures by compatibility surface.
+    #[arg(long, value_enum)]
+    pub surface: Option<SurfaceFilter>,
+
+    /// Filter fixtures by category.
+    #[arg(long)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -492,6 +554,82 @@ pub struct ReportArgs {
     /// Output format to render the stored report as.
     #[arg(long, value_enum, default_value_t = OutputFormat::Markdown)]
     pub format: OutputFormat,
+}
+
+#[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary diff` subcommand ([`Command::Diff`]).
+///
+/// `diff` compares two previously stored JSON reports offline and renders
+/// the comparison as the deterministic `diffVersion: 1` document of
+/// CF-05. Nothing is re-run and no network call is made. The argument
+/// order is **current first, baseline second**, matching the question
+/// "what changed since the baseline".
+///
+/// `diff` gates CI on the shared exit-code contract as read through
+/// CF-05 section 5: `0` ([`canary_core::ExitCode::Pass`]) for verdict
+/// `no-change` or `improved`, `1`
+/// ([`canary_core::ExitCode::CompatibilityFailure`]) for verdict
+/// `regression` or `coverage-lost`, and `2`
+/// ([`canary_core::ExitCode::ConfigurationError`]) when the reports
+/// are not comparable or an input file is missing or invalid.
+///
+/// Parsing is performed by `clap` and performs no I/O and cannot panic: a
+/// missing path is a usage error (exit status 2) before a `DiffArgs`
+/// value ever exists.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary diff current.json baseline.json
+/// ```
+pub struct DiffArgs {
+    /// Path to the current report (produced by `stellar-canary check --json`).
+    pub current_report: PathBuf,
+
+    /// Path to the baseline report to compare the current report against.
+    pub baseline_report: PathBuf,
+}
+
+#[derive(Debug, Parser)]
+/// Arguments for the `stellar-canary lock` command ([`Command::Lock`]).
+///
+/// Bare `lock` validates the fixture pack, computes its canonical
+/// `canary-pack-v1` digest (CF-02) and writes a `.stellar-canary.lock`
+/// (CF-03) at the project root pinning the digest, the target protocol
+/// and the tool version (CF-03-B). The serializer is deterministic: the
+/// same pack always yields a byte-identical file. The pack is fully
+/// validated before the lockfile is touched, so a failure never leaves a
+/// partial file behind.
+///
+/// `lock verify` (CF-03-D) is the read-only counterpart, defined on
+/// [`LockCommand`].
+///
+/// Parsing is performed by `clap` and performs no I/O and cannot panic.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary lock
+/// stellar-canary lock --protocol 29 --fixtures-dir fixtures
+/// stellar-canary lock verify
+/// ```
+pub struct LockArgs {
+    /// The read-only verification subcommand; absent, `lock` writes.
+    #[command(subcommand)]
+    pub command: Option<LockCommand>,
+
+    /// Target protocol version (overrides configuration).
+    #[arg(long)]
+    pub protocol: Option<u32>,
+
+    /// Directory containing fixture files.
+    #[arg(long = "fixtures-dir", default_value = "fixtures")]
+    pub fixtures_dir: PathBuf,
+
+    /// Path to a configuration file (default: .stellar-canary.toml in the
+    /// project root).
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -883,5 +1021,23 @@ mod tests {
             .map(|shell| shell.to_possible_value().unwrap().get_name().to_string())
             .collect();
         assert_eq!(names, ["bash", "zsh", "fish", "powershell"]);
+    }
+
+    #[test]
+    fn fixtures_flags_parse_surface_and_category() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "fixtures",
+            "--surface",
+            "rpc",
+            "--category",
+            "network",
+        ]);
+        if let Command::Fixtures(args) = cli.command {
+            assert_eq!(args.surface, Some(SurfaceFilter::Rpc));
+            assert_eq!(args.category.as_deref(), Some("network"));
+        } else {
+            panic!("Expected Fixtures command");
+        }
     }
 }

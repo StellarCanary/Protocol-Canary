@@ -1,0 +1,57 @@
+{
+  "inventoryVersion": 1,
+  "toolVersion": "0.2.0",
+  "fixtureFormat": 1,
+  "protocol": 28,
+  "directoryFound": true,
+  "counts": {
+    "total": 3,
+    "xdr": 1,
+    "rpc": 1,
+    "soroban": 1
+  },
+  "otherProtocols": {
+    "27": 1
+  },
+  "fixtures": [
+    {
+      "id": "a-rpc-network",
+      "protocol": 28,
+      "surface": "rpc",
+      "category": "network",
+      "description": "network fixture",
+      "path": "rpc/network.toml",
+      "requiredCapabilities": [
+        "rpc-client"
+      ],
+      "sourceReference": "https://example.invalid/ref",
+      "method": "get-network"
+    },
+    {
+      "id": "m-xdr-value",
+      "protocol": 28,
+      "surface": "xdr",
+      "category": "ledger",
+      "description": "ledger value fixture",
+      "path": "xdr/value.toml",
+      "requiredCapabilities": [
+        "stellar-sdk-dependency"
+      ],
+      "type": "StellarValue",
+      "kind": "decode-success"
+    },
+    {
+      "id": "z-soroban-token",
+      "protocol": 28,
+      "surface": "soroban",
+      "category": "token",
+      "description": "token contract fixture",
+      "path": "soroban/contract.toml",
+      "requiredCapabilities": [
+        "soroban-contract",
+        "wasm-artifact"
+      ],
+      "function": "balance"
+    }
+  ]
+}

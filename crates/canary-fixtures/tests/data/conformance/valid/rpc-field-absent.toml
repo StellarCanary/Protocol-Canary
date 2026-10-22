@@ -1,0 +1,12 @@
+id = "conformance-valid-rpc-field-absent"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "Accepted RPC field-absent assertion shape."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger"
+
+method = "get-latest-ledger"
+
+[[assert]]
+kind = "field-absent"
+field = "deprecatedField"

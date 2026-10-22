@@ -12,6 +12,10 @@ Options:
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
       --project-root <PATH>          Directory to treat as the project root (default: the current directory)
       --config <CONFIG>              Path to a configuration file (default: .stellar-canary.toml in the project root)
+      --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json]
+      --json                         Shorthand for --format json
+      --surface <SURFACE>            Filter fixtures by compatibility surface [possible values: xdr, rpc, soroban]
+      --category <CATEGORY>          Filter fixtures by category
   -h, --help                         Print help
 ```
 

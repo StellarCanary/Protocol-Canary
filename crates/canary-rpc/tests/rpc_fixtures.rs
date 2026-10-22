@@ -27,7 +27,7 @@ fn request_on_a_parameterless_method_is_an_invalid_fixture() {
 }
 
 #[test]
-fn bad_request_for_a_method_the_engine_cannot_run_yet_is_still_reported() {
+fn bad_request_for_an_upstream_method_is_reported_before_dispatch() {
     let err = load(&format!(
         "method = \"get-ledger-entries\"\n\n[request]\nkeys = [\"not base64!\"]\n{ASSERT}"
     ))

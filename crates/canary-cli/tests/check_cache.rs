@@ -1,6 +1,8 @@
 mod support;
 
-use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{
+    run_in, stderr, stdout, TempProject, DECODE_FAILURE_BASE64, VALID_STELLAR_VALUE_BASE64,
+};
 
 const OFFLINE_CONFIG: &str =
     "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n";
@@ -32,7 +34,7 @@ fn an_edited_fixture_is_never_answered_from_a_previous_run() {
 
     dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("not-valid-xdr-bytes!!!"),
+        &xdr_fixture(DECODE_FAILURE_BASE64),
     );
     let second = run_in(&dir.path, &["check"]);
     assert_eq!(second.status.code(), Some(1), "{}", stdout(&second));
@@ -79,7 +81,7 @@ fn entries_written_by_an_older_layout_are_ignored() {
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
     dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("not-valid-xdr-bytes!!!"),
+        &xdr_fixture(DECODE_FAILURE_BASE64),
     );
     // The layout used by 0.1.1: id, protocol, project, endpoint hash and
     // observed protocol in the name, a bare `result` inside. It would say

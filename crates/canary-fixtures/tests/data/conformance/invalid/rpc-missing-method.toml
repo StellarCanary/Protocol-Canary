@@ -1,0 +1,10 @@
+id = "conformance-invalid-rpc-missing-method"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "RPC fixture omits its required method."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+[[assert]]
+kind = "field-exists"
+field = "protocolVersion"

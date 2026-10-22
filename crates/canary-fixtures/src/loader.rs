@@ -145,6 +145,34 @@ pub fn load_directory(dir: &Path) -> Result<Vec<LoadedFixture>, FixtureError> {
     paths.iter().map(|path| parse_fixture_file(path)).collect()
 }
 
+/// Filters loaded fixtures by optional compatibility surface and optional category.
+///
+/// Matches fixtures whose surface equals `surface` (if `Some`) and whose category
+/// equals `category` (if `Some`). Returns a new `Vec<LoadedFixture>`.
+pub fn filter_fixtures(
+    fixtures: &[LoadedFixture],
+    surface: Option<canary_core::Surface>,
+    category: Option<&str>,
+) -> Vec<LoadedFixture> {
+    fixtures
+        .iter()
+        .filter(|fixture| {
+            if let Some(s) = surface {
+                if fixture.metadata.surface != s {
+                    return false;
+                }
+            }
+            if let Some(c) = category {
+                if fixture.metadata.category != c {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect()
+}
+
 fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureError> {
     let entries = std::fs::read_dir(dir).map_err(|source| FixtureError::ReadDir {
         path: dir.to_path_buf(),
@@ -241,6 +269,77 @@ mod tests {
 
         let fixtures = load_directory(&dir.path).expect("loads");
         assert_eq!(fixtures.len(), 1);
+    }
+
+    #[test]
+    fn filter_fixtures_by_surface_and_category() {
+        let dir = crate::test_support::temp_dir("loader-filter");
+        write(
+            &dir.path.join("p28-xdr-auth.toml"),
+            r#"
+            id = "p28-xdr-auth"
+            protocol = 28
+            surface = "xdr"
+            category = "auth"
+            description = "auth xdr fixture"
+            "#,
+        );
+        write(
+            &dir.path.join("p28-rpc-auth.toml"),
+            r#"
+            id = "p28-rpc-auth"
+            protocol = 28
+            surface = "rpc"
+            category = "auth"
+            description = "auth rpc fixture"
+            "#,
+        );
+        write(
+            &dir.path.join("p28-soroban-token.toml"),
+            r#"
+            id = "p28-soroban-token"
+            protocol = 28
+            surface = "soroban"
+            category = "token"
+            description = "token soroban fixture"
+            "#,
+        );
+
+        let fixtures = load_directory(&dir.path).expect("loads");
+        assert_eq!(fixtures.len(), 3);
+
+        // Filter by surface
+        let xdr_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Xdr), None);
+        assert_eq!(xdr_only.len(), 1);
+        assert_eq!(xdr_only[0].metadata.id, "p28-xdr-auth");
+
+        let rpc_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Rpc), None);
+        assert_eq!(rpc_only.len(), 1);
+        assert_eq!(rpc_only[0].metadata.id, "p28-rpc-auth");
+
+        let soroban_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Soroban), None);
+        assert_eq!(soroban_only.len(), 1);
+        assert_eq!(soroban_only[0].metadata.id, "p28-soroban-token");
+
+        // Filter by category
+        let auth_only = filter_fixtures(&fixtures, None, Some("auth"));
+        assert_eq!(auth_only.len(), 2);
+
+        let token_only = filter_fixtures(&fixtures, None, Some("token"));
+        assert_eq!(token_only.len(), 1);
+        assert_eq!(token_only[0].metadata.id, "p28-soroban-token");
+
+        // Filter by surface and category
+        let rpc_auth = filter_fixtures(&fixtures, Some(canary_core::Surface::Rpc), Some("auth"));
+        assert_eq!(rpc_auth.len(), 1);
+        assert_eq!(rpc_auth[0].metadata.id, "p28-rpc-auth");
+
+        let xdr_token = filter_fixtures(&fixtures, Some(canary_core::Surface::Xdr), Some("token"));
+        assert!(xdr_token.is_empty());
+
+        // Non-existent category
+        let nonexistent = filter_fixtures(&fixtures, None, Some("nonexistent"));
+        assert!(nonexistent.is_empty());
     }
 
     #[test]

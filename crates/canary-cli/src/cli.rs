@@ -255,6 +255,13 @@ pub struct CheckArgs {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub live_cache_ttl: Option<u64>,
+
+    /// Require the .stellar-canary.lock lockfile to exist and its pinned
+    /// fixtures.packDigest to match the current fixture pack. A missing or
+    /// stale lockfile fails the run with exit code 2 before any fixture
+    /// executes, so CI pipelines can enforce strict dependency pinning.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 /// Surface choices accepted by `check --surface`.

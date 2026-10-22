@@ -1,0 +1,10 @@
+id = "conformance-invalid-xdr-base64"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "XDR fixture carries a non-base64 payload."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "decode-success"
+value_base64 = "not base64!"

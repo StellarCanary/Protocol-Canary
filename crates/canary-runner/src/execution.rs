@@ -508,6 +508,9 @@ mod tests {
 
     const VALID_STELLAR_VALUE: &str =
         "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    /// Canonical base64 that is not a complete `StellarValue`, so the
+    /// fixture parses and fails the decode assertion at run time.
+    const DECODE_FAILURE_BASE64: &str = "AAAA";
 
     fn xdr_fixture(id: &str, value_base64: &str) -> XdrFixture {
         XdrFixture::from_loaded(
@@ -538,7 +541,7 @@ mod tests {
         );
 
         // Same id, same project, same network, but the fixture changed.
-        let edited = xdr_fixture("same-id", "not-valid-xdr!!");
+        let edited = xdr_fixture("same-id", DECODE_FAILURE_BASE64);
         let second = run_xdr(std::slice::from_ref(&edited), &context);
         assert_eq!(
             second[0].status,

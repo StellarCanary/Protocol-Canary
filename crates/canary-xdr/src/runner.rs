@@ -5,11 +5,14 @@
 
 use std::time::Instant;
 
+use base64::Engine as _;
+
 use canary_core::{CanaryError, CompatibilityResult, ExecutionContext, FixtureMetadata, Surface};
 use canary_fixtures::LoadedFixture;
 
 use crate::decoder::{decode, XdrTypeName};
 use crate::encoder::encode;
+use crate::json::{compare_json, format_differences};
 
 /// Errors raised while turning a [`LoadedFixture`] into an [`XdrFixture`].
 ///
@@ -50,6 +53,14 @@ pub enum XdrAssertion {
         value_base64: String,
         expected_base64: String,
     },
+    /// The value must decode, and its JSON form (see
+    /// [`crate::DecodedValue::to_json`]) must equal `expected_json`
+    /// structurally: object key order is ignored, everything else is
+    /// compared exactly (see [`crate::json`]).
+    DecodeJsonEquals {
+        value_base64: String,
+        expected_json: serde_json::Value,
+    },
 }
 
 /// A fully parsed XDR compatibility fixture.
@@ -60,6 +71,22 @@ pub struct XdrFixture {
     pub assertion: XdrAssertion,
 }
 
+/// Rejects a base64 payload that is not canonical standard-alphabet base64.
+///
+/// `value` must decode with the standard engine and re-encode to exactly the
+/// same text, so non-canonical trailing bits and missing padding are refused
+/// rather than silently normalized before the XDR decoder sees them.
+fn validate_base64(value: &str, field: &str) -> Result<(), String> {
+    let engine = base64::engine::general_purpose::STANDARD;
+    let bytes = engine
+        .decode(value)
+        .map_err(|_| format!("field {field:?} is not valid base64"))?;
+    if engine.encode(bytes) != value {
+        return Err(format!("field {field:?} is not canonical base64"));
+    }
+    Ok(())
+}
+
 impl XdrFixture {
     /// Parses an [`XdrFixture`] out of a generic [`LoadedFixture`].
     ///
@@ -67,10 +94,16 @@ impl XdrFixture {
     ///
     /// ```toml
     /// type = "StellarValue"
-    /// kind = "decode-success" # | "decode-failure" | "roundtrip" | "encode-equals"
+    /// kind = "decode-success" # | "decode-failure" | "roundtrip" | "encode-equals" | "decode-json-equals"
     /// value_base64 = "..."
     /// expected_base64 = "..." # only for "encode-equals"
+    /// expected_json = '''{ "tx_set_hash": "..." }''' # only for "decode-json-equals"
     /// ```
+    ///
+    /// `expected_json` is JSON text, not a TOML table, because the decoded
+    /// JSON can contain `null`, which TOML cannot express. It is parsed
+    /// here, so malformed JSON is an invalid fixture rather than a failed
+    /// check.
     pub fn from_loaded(loaded: &LoadedFixture) -> Result<XdrFixture, XdrError> {
         let invalid = |reason: String| XdrError::InvalidFixtureBody {
             source_path: loaded.source_path.clone(),
@@ -83,10 +116,10 @@ impl XdrFixture {
             .ok_or_else(|| invalid("fixture body must be a table".to_string()))?;
 
         let kind_for_keys = table.get("kind").and_then(toml::Value::as_str);
-        let allowed: &[&str] = if kind_for_keys == Some("encode-equals") {
-            &["type", "kind", "value_base64", "expected_base64"]
-        } else {
-            &["type", "kind", "value_base64"]
+        let allowed: &[&str] = match kind_for_keys {
+            Some("encode-equals") => &["type", "kind", "value_base64", "expected_base64"],
+            Some("decode-json-equals") => &["type", "kind", "value_base64", "expected_json"],
+            _ => &["type", "kind", "value_base64"],
         };
         if let Some(message) = canary_fixtures::unknown_body_keys(table, allowed) {
             return Err(invalid(message));
@@ -111,25 +144,42 @@ impl XdrFixture {
                 .map(str::to_string)
                 .ok_or_else(|| invalid(format!("missing required string field {name:?}")))
         };
+        let base64_field = |name: &str| -> Result<String, XdrError> {
+            let value = string_field(name)?;
+            validate_base64(&value, name).map_err(invalid)?;
+            Ok(value)
+        };
 
         let assertion = match kind {
             "decode-success" => XdrAssertion::DecodeSuccess {
-                value_base64: string_field("value_base64")?,
+                value_base64: base64_field("value_base64")?,
             },
             "decode-failure" => XdrAssertion::DecodeFailure {
-                value_base64: string_field("value_base64")?,
+                value_base64: base64_field("value_base64")?,
             },
             "roundtrip" => XdrAssertion::Roundtrip {
-                value_base64: string_field("value_base64")?,
+                value_base64: base64_field("value_base64")?,
             },
             "encode-equals" => XdrAssertion::EncodeEquals {
-                value_base64: string_field("value_base64")?,
-                expected_base64: string_field("expected_base64")?,
+                value_base64: base64_field("value_base64")?,
+                expected_base64: base64_field("expected_base64")?,
             },
+            "decode-json-equals" => {
+                let text = string_field("expected_json")?;
+                let expected_json = serde_json::from_str(&text).map_err(|e| {
+                    invalid(format!(
+                        "\"expected_json\" is not valid JSON: {e} (counted from the start of the expected_json text)"
+                    ))
+                })?;
+                XdrAssertion::DecodeJsonEquals {
+                    value_base64: base64_field("value_base64")?,
+                    expected_json,
+                }
+            }
             other => {
                 return Err(invalid(format!(
                     "unsupported assertion kind {other:?}: expected one of \"decode-success\", \
-                     \"decode-failure\", \"roundtrip\", \"encode-equals\""
+                     \"decode-failure\", \"roundtrip\", \"encode-equals\", \"decode-json-equals\""
                 )))
             }
         };
@@ -265,6 +315,45 @@ fn evaluate(fixture: &XdrFixture) -> (canary_core::Status, String, Option<String
                 ),
             },
         },
+        XdrAssertion::DecodeJsonEquals {
+            value_base64,
+            expected_json,
+        } => match decode(fixture.type_name, value_base64) {
+            Err(e) => (
+                Status::Fail,
+                format!("failed to decode {}", fixture.type_name),
+                Some(e.to_string()),
+            ),
+            Ok(decoded) => match decoded.to_json() {
+                // The value decoded, so this is a tool problem, not evidence
+                // about the value.
+                Err(e) => (
+                    Status::Error,
+                    format!("failed to convert decoded {} to JSON", fixture.type_name),
+                    Some(e.to_string()),
+                ),
+                Ok(actual) => {
+                    let differences = compare_json(expected_json, &actual);
+                    if differences.is_empty() {
+                        (
+                            Status::Pass,
+                            format!("decoded {} matched the expected JSON", fixture.type_name),
+                            None,
+                        )
+                    } else {
+                        (
+                            Status::Fail,
+                            format!(
+                                "decoded {} did not match the expected JSON ({} difference(s))",
+                                fixture.type_name,
+                                differences.len()
+                            ),
+                            Some(format_differences(&differences)),
+                        )
+                    }
+                }
+            },
+        },
     }
 }
 
@@ -358,8 +447,11 @@ mod tests {
     }
 
     #[test]
-    fn decode_success_fixture_fails_on_garbage_input() {
-        let body = "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
+    fn decode_success_fixture_fails_on_valid_base64_that_is_not_xdr() {
+        // `AAAA` is canonical base64, but the three bytes it decodes to are
+        // not a valid StellarValue, so the fixture parses and the assertion
+        // fails at run time rather than at load time.
+        let body = "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAA\"\n";
         let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-2", body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Fail);
@@ -367,10 +459,36 @@ mod tests {
 
     #[test]
     fn decode_failure_fixture_passes_when_input_is_correctly_rejected() {
-        let body = "type = \"StellarValue\"\nkind = \"decode-failure\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
+        let body = "type = \"StellarValue\"\nkind = \"decode-failure\"\nvalue_base64 = \"AAAA\"\n";
         let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-3", body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Pass);
+    }
+
+    #[test]
+    fn rejects_a_payload_that_is_not_base64() {
+        let body =
+            "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"not base64!\"\n";
+        let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-bad-b64", body)).unwrap_err();
+        match err {
+            XdrError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("value_base64"), "{reason}");
+                assert!(reason.contains("not valid base64"), "{reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_a_non_canonical_base64_payload() {
+        let body = "type = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAA\"\n";
+        let err =
+            XdrFixture::from_loaded(&loaded_fixture("p28-xdr-bad-b64-pad", body)).unwrap_err();
+        match err {
+            XdrError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("value_base64"), "{reason}");
+                assert!(reason.contains("base64"), "{reason}");
+            }
+        }
     }
 
     #[test]
@@ -418,29 +536,18 @@ mod tests {
     }
 
     #[test]
-    fn encode_equals_fixture_with_malformed_expected_base64_fails_with_mismatch() {
-        // `expected_base64` is compared byte-for-byte as a plain string, and the
-        // fixture loader does not validate that it is syntactically valid base64.
-        // A typo'd `expected_base64` therefore currently parses fine and is
-        // reported as an ordinary encode mismatch (`Status::Fail`), not as an
-        // `InvalidFixtureBody` parse error. This test locks in that current
-        // behavior; whether it should become a parse-time error is a separate
-        // design decision.
+    fn rejects_a_malformed_expected_base64_at_parse_time() {
         let base64 = valid_stellar_value_base64();
         let body = format!(
             "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"{base64}\"\nexpected_base64 = \"not valid base64!!!\"\n"
         );
-        let fixture = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", &body)).unwrap();
-        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
-
-        assert_eq!(result.status, canary_core::Status::Fail);
-        assert_eq!(
-            result.summary,
-            "StellarValue did not encode to the expected bytes"
-        );
-        let details = result.details.expect("details should be present");
-        assert!(details.contains("expected: not valid base64!!!"));
-        assert!(details.contains(&format!("actual:   {base64}")));
+        let err = XdrFixture::from_loaded(&loaded_fixture("p28-xdr-10", &body)).unwrap_err();
+        match err {
+            XdrError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("expected_base64"), "{reason}");
+                assert!(reason.contains("not valid base64"), "{reason}");
+            }
+        }
     }
 
     #[test]
@@ -542,9 +649,8 @@ mod tests {
     }
 
     #[test]
-    fn roundtrip_fixture_fails_on_garbage_input() {
-        let body =
-            "type = \"StellarValue\"\nkind = \"roundtrip\"\nvalue_base64 = \"!!!not-xdr!!!\"\n";
+    fn roundtrip_fixture_fails_on_valid_base64_that_is_not_xdr() {
+        let body = "type = \"StellarValue\"\nkind = \"roundtrip\"\nvalue_base64 = \"AAAA\"\n";
         let fixture =
             XdrFixture::from_loaded(&loaded_fixture("p28-xdr-roundtrip-garbage", body)).unwrap();
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
@@ -556,8 +662,8 @@ mod tests {
     }
 
     #[test]
-    fn encode_equals_fixture_fails_on_garbage_input() {
-        let body = "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"!!!not-xdr!!!\"\nexpected_base64 = \"AAAA\"\n";
+    fn encode_equals_fixture_fails_on_valid_base64_that_is_not_xdr() {
+        let body = "type = \"StellarValue\"\nkind = \"encode-equals\"\nvalue_base64 = \"AAAA\"\nexpected_base64 = \"AAAA\"\n";
         let fixture =
             XdrFixture::from_loaded(&loaded_fixture("p28-xdr-encode-equals-garbage", body))
                 .unwrap();

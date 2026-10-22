@@ -31,6 +31,7 @@ Options:
       --max-concurrency <MAX_CONCURRENCY>  Maximum number of concurrent network requests for RPC/Soroban fixtures [default: 4]
       --no-cache                     Do not read or write the local result cache. Every fixture runs fresh.
       --live-cache-ttl <SECONDS>     Allow RPC and Soroban results from the local cache to be replayed for up to this many seconds. Off by default.
+      --locked                       Require .stellar-canary.lock to exist and its pinned fixtures.packDigest to match the current fixture pack (exit code 2 otherwise)
   -h, --help                         Print help
 ```
 
@@ -244,6 +245,30 @@ project root (add it to `.gitignore`).
 - A replayed result is marked `"source": "cache"` in the JSON report, and the
   terminal and Markdown reports say how many results were replayed.
 - A damaged, unreadable or old-layout entry is ignored and the fixture runs.
+
+## Strict pinning with --locked
+
+`--locked` turns `check` into a CI gate over the fixture-pack pin
+(`.stellar-canary.lock`, written by [`lock`](lock.md)):
+
+```bash
+stellar-canary lock
+stellar-canary check --locked
+```
+
+With the flag, the run first loads the lockfile from the project root and
+compares its pinned `[fixtures].packDigest` against the `canary-pack-v1`
+digest of the resolved fixture directory. If the lockfile is missing, unreadable,
+or the pack has drifted — an edited or added fixture file changes the
+digest — the run fails with exit code `2` **before any fixture executes**,
+and the message names `stellar-canary lock` as the command that repairs the
+pin. A fresh, matching lockfile lets the run proceed exactly as usual.
+
+Without the flag the lockfile is not consulted at all, so `--locked` is
+strictly opt-in. This is deliberately stricter than `lock verify`, which
+reports the same conditions as a verification failure with exit code `1`:
+`--locked` fails with `2` so a CI pipeline can tell "the pin does not hold"
+apart from "a fixture genuinely broke".
 
 ## No applicable fixtures
 

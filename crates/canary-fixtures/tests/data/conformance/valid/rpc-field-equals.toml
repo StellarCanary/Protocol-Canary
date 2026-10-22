@@ -1,0 +1,13 @@
+id = "conformance-valid-rpc-field-equals"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "Accepted RPC field-equals assertion shape."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+[[assert]]
+kind = "field-equals"
+field = "protocolVersion"
+value = 28

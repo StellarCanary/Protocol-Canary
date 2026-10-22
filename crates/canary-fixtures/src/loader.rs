@@ -232,133 +232,35 @@ pub fn load_directory_with_evidence(dir: &Path) -> Result<LoadOutcome, FixtureEr
     Ok(LoadOutcome { fixtures, warnings })
 }
 
-/// Indexes evidence sidecar files by their stem (the file name without
-/// the `.evidence.json` suffix). When two directories hold a sidecar
-/// with the same stem, the first in sorted order is indexed and the
-/// others are reported.
-fn index_evidence(
-    paths: Vec<PathBuf>,
-    warnings: &mut Vec<VerificationWarning>,
-) -> BTreeMap<String, PathBuf> {
-    let mut index: BTreeMap<String, PathBuf> = BTreeMap::new();
-    for path in paths {
-        let Some(stem) = evidence_stem(&path) else {
-            continue;
-        };
-        match index.get(&stem) {
-            Some(first) => warnings.push(VerificationWarning {
-                path,
-                reason: format!(
-                    "duplicate evidence for {stem:?}: {} already provides it",
-                    first.display()
-                ),
-            }),
-            None => {
-                index.insert(stem, path);
-            }
-        }
-    }
-    index
-}
-
-/// The lookup key of an evidence sidecar: its file name without the
-/// [`.evidence.json`](EVIDENCE_SUFFIX) suffix, or `None` when the file
-/// name is not valid UTF-8 (never the case for a name this walk
-/// accepted, but not worth panicking over).
-fn evidence_stem(path: &Path) -> Option<String> {
-    path.file_name()?
-        .to_str()?
-        .strip_suffix(EVIDENCE_SUFFIX)
-        .map(str::to_owned)
-}
-
-/// Attaches each available sidecar to its fixture and reports the rest.
+/// Filters loaded fixtures by optional compatibility surface and optional category.
 ///
-/// Each sidecar is claimed at most once: the first fixture whose id or
-/// file stem matches it, even if reading it later fails, so one broken
-/// sidecar is reported once and never leaks onto another fixture.
-fn attach_evidence(
-    fixtures: &mut [LoadedFixture],
-    mut sidecars: BTreeMap<String, PathBuf>,
-    warnings: &mut Vec<VerificationWarning>,
-) {
-    for fixture in fixtures.iter_mut() {
-        let stem = fixture
-            .source_path
-            .file_stem()
-            .and_then(|stem| stem.to_str())
-            .map(str::to_owned);
-        let candidates: Vec<String> = std::iter::once(fixture.metadata.id.clone())
-            .chain(stem)
-            .collect();
-
-        if fixture.verification.is_some() {
-            // The embedded table is authoritative; a sidecar beside it is
-            // a data conflict the maintainer should know about.
-            if let Some((key, path)) = candidates.iter().find_map(|key| sidecars.remove_entry(key))
-            {
-                warnings.push(VerificationWarning {
-                    path,
-                    reason: format!(
-                        "fixture {:?} already has an embedded [verification] table; the embedded table wins over the {key:?} sidecar",
-                        fixture.metadata.id
-                    ),
-                });
+/// Matches fixtures whose surface equals `surface` (if `Some`) and whose category
+/// equals `category` (if `Some`). Returns a new `Vec<LoadedFixture>`.
+pub fn filter_fixtures(
+    fixtures: &[LoadedFixture],
+    surface: Option<canary_core::Surface>,
+    category: Option<&str>,
+) -> Vec<LoadedFixture> {
+    fixtures
+        .iter()
+        .filter(|fixture| {
+            if let Some(s) = surface {
+                if fixture.metadata.surface != s {
+                    return false;
+                }
             }
-            continue;
-        }
-
-        let Some((_, path)) = candidates.iter().find_map(|key| sidecars.remove_entry(key)) else {
-            continue;
-        };
-        match read_sidecar_record(&path, &fixture.metadata.id) {
-            Ok(record) => fixture.verification = Some(record),
-            Err(reason) => warnings.push(VerificationWarning { path, reason }),
-        }
-    }
-
-    // Sidecars nothing claimed: evidence for a fixture that is not in
-    // this directory, a misnamed record, or a second sidecar for a
-    // fixture that already had one.
-    for (_stem, path) in sidecars {
-        warnings.push(VerificationWarning {
-            path,
-            reason: "no fixture in this directory claims this evidence file; it must be named after a fixture's id or file stem"
-                .to_string(),
-        });
-    }
+            if let Some(c) = category {
+                if fixture.metadata.category != c {
+                    return false;
+                }
+            }
+            true
+        })
+        .cloned()
+        .collect()
 }
 
-/// Reads one sidecar file and validates it against the CF-04 section 3
-/// rules, returning the reason it cannot be used otherwise.
-fn read_sidecar_record(path: &Path, fixture_id: &str) -> Result<VerificationRecord, String> {
-    // The walk already refuses symlinks and oversized files; re-checking
-    // keeps this function correct when called on a path that did not
-    // come from the walk.
-    let meta = std::fs::symlink_metadata(path).map_err(|err| format!("cannot read: {err}"))?;
-    if !meta.file_type().is_file() {
-        return Err("not a regular file".to_string());
-    }
-    if meta.len() > MAX_FIXTURE_BYTES {
-        return Err(format!(
-            "the file is {} bytes, over the {}-byte limit",
-            meta.len(),
-            MAX_FIXTURE_BYTES
-        ));
-    }
-    let text = std::fs::read_to_string(path).map_err(|err| format!("cannot read: {err}"))?;
-    let record: VerificationRecord =
-        serde_json::from_str(&text).map_err(|err| format!("invalid verification record: {err}"))?;
-    record.check(fixture_id).map_err(str::to_owned)?;
-    Ok(record)
-}
-
-fn collect_files(
-    dir: &Path,
-    out: &mut Vec<PathBuf>,
-    evidence: &mut Vec<PathBuf>,
-    warnings: &mut Vec<VerificationWarning>,
-) -> Result<(), FixtureError> {
+fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureError> {
     let entries = std::fs::read_dir(dir).map_err(|source| FixtureError::ReadDir {
         path: dir.to_path_buf(),
         source,
@@ -479,6 +381,77 @@ mod tests {
 
         let fixtures = load_directory(&dir.path).expect("loads");
         assert_eq!(fixtures.len(), 1);
+    }
+
+    #[test]
+    fn filter_fixtures_by_surface_and_category() {
+        let dir = crate::test_support::temp_dir("loader-filter");
+        write(
+            &dir.path.join("p28-xdr-auth.toml"),
+            r#"
+            id = "p28-xdr-auth"
+            protocol = 28
+            surface = "xdr"
+            category = "auth"
+            description = "auth xdr fixture"
+            "#,
+        );
+        write(
+            &dir.path.join("p28-rpc-auth.toml"),
+            r#"
+            id = "p28-rpc-auth"
+            protocol = 28
+            surface = "rpc"
+            category = "auth"
+            description = "auth rpc fixture"
+            "#,
+        );
+        write(
+            &dir.path.join("p28-soroban-token.toml"),
+            r#"
+            id = "p28-soroban-token"
+            protocol = 28
+            surface = "soroban"
+            category = "token"
+            description = "token soroban fixture"
+            "#,
+        );
+
+        let fixtures = load_directory(&dir.path).expect("loads");
+        assert_eq!(fixtures.len(), 3);
+
+        // Filter by surface
+        let xdr_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Xdr), None);
+        assert_eq!(xdr_only.len(), 1);
+        assert_eq!(xdr_only[0].metadata.id, "p28-xdr-auth");
+
+        let rpc_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Rpc), None);
+        assert_eq!(rpc_only.len(), 1);
+        assert_eq!(rpc_only[0].metadata.id, "p28-rpc-auth");
+
+        let soroban_only = filter_fixtures(&fixtures, Some(canary_core::Surface::Soroban), None);
+        assert_eq!(soroban_only.len(), 1);
+        assert_eq!(soroban_only[0].metadata.id, "p28-soroban-token");
+
+        // Filter by category
+        let auth_only = filter_fixtures(&fixtures, None, Some("auth"));
+        assert_eq!(auth_only.len(), 2);
+
+        let token_only = filter_fixtures(&fixtures, None, Some("token"));
+        assert_eq!(token_only.len(), 1);
+        assert_eq!(token_only[0].metadata.id, "p28-soroban-token");
+
+        // Filter by surface and category
+        let rpc_auth = filter_fixtures(&fixtures, Some(canary_core::Surface::Rpc), Some("auth"));
+        assert_eq!(rpc_auth.len(), 1);
+        assert_eq!(rpc_auth[0].metadata.id, "p28-rpc-auth");
+
+        let xdr_token = filter_fixtures(&fixtures, Some(canary_core::Surface::Xdr), Some("token"));
+        assert!(xdr_token.is_empty());
+
+        // Non-existent category
+        let nonexistent = filter_fixtures(&fixtures, None, Some("nonexistent"));
+        assert!(nonexistent.is_empty());
     }
 
     #[test]

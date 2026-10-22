@@ -26,7 +26,7 @@ use sha2::{Digest, Sha256};
 
 /// Plain SHA-256 of `bytes` as lowercase hex (no framing, unlike
 /// `canary_core::sha256_hex`, which length-prefixes its parts).
-fn sha256_hex(bytes: &[u8]) -> String {
+pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))

@@ -20,6 +20,19 @@ pub const INVENTORY_VERSION: u32 = 1;
 /// The fixture file format the engine reads today.
 pub const FIXTURE_FORMAT: u32 = 1;
 
+/// The pack identity recorded in the inventory, when running over a fixture directory.
+#[derive(Debug, Serialize)]
+pub struct PackIdentity {
+    /// SHA-256 digest of the fixture pack.
+    pub pack_digest: String,
+    /// Protocol version.
+    pub protocol: u32,
+    /// Registry version.
+    pub registry_version: u32,
+    /// Source of the pack (e.g., "directory").
+    pub source: String,
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FixtureInventory {
@@ -34,6 +47,8 @@ pub struct FixtureInventory {
     pub other_protocols: BTreeMap<String, usize>,
     /// One entry per fixture of `protocol`, sorted by id (UTF-8 bytes).
     pub fixtures: Vec<InventoryFixture>,
+    /// Pack identity, recorded when running over a local fixture directory.
+    pub pack: Option<PackIdentity>,
 }
 
 #[derive(Debug, Default, Serialize)]
@@ -112,6 +127,37 @@ pub fn build(
         .collect();
     fixtures.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
 
+    let pack = if directory_found {
+        let digest = match canary_fixtures::digest::pack_digest(fixtures_dir) {
+            Ok(d) => d.digest,
+            Err(_) => {
+                // Do not abort the run when the pack is unusable: the check
+                // still matters, but we cannot claim a digest we could not
+                // compute. Omit identity rather than invent one.
+                return FixtureInventory {
+                    inventory_version: INVENTORY_VERSION,
+                    tool_version: env!("CARGO_PKG_VERSION").to_string(),
+                    fixture_format: FIXTURE_FORMAT,
+                    protocol,
+                    directory_found,
+                    counts,
+                    other_protocols,
+                    pack: None,
+                    fixtures,
+                };
+            }
+        };
+
+        Some(PackIdentity {
+            pack_digest: digest,
+            protocol,
+            registry_version: 1,
+            source: "directory".to_string(),
+        })
+    } else {
+        None
+    };
+
     FixtureInventory {
         inventory_version: INVENTORY_VERSION,
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -120,6 +166,7 @@ pub fn build(
         directory_found,
         counts,
         other_protocols,
+        pack,
         fixtures,
     }
 }

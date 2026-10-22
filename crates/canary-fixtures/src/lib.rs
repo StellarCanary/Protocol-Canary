@@ -10,6 +10,7 @@ pub mod loader;
 pub mod manifest;
 pub mod validator;
 pub mod verification;
+pub mod registry;
 
 pub use archive::{
     extract_archive, extract_archive_with_limits, ArchiveLimits, ArchiveSafetyError,

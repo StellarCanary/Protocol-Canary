@@ -1,5 +1,8 @@
 //! Loading a directory of fixture files.
 
+use crate::digest;
+use crate::registry;
+
 use std::path::{Path, PathBuf};
 
 use canary_core::CanaryError;
@@ -108,6 +111,18 @@ pub enum FixtureError {
 
 impl From<FixtureError> for CanaryError {
     fn from(error: FixtureError) -> Self {
+        CanaryError::Fixture(error.to_string())
+    }
+}
+
+impl From<digest::PackError> for CanaryError {
+    fn from(error: digest::PackError) -> Self {
+        CanaryError::Fixture(error.to_string())
+    }
+}
+
+impl From<registry::RegistryError> for CanaryError {
+    fn from(error: registry::RegistryError) -> Self {
         CanaryError::Fixture(error.to_string())
     }
 }

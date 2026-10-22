@@ -108,6 +108,9 @@ pub struct ReportInput {
     pub network: Option<NetworkSummary>,
     pub results: Vec<CompatibilityResult>,
     pub skipped: Vec<SkipSummary>,
+    /// Pack identity, recorded when running over a fixture directory (issue #442).
+    /// Absent when no fixture directory was searched.
+    pub pack: Option<PackIdentity>,
     /// Verification evidence for the fixtures of this run, by fixture
     /// id. A fixture missing from this list is unverified, which is the
     /// unknown state; the terminal reporter shows that rather than
@@ -120,6 +123,19 @@ pub struct ReportInput {
     /// written before the field existed), which is different from a
     /// recorded run whose commit is unknown.
     pub run: Option<RunSummary>,
+}
+
+/// Pack identity recorded in a report (issue #442).
+#[derive(Debug, Clone)]
+pub struct PackIdentity {
+    /// SHA-256 digest of the fixture pack.
+    pub pack_digest: String,
+    /// Protocol version.
+    pub protocol: u32,
+    /// Registry version.
+    pub registry_version: u32,
+    /// Source of the pack (e.g., "directory").
+    pub source: String,
 }
 
 impl ReportInput {
@@ -211,6 +227,7 @@ impl ReportInput {
     ///     git: canary_core::GitContext::default(),
     ///     verbose: false,
     ///     run: None,
+    ///     pack: None,
     /// };
     ///
     /// let xdr: Vec<_> = report.results_for(Surface::Xdr).collect();
@@ -394,6 +411,7 @@ mod tests {
             git: GitContext::default(),
             verbose: false,
             run: None,
+            pack: None,
         }
     }
 

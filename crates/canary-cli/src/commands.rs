@@ -9,8 +9,8 @@ use canary_core::{
 };
 use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
-    JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary, ReportInput,
-    TerminalReporter,
+    JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, PackIdentity, ProjectSummary,
+    ReportInput, TerminalReporter,
 };
 use canary_rpc::{validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError};
 use canary_runner::{EnabledSurfaces, NetworkMode};
@@ -426,6 +426,33 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         })
         .collect();
 
+    // Pack identity recorded when running over a local fixture directory
+    // Pack identity recorded when running over a local fixture directory
+    // (issue #442). The JSON report only ever writes this field; the read
+    // path keeps it `None` on purpose because the wire format omits it.
+
+    let pack: Option<PackIdentity> = if fixtures_dir.is_dir() {
+        let inventory = fixtures_json::build(
+            target_protocol.0,
+            true,
+            &fixtures_dir,
+            &discovered_fixtures,
+        );
+
+        inventory.pack.map(|p| {
+
+            PackIdentity {
+                pack_digest: p.pack_digest,
+                protocol: p.protocol,
+                registry_version: p.registry_version,
+                source: p.source,
+            }
+        })
+    } else {
+
+        None
+    };
+
     let report_input = ReportInput {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
         target_protocol,
@@ -446,6 +473,7 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
             })
             .collect(),
         verification,
+        pack,
         decision,
         git,
         verbose: args.verbose,
@@ -1654,6 +1682,7 @@ mod tests {
             git: GitContext::default(),
             verbose: false,
             run: None,
+            pack: None,
         })
     }
 

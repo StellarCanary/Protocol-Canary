@@ -46,11 +46,25 @@ struct JsonReport {
     /// written before the field existed, which means *not recorded*.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     run: Option<JsonRun>,
+    /// Pack identity recorded when running over a fixture directory (issue #442).
+    /// Absent when no fixture directory was searched.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pack: Option<JsonPack>,
 }
 
 /// `run` in the report. `toolBuildCommit` is always written when `run` is,
 /// as a string or an explicit `null`, so "recorded, unknown" is
 /// distinguishable from "not recorded" (no `run` at all).
+#[derive(Debug, Serialize, Deserialize)]
+struct JsonPack {
+    #[serde(rename = "packDigest")]
+    pack_digest: String,
+    protocol: u32,
+    #[serde(rename = "registryVersion")]
+    registry_version: u32,
+    source: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct JsonRun {
     #[serde(rename = "toolBuildCommit", default)]
@@ -210,6 +224,12 @@ impl From<&ReportInput> for JsonReport {
             verbose: input.verbose,
             run: input.run.as_ref().map(|run| JsonRun {
                 tool_build_commit: run.tool_build_commit.clone(),
+            }),
+            pack: input.pack.as_ref().map(|p| JsonPack {
+                pack_digest: p.pack_digest.clone(),
+                protocol: p.protocol,
+                registry_version: p.registry_version,
+                source: p.source.clone(),
             }),
         }
     }
@@ -379,6 +399,7 @@ impl TryFrom<JsonReport> for ReportInput {
                 name: report.project.name,
                 project_type: parse_project_type(&report.project.project_type),
             },
+            pack: None,
             network: report.network.map(|n| NetworkSummary {
                 name: parse_network_name(&n.name),
                 observed_protocol: n.observed_protocol.map(ProtocolVersion),
@@ -478,6 +499,7 @@ mod tests {
             git: GitContext::default(),
             verbose: false,
             run: None,
+            pack: None,
         }
     }
 

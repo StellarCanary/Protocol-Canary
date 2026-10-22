@@ -42,6 +42,7 @@ fn report(results: Vec<CompatibilityResult>, skipped: Vec<SkipSummary>) -> Repor
         git: GitContext::default(),
         verbose: false,
         run: None,
+        pack: None,
     }
 }
 

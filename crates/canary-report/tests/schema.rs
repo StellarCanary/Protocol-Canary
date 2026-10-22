@@ -181,6 +181,7 @@ fn rendered_report() -> String {
         // CF-04 evidence lives with the fixture pack, never in the report
         // JSON, so a schema conformance report carries none.
         verification: Vec::new(),
+        pack: None,
     };
     JsonReporter::render(&input)
 }

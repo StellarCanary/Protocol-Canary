@@ -40,6 +40,7 @@ fn report_with(results: Vec<CompatibilityResult>, skipped: Vec<SkipSummary>) -> 
         verbose: false,
         verification: Vec::new(),
         run: None,
+        pack: None,
     }
 }
 

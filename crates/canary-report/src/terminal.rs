@@ -222,6 +222,7 @@ mod tests {
             git: GitContext::default(),
             verbose: false,
             run: None,
+            pack: None,
         }
     }
 

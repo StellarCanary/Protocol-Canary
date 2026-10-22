@@ -496,6 +496,7 @@ mod tests {
             verbose: false,
             verification: Vec::new(),
             run: None,
+            pack: None,
         }
     }
 

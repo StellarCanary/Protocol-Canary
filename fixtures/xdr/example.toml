@@ -1,0 +1,8 @@
+id = "p28-xdr-example"
+protocol = 28
+surface = "xdr"
+category = "test"
+description = "test"
+type = "StellarValue"
+kind = "decode-success"
+value_base64 = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

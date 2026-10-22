@@ -80,7 +80,7 @@ test("every ARIA tab is a real button so Enter and Space activate it", () => {
 test("the search field is labelled and announces its live status politely", () => {
   const html = read("index.html");
   assert.match(html, /<label for="search">Search findings<\/label>/);
-  assert.match(html, /<input id="search" type="search"[^>]*aria-controls="findings-list"/);
+  assert.match(html, /<input id="search" type="search"[^>]*aria-controls="panel-findings"/);
   assert.match(html, /id="search-status" aria-live="polite"/);
 });
 
@@ -115,6 +115,14 @@ async function loaded(stub, overrides) {
   const out = await loadReport(stub, JSON.stringify(report(overrides)));
   assert.equal(out.textCalls, 1, "the file is read exactly once");
   return out;
+}
+
+/* The cards currently on show, summed over the three readiness groups. */
+function visibleCards(stub) {
+  return ["ready", "attention", "incomplete"].reduce(
+    (n, key) => n + stub.byId(key + "-list").children.length,
+    0,
+  );
 }
 
 test("tabs start selected with a roving tabindex and label the panel", () => {
@@ -160,16 +168,23 @@ test("clicking a tab switches the displayed surface instantly", async () => {
   await loaded(stub, {});
 
   assert.equal(stub.byId("search-status").textContent, "Showing all 4 results. 1 of 1 skipped fixtures shown.");
-  assert.equal(stub.byId("findings-list").children.length, 4);
+  assert.equal(visibleCards(stub), 4);
 
   stub.byId("tab-rpc").dispatch("click", {});
   assert.equal(stub.byId("tab-rpc").getAttribute("aria-selected"), "true");
   assert.equal(stub.byId("tab-all").getAttribute("aria-selected"), "false");
   assert.equal(stub.byId("panel-findings").getAttribute("aria-labelledby"), "tab-rpc");
-  const rows = stub.byId("findings-list").children;
-  assert.equal(rows.length, 2);
-  assert.equal(rows[0].attributes.get("class"), "finding");
-  assert.equal(rows[1].textContent, "errorrpcf4rpc stopped");
+  // Of the two rpc results, the failure lands in Attention Required and
+  // the error in Incomplete; Ready has nothing left to show and hides.
+  assert.equal(stub.byId("ready-list").children.length, 0);
+  assert.equal(stub.byId("group-ready").hidden, true);
+  const attention = stub.byId("attention-list").children;
+  assert.equal(attention.length, 1);
+  assert.equal(attention[0].attributes.get("class"), "finding");
+  const incomplete = stub.byId("incomplete-list").children;
+  assert.equal(incomplete.length, 1);
+  assert.equal(incomplete[0].textContent, "errorrpcf4rpc stopped0 ms");
+  assert.equal(stub.byId("group-incomplete").hidden, false);
 });
 
 test("the search live region reports filtered counts and empty states politely", async () => {
@@ -179,7 +194,7 @@ test("the search live region reports filtered counts and empty states politely",
   stub.byId("search").value = "rpc";
   stub.byId("search").dispatch("input", {});
   assert.equal(stub.byId("search-status").textContent, "2 of 4 results match \"rpc\". 0 of 1 skipped fixtures shown.");
-  assert.equal(stub.byId("findings-list").children.length, 2);
+  assert.equal(visibleCards(stub), 2);
 
   stub.byId("search").value = "nothing-matches-this";
   stub.byId("search").dispatch("input", {});
@@ -187,7 +202,12 @@ test("the search live region reports filtered counts and empty states politely",
     stub.byId("search-status").textContent,
     "No results match \"nothing-matches-this\". 0 of 1 skipped fixtures shown.",
   );
-  assert.equal(stub.byId("findings-list").children.length, 0);
+  assert.equal(visibleCards(stub), 0);
+  // No match hides every group whole: the empty-state notice is the only
+  // thing left in the panel, and the layout does not keep empty headings.
+  for (const key of ["ready", "attention", "incomplete"]) {
+    assert.equal(stub.byId("group-" + key).hidden, true, "group-" + key);
+  }
   assert.equal(
     stub.byId("findings-empty").textContent,
     "No results match \"nothing-matches-this\".",
@@ -214,14 +234,13 @@ test("loading a new file resets the previous tab and query state", async () => {
   assert.equal(stub.byId("search-status").textContent, "Showing all 4 results. 1 of 1 skipped fixtures shown.");
 });
 
-test("findings rows expose surface, id, status text and a collapsible details toggle", async () => {
+test("findings cards expose surface, id, status, timing and a collapsible details toggle", async () => {
   const stub = dom();
   await loaded(stub, {});
 
-  const rows = stub.byId("findings-list").children;
-  assert.equal(rows.length, 4);
-  const failing = rows[1];
-  assert.equal(failing.textContent, "failrpcf2rpc brokenDetailsexplains the failure");
+  assert.equal(visibleCards(stub), 4);
+  const failing = stub.byId("attention-list").children[0];
+  assert.equal(failing.textContent, "failrpcf2rpc broken0 msDetailsexplains the failure");
   const spansByName = {};
   for (const child of failing.children) {
     const cls = child.attributes.get("class");
@@ -231,6 +250,7 @@ test("findings rows expose surface, id, status text and a collapsible details to
   assert.equal(spansByName.identity, "f2");
   assert.equal(spansByName.summary, "rpc broken");
   assert.equal(spansByName.status, "fail");
+  assert.equal(spansByName.timing, "0 ms");
   assert.equal(
     [...failing.children].find((c) => c.attributes.get("class") === "status").attributes.get("data-status"),
     "fail",
@@ -242,14 +262,51 @@ test("findings rows expose surface, id, status text and a collapsible details to
   assert.equal(details.children[0].attributes.get("aria-label"), "Details of f2");
   assert.equal(details.children[1].textContent, "explains the failure");
 
-  const plain = rows[0];
+  const plain = stub.byId("ready-list").children[0];
   assert.ok(!plain.children.some((c) => c.tagName === "DETAILS"), "no toggle without details");
-  assert.ok(!rows[0].children.some((c) => c.tagName === "SUMMARY"));
+  assert.ok(!plain.children.some((c) => c.tagName === "SUMMARY"));
 
   const skippedRows = stub.byId("skipped-list").children;
   assert.equal(skippedRows.length, 1);
   assert.equal(skippedRows[0].textContent, "skippedxdrs1not applicable");
   assert.ok(!stub.byId("skipped-section").hidden);
+});
+
+test("results are grouped under readiness headings with live counts and formatted timings", async () => {
+  const stub = dom();
+  await loaded(stub, {
+    results: [
+      result({ testId: "t1", surface: "xdr", status: "pass", fixtureId: "f1", durationMs: 12 }),
+      result({ testId: "t2", surface: "rpc", status: "warning", fixtureId: "f2", durationMs: 1500 }),
+      result({ testId: "t3", surface: "rpc", status: "fail", fixtureId: "f3", durationMs: 999 }),
+      result({ testId: "t4", surface: "rpc", status: "error", fixtureId: "f4" }),
+      result({ testId: "t5", surface: "xdr", status: "skipped", fixtureId: "f5" }),
+    ],
+    skipped: [],
+  });
+
+  // pass -> Ready; warning and fail -> Attention Required; error and
+  // skipped -> Incomplete. Each heading carries its count.
+  assert.equal(stub.byId("ready-heading").textContent, "Ready (1)");
+  assert.equal(stub.byId("attention-heading").textContent, "Attention Required (2)");
+  assert.equal(stub.byId("incomplete-heading").textContent, "Incomplete (2)");
+  for (const key of ["ready", "attention", "incomplete"]) {
+    assert.equal(stub.byId("group-" + key).hidden, false, "group-" + key);
+  }
+  // Card children: status, meta, identity, summary, timing.
+  assert.equal(stub.byId("ready-list").children[0].children[4].textContent, "12 ms");
+  const attention = stub.byId("attention-list").children;
+  assert.equal(attention[0].children[4].textContent, "1.50 s");
+  assert.equal(attention[1].children[4].textContent, "999 ms");
+
+  // A surface filter that empties a group updates the count and hides
+  // that group, leaving the others untouched.
+  stub.byId("tab-rpc").dispatch("click", {});
+  assert.equal(stub.byId("ready-heading").textContent, "Ready (0)");
+  assert.equal(stub.byId("group-ready").hidden, true);
+  assert.equal(stub.byId("attention-heading").textContent, "Attention Required (2)");
+  assert.equal(stub.byId("incomplete-heading").textContent, "Incomplete (1)");
+  assert.equal(visibleCards(stub), 3);
 });
 
 test("the report source opens as a native modal dialog and closes from the button", async () => {

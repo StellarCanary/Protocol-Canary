@@ -44,12 +44,23 @@
           </div>
           <div class="search">
             <label for="search">Search findings</label>
-            <input id="search" type="search" placeholder="Fixture id or summary" aria-controls="findings-list">
+            <input id="search" type="search" placeholder="Fixture id or summary" aria-controls="panel-findings">
           </div>
         </div>
         <p id="search-status" aria-live="polite"></p>
         <div id="panel-findings" role="tabpanel" aria-labelledby="tab-all">
-          <ul id="findings-list"></ul>
+          <section id="group-ready" class="readiness" hidden>
+            <h4 id="ready-heading" class="readiness-heading">Ready</h4>
+            <ul id="ready-list"></ul>
+          </section>
+          <section id="group-attention" class="readiness" hidden>
+            <h4 id="attention-heading" class="readiness-heading">Attention Required</h4>
+            <ul id="attention-list"></ul>
+          </section>
+          <section id="group-incomplete" class="readiness" hidden>
+            <h4 id="incomplete-heading" class="readiness-heading">Incomplete</h4>
+            <ul id="incomplete-list"></ul>
+          </section>
           <p id="findings-empty" hidden></p>
         </div>
       </div>

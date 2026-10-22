@@ -161,7 +161,9 @@ test("rendering the malicious report keeps every payload inert in text nodes", a
     const visible = [
       stub.byId("heading").textContent,
       stub.byId("facts").textContent,
-      stub.byId("findings-list").textContent,
+      ["ready", "attention", "incomplete"]
+        .map((key) => stub.byId(key + "-list").textContent)
+        .join("\n"),
       stub.byId("skipped-list").textContent,
       stub.byId("protocol-mismatch").textContent,
       stub.byId("report-source-code").textContent,

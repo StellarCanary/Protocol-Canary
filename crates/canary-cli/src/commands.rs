@@ -203,6 +203,13 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
+    // `--locked` is verified before any fixture loads or runs: a missing
+    // or stale pin must fail the whole run with exit code 2, not surface
+    // after fixtures have already executed (issue #446).
+    if args.locked {
+        verify_locked(&root, &fixtures_dir)?;
+    }
+
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
 
@@ -635,15 +642,14 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
-    let details = canary_project::detect_details(&root);
-    let detected = details.context.clone();
     let explicit_type = match config.project.project_type {
         canary_config::ProjectTypeSetting::Auto => None,
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
     };
-    let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
-    let mut project = detected.clone();
-    project.project_type = resolved_type;
+    let details = canary_project::detect_project(&root, explicit_type);
+    let project = details.context.clone();
+    let mut detected = project.clone();
+    detected.project_type = details.detected_type;
 
     let target_source = if args.protocol.is_some() {
         "flag"
@@ -1433,6 +1439,53 @@ fn run_cache_clear_inner(args: CacheClearArgs) -> Result<ExitCode, CanaryError> 
         );
     }
     Ok(ExitCode::Pass)
+}
+
+/// Enforces the `.stellar-canary.lock` pin for `check --locked` (CF-03).
+///
+/// With `--locked`, the lockfile must exist next to the configuration in
+/// the project root, must parse under the CF-03 section 3 rules, and its
+/// pinned `[fixtures].packDigest` must equal the `canary-pack-v1` digest
+/// (CF-02) of the resolved fixture pack. Every deviation — a missing
+/// lockfile, an unreadable one, an undigestible pack, or a pack whose
+/// bytes no longer hash to the pinned digest — is a configuration error:
+/// the run exits with code 2 before any fixture executes, and the message
+/// names `stellar-canary lock` as the command that repairs the pin. This
+/// is deliberately stricter than `lock verify`, which reports the same
+/// conditions as a verification failure with exit code 1: `--locked` is a
+/// CI gate, and a gate that cannot tell "the pin does not hold" apart from
+/// "the pin was never set" is a gate that invites `|| true`.
+fn verify_locked(root: &Path, fixtures_dir: &Path) -> Result<(), CanaryError> {
+    let lock_path = root.join(canary_config::LOCK_FILE_NAME);
+    let lock = canary_config::load_lock(&lock_path).map_err(|err| match err {
+        LockError::Read { path, source } if source.kind() == std::io::ErrorKind::NotFound => {
+            CanaryError::Configuration(format!(
+                "--locked requires {}, but no lockfile exists: run 'stellar-canary lock' to pin the fixture pack",
+                path.display()
+            ))
+        }
+        other => CanaryError::Configuration(format!(
+            "--locked could not load the lockfile {}: {other}; run 'stellar-canary lock' to rewrite the pin",
+            lock_path.display()
+        )),
+    })?;
+
+    let pack = canary_fixtures::pack_digest(fixtures_dir).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "--locked could not digest the fixture pack at {}: {e}; restore the fixture pack, then run 'stellar-canary lock' to re-pin it",
+            fixtures_dir.display()
+        ))
+    })?;
+
+    if lock.fixtures.pack_digest != pack.digest {
+        return Err(CanaryError::Configuration(format!(
+            "--locked: the lockfile pins fixtures.packDigest {}, but the fixture pack at {} hashes to {}: run 'stellar-canary lock' to update the pin",
+            lock.fixtures.pack_digest,
+            fixtures_dir.display(),
+            pack.digest
+        )));
+    }
+    Ok(())
 }
 
 /// What `lock verify` decided (CF-03-D).

@@ -66,6 +66,15 @@ pub fn hint_for(message: &str) -> Option<&'static str> {
     }
 
     if contains_any(&text, &["lockfile", "lock file", ".stellar-canary.lock"]) {
+        // `check --locked` failures name the command that repairs the pin;
+        // the generic advice below (remove and regenerate) is wrong for
+        // them, since removing the lockfile only re-creates the very
+        // condition the flag refuses to run under.
+        if text.contains("--locked") {
+            return Some(
+                "run `stellar-canary lock` in the project root to create or refresh the `.stellar-canary.lock` pin, then re-run with --locked",
+            );
+        }
         return Some(
             "a stale or unreadable `.stellar-canary.lock` blocks the run: make sure no other canary process holds it, remove the lockfile to regenerate it, then re-run",
         );

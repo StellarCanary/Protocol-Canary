@@ -1,10 +1,24 @@
-//! Loading a directory of fixture files.
+//! Loading a directory of fixture files, with their CF-04 verification
+//! evidence.
+//!
+//! A fixture's verification record can be embedded as a `[verification]`
+//! table (parsed strictly by the manifest; an invalid table is an invalid
+//! fixture) or carried in an evidence *sidecar* file: a JSON document
+//! named `<name>.evidence.json`, either beside the fixture or anywhere
+//! under the loaded directory (conventionally in an `evidence/`
+//! directory), keyed by the fixture's id or by the fixture file's own
+//! stem. Sidecars are optional data, so a sidecar that is malformed,
+//! oversized, or breaks a CF-04 rule is *reported as a warning and
+//! ignored*: the fixture loads as unverified instead of failing the
+//! whole directory.
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use canary_core::CanaryError;
 
 use crate::manifest::{parse_fixture_file, LoadedFixture};
+use crate::verification::VerificationRecord;
 
 /// Errors produced while loading and validating a fixture directory.
 ///
@@ -115,6 +129,10 @@ impl From<FixtureError> for CanaryError {
 /// Name of the version-control directory that the walk never enters.
 const VCS_DIR: &str = ".git";
 
+/// Suffix of a verification evidence sidecar file: a fixture
+/// `p28-rpc-001.toml` is backed by `p28-rpc-001.evidence.json`.
+const EVIDENCE_SUFFIX: &str = ".evidence.json";
+
 /// Largest fixture file the loader accepts, in bytes (1 MiB).
 ///
 /// A fixture is a short TOML document; anything this large is not one. The
@@ -122,10 +140,49 @@ const VCS_DIR: &str = ".git";
 /// is rejected before it is read into memory.
 pub const MAX_FIXTURE_BYTES: u64 = 1024 * 1024;
 
-/// Recursively loads every `*.toml` fixture file under `dir`.
+/// One verification evidence sidecar the loader could not use.
+///
+/// Evidence is optional data, so a warning never fails a load: the
+/// fixture it would have verified stays in the unverified state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationWarning {
+    /// The evidence file the loader ignored.
+    pub path: PathBuf,
+    /// Why it was ignored.
+    pub reason: String,
+}
+
+impl std::fmt::Display for VerificationWarning {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "ignored verification evidence file {}: {}",
+            self.path.display(),
+            self.reason
+        )
+    }
+}
+
+/// The fixtures of a loaded directory plus the evidence sidecars that
+/// could not be used, returned together by
+/// [`load_directory_with_evidence`].
+#[derive(Debug)]
+pub struct LoadOutcome {
+    /// The loaded fixtures, in deterministic (sorted-by-path) order,
+    /// each carrying its verification record when one could be read.
+    pub fixtures: Vec<LoadedFixture>,
+    /// Every evidence sidecar that was ignored, in load order.
+    pub warnings: Vec<VerificationWarning>,
+}
+
+/// Recursively loads every `*.toml` fixture file under `dir`, attaching
+/// the verification evidence of each fixture.
 ///
 /// Returns fixtures in a deterministic (sorted-by-path) order so that
-/// downstream planning and reporting stay reproducible.
+/// downstream planning and reporting stay reproducible. Evidence
+/// sidecars that cannot be used are printed to stderr as warnings and
+/// do not fail the load; use [`load_directory_with_evidence`] to inspect
+/// them programmatically.
 ///
 /// Traversal rules, identical on every platform:
 ///
@@ -137,15 +194,171 @@ pub const MAX_FIXTURE_BYTES: u64 = 1024 * 1024;
 ///   a repository checkout is documented and supported; its history is not
 ///   fixture data.
 /// - Entries that are neither regular files nor directories are ignored.
+/// - `*.evidence.json` files are verification evidence sidecars; every
+///   other non-TOML file (including a captured request/response named by
+///   a record's `evidenceRef`) is data and is not read.
 pub fn load_directory(dir: &Path) -> Result<Vec<LoadedFixture>, FixtureError> {
-    let mut paths = Vec::new();
-    collect_toml_files(dir, &mut paths)?;
-    paths.sort();
-
-    paths.iter().map(|path| parse_fixture_file(path)).collect()
+    let outcome = load_directory_with_evidence(dir)?;
+    for warning in &outcome.warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(outcome.fixtures)
 }
 
-fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureError> {
+/// [`load_directory`] plus the evidence sidecars that could not be used.
+///
+/// An embedded `[verification]` table always wins over a sidecar; when
+/// both exist the sidecar is ignored with a warning. A sidecar is looked
+/// up by the fixture's id first, then by the fixture file's stem, and is
+/// attached only when its own `fixtureId` matches and it satisfies the
+/// CF-04 section 3 rules — otherwise the fixture stays unverified and
+/// the reason is reported in [`LoadOutcome::warnings`].
+pub fn load_directory_with_evidence(dir: &Path) -> Result<LoadOutcome, FixtureError> {
+    let mut paths = Vec::new();
+    let mut evidence_paths = Vec::new();
+    let mut warnings = Vec::new();
+    collect_files(dir, &mut paths, &mut evidence_paths, &mut warnings)?;
+    paths.sort();
+    evidence_paths.sort();
+
+    let mut fixtures: Vec<LoadedFixture> = paths
+        .iter()
+        .map(|path| parse_fixture_file(path))
+        .collect::<Result<_, _>>()?;
+
+    let sidecars = index_evidence(evidence_paths, &mut warnings);
+    attach_evidence(&mut fixtures, sidecars, &mut warnings);
+
+    Ok(LoadOutcome { fixtures, warnings })
+}
+
+/// Indexes evidence sidecar files by their stem (the file name without
+/// the `.evidence.json` suffix). When two directories hold a sidecar
+/// with the same stem, the first in sorted order is indexed and the
+/// others are reported.
+fn index_evidence(
+    paths: Vec<PathBuf>,
+    warnings: &mut Vec<VerificationWarning>,
+) -> BTreeMap<String, PathBuf> {
+    let mut index: BTreeMap<String, PathBuf> = BTreeMap::new();
+    for path in paths {
+        let Some(stem) = evidence_stem(&path) else {
+            continue;
+        };
+        match index.get(&stem) {
+            Some(first) => warnings.push(VerificationWarning {
+                path,
+                reason: format!(
+                    "duplicate evidence for {stem:?}: {} already provides it",
+                    first.display()
+                ),
+            }),
+            None => {
+                index.insert(stem, path);
+            }
+        }
+    }
+    index
+}
+
+/// The lookup key of an evidence sidecar: its file name without the
+/// [`.evidence.json`](EVIDENCE_SUFFIX) suffix, or `None` when the file
+/// name is not valid UTF-8 (never the case for a name this walk
+/// accepted, but not worth panicking over).
+fn evidence_stem(path: &Path) -> Option<String> {
+    path.file_name()?
+        .to_str()?
+        .strip_suffix(EVIDENCE_SUFFIX)
+        .map(str::to_owned)
+}
+
+/// Attaches each available sidecar to its fixture and reports the rest.
+///
+/// Each sidecar is claimed at most once: the first fixture whose id or
+/// file stem matches it, even if reading it later fails, so one broken
+/// sidecar is reported once and never leaks onto another fixture.
+fn attach_evidence(
+    fixtures: &mut [LoadedFixture],
+    mut sidecars: BTreeMap<String, PathBuf>,
+    warnings: &mut Vec<VerificationWarning>,
+) {
+    for fixture in fixtures.iter_mut() {
+        let stem = fixture
+            .source_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(str::to_owned);
+        let candidates: Vec<String> = std::iter::once(fixture.metadata.id.clone())
+            .chain(stem)
+            .collect();
+
+        if fixture.verification.is_some() {
+            // The embedded table is authoritative; a sidecar beside it is
+            // a data conflict the maintainer should know about.
+            if let Some((key, path)) = candidates.iter().find_map(|key| sidecars.remove_entry(key))
+            {
+                warnings.push(VerificationWarning {
+                    path,
+                    reason: format!(
+                        "fixture {:?} already has an embedded [verification] table; the embedded table wins over the {key:?} sidecar",
+                        fixture.metadata.id
+                    ),
+                });
+            }
+            continue;
+        }
+
+        let Some((_, path)) = candidates.iter().find_map(|key| sidecars.remove_entry(key)) else {
+            continue;
+        };
+        match read_sidecar_record(&path, &fixture.metadata.id) {
+            Ok(record) => fixture.verification = Some(record),
+            Err(reason) => warnings.push(VerificationWarning { path, reason }),
+        }
+    }
+
+    // Sidecars nothing claimed: evidence for a fixture that is not in
+    // this directory, a misnamed record, or a second sidecar for a
+    // fixture that already had one.
+    for (_stem, path) in sidecars {
+        warnings.push(VerificationWarning {
+            path,
+            reason: "no fixture in this directory claims this evidence file; it must be named after a fixture's id or file stem"
+                .to_string(),
+        });
+    }
+}
+
+/// Reads one sidecar file and validates it against the CF-04 section 3
+/// rules, returning the reason it cannot be used otherwise.
+fn read_sidecar_record(path: &Path, fixture_id: &str) -> Result<VerificationRecord, String> {
+    // The walk already refuses symlinks and oversized files; re-checking
+    // keeps this function correct when called on a path that did not
+    // come from the walk.
+    let meta = std::fs::symlink_metadata(path).map_err(|err| format!("cannot read: {err}"))?;
+    if !meta.file_type().is_file() {
+        return Err("not a regular file".to_string());
+    }
+    if meta.len() > MAX_FIXTURE_BYTES {
+        return Err(format!(
+            "the file is {} bytes, over the {}-byte limit",
+            meta.len(),
+            MAX_FIXTURE_BYTES
+        ));
+    }
+    let text = std::fs::read_to_string(path).map_err(|err| format!("cannot read: {err}"))?;
+    let record: VerificationRecord =
+        serde_json::from_str(&text).map_err(|err| format!("invalid verification record: {err}"))?;
+    record.check(fixture_id).map_err(str::to_owned)?;
+    Ok(record)
+}
+
+fn collect_files(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    evidence: &mut Vec<PathBuf>,
+    warnings: &mut Vec<VerificationWarning>,
+) -> Result<(), FixtureError> {
     let entries = std::fs::read_dir(dir).map_err(|source| FixtureError::ReadDir {
         path: dir.to_path_buf(),
         source,
@@ -169,7 +382,7 @@ fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureE
             if entry.file_name() == VCS_DIR {
                 continue;
             }
-            collect_toml_files(&path, out)?;
+            collect_files(&path, out, evidence, warnings)?;
         } else if file_type.is_file() && path.extension().is_some_and(|ext| ext == "toml") {
             let size = entry
                 .metadata()
@@ -186,6 +399,31 @@ fn collect_toml_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), FixtureE
                 });
             }
             out.push(path);
+        } else if file_type.is_file()
+            && entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(EVIDENCE_SUFFIX))
+        {
+            // Evidence is optional data: an oversized sidecar is skipped
+            // with a warning, never a load failure.
+            let size = entry
+                .metadata()
+                .map_err(|source| FixtureError::Read {
+                    path: path.clone(),
+                    source,
+                })?
+                .len();
+            if size > MAX_FIXTURE_BYTES {
+                warnings.push(VerificationWarning {
+                    path,
+                    reason: format!(
+                        "the file is {size} bytes, over the {MAX_FIXTURE_BYTES}-byte limit"
+                    ),
+                });
+            } else {
+                evidence.push(path);
+            }
         }
     }
     Ok(())

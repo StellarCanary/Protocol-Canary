@@ -91,6 +91,8 @@ impl CapabilityEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetailedDetection {
     pub context: ProjectContext,
+    /// The auto-detected project type before any configuration override is applied.
+    pub detected_type: ProjectType,
     pub inspected: Vec<String>,
     pub workspace_members: Vec<String>,
     pub diagnostics: Vec<crate::workspace::Diagnostic>,
@@ -120,10 +122,12 @@ pub fn detect(root: &Path) -> ProjectContext {
 /// If `configured_type` is `Some(configured)` and differs from the auto-detected project type,
 /// an [`crate::workspace::DiagnosticCode::OverrideNotice`] diagnostic is appended to `diagnostics`
 /// with a message including both types, and the context's `project_type` is set to `configured`.
+///
+/// The original auto-detected project type is preserved in `detected_type`.
 pub fn detect_project(root: &Path, configured_type: Option<ProjectType>) -> DetailedDetection {
     let mut details = detect_details(root);
     if let Some(configured) = configured_type {
-        let detected = details.context.project_type;
+        let detected = details.detected_type;
         if detected != ProjectType::Unknown && configured != detected {
             details.diagnostics.push(crate::workspace::Diagnostic {
                 code: crate::workspace::DiagnosticCode::OverrideNotice,
@@ -494,6 +498,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
 
     DetailedDetection {
         context,
+        detected_type: project_type,
         inspected,
         workspace_members,
         diagnostics,
@@ -1378,6 +1383,7 @@ mod tests {
 
         let details = detect_project(&dir.path, Some(ProjectType::RpcConsumer));
         assert_eq!(details.context.project_type, ProjectType::RpcConsumer);
+        assert_eq!(details.detected_type, ProjectType::Soroban);
 
         let notice = details
             .diagnostics

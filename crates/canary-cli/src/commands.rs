@@ -648,14 +648,8 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     };
     let details = canary_project::detect_project(&root, explicit_type);
     let project = details.context.clone();
-    // Reconstruct detected ProjectContext before override for terminal/json inspection
-    let detected_type = details
-        .diagnostics
-        .iter()
-        .find(|d| d.code == canary_project::DiagnosticCode::OverrideNotice)
-        .map(|_| canary_project::detect_details(&root).context)
-        .unwrap_or_else(|| project.clone());
-    let detected = detected_type;
+    let mut detected = project.clone();
+    detected.project_type = details.detected_type;
 
     let target_source = if args.protocol.is_some() {
         "flag"

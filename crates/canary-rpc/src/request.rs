@@ -307,7 +307,11 @@ fn string_array(value: &toml::Value, max: usize, what: &str) -> Result<Value, St
 }
 
 /// Standard-alphabet base64 with `=` padding, length a multiple of four.
-fn is_base64(text: &str) -> bool {
+///
+/// Shared with the typed `getLedgerEntries` client so a key is rejected by
+/// the same rule whether it arrives through a fixture `[request]` or a
+/// direct client call.
+pub(crate) fn is_base64(text: &str) -> bool {
     if text.is_empty() || !text.len().is_multiple_of(4) {
         return false;
     }

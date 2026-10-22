@@ -147,7 +147,9 @@ rather than guessed at here.
 No database, no persistent server, no Docker, and no private key or
 seed phrase are required for either path. See
 [docs/architecture.md](docs/architecture.md) for the full execution
-topology, external dependencies, and failure behavior.
+topology, external dependencies, and failure behavior, and
+[docs/reproducibility.md](docs/reproducibility.md) for reproducing runs
+from lockfiles and fixture packs.
 
 ## Ecosystem
 
@@ -162,7 +164,9 @@ sibling repositories build on it:
   artifact from its JSON output.
 
 See [docs/architecture.md](docs/architecture.md) for how the three
-repositories fit together, [docs/json-report-contract.md](docs/json-report-contract.md)
+repositories fit together, [docs/reproducibility.md](docs/reproducibility.md)
+for step-by-step test run reproduction,
+[docs/json-report-contract.md](docs/json-report-contract.md)
 for the exact `--json` shape a consumer like the Action should parse, and
 [docs/fixture-contract.md](docs/fixture-contract.md) for how fixtures are
 supplied via `--fixtures-dir`.

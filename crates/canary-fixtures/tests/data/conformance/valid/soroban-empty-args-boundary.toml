@@ -1,0 +1,15 @@
+id = "conformance-valid-soroban-empty-args-boundary"
+protocol = 1
+surface = "soroban"
+category = "conformance"
+description = "Accepted lower protocol and sequence boundaries with an empty optional argument array."
+source_reference = "https://developers.stellar.org/docs/tokens/stellar-asset-contract"
+
+source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+function = "name"
+sequence_number = 0
+args = []
+
+[expect]
+kind = "simulation-success"

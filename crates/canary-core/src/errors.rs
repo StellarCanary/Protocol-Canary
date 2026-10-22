@@ -99,6 +99,25 @@ impl ExitCode {
         ExitCode::InternalError,
     ];
 
+    /// The raw numeric value of this exit code, as passed to the OS.
+    ///
+    /// This is the numeric half of the stable contract described on
+    /// [`ExitCode`]: callers such as `canary-cli` hand the result
+    /// directly to `std::process::exit`, while [`Display`](fmt::Display)
+    /// renders the matching stable lowercase name (`"pass"`,
+    /// `"invalid_fixture"`, ...) for logs and human-readable output.
+    ///
+    /// The conversion is an infallible cast, so this method never
+    /// returns an error and never panics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::ExitCode;
+    ///
+    /// assert_eq!(ExitCode::Pass.code(), 0);
+    /// assert_eq!(ExitCode::CompatibilityFailure.code(), 1);
+    /// ```
     pub fn code(self) -> i32 {
         self as i32
     }

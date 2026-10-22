@@ -222,3 +222,65 @@ dialog pre {
 .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
 
 aside { margin-top: 2rem; color: var(--muted); }
+
+/* --- Comparison view (CF-08 section 2.4) --- */
+
+#compare { margin-top: 2rem; }
+
+.compare-picks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+#compare-status { color: var(--muted); overflow-wrap: anywhere; }
+
+#compare-result {
+  margin-top: 1rem;
+  border-left: 6px solid var(--border);
+  padding-left: 1rem;
+}
+
+/* The verdict banner's left edge carries the verdict, and the text names
+ * it, so the meaning is never carried by colour alone. */
+#compare-result[data-verdict="regression"] { border-color: var(--fail); }
+#compare-result[data-verdict="coverage-lost"] { border-color: var(--warning); }
+#compare-result[data-verdict="improved"] { border-color: var(--pass); }
+#compare-result[data-verdict="no-change"] { border-color: var(--border); }
+
+#compare-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-top: 0.5rem;
+}
+
+#compare-table caption { text-align: left; color: var(--muted); padding: 0.25rem 0; }
+
+#compare-table th,
+#compare-table td {
+  border: 1px solid var(--border);
+  padding: 0.3rem 0.5rem;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+#compare-table th { color: var(--muted); font-weight: 600; }
+
+/* Outcome cells are tinted, never coloured alone: the cell text always
+ * names the classification, and regressions gain a text suffix. */
+.outcome[data-classification="regressed"],
+.outcome[data-classification="added-failing"],
+.outcome[data-classification="skipped-failing"] { color: var(--fail); font-weight: 600; }
+
+.outcome[data-classification="degraded"],
+.outcome[data-classification="removed-failing"] { color: var(--warning); }
+
+.outcome[data-classification="improved"],
+.outcome[data-classification="resolved"],
+.outcome[data-classification="added"] { color: var(--pass); }
+
+.outcome[data-classification="removed"],
+.outcome[data-classification="skipped"] { color: var(--muted); }
+
+.outcome[data-classification="unchanged"],
+.outcome[data-classification="unchanged-skip"] { color: var(--muted); }

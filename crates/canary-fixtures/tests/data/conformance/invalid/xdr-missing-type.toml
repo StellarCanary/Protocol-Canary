@@ -1,0 +1,9 @@
+id = "conformance-invalid-xdr-missing-type"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "XDR fixture omits its required type."
+source_reference = "CAP-0083"
+
+kind = "decode-success"
+value_base64 = "AAAAAA=="

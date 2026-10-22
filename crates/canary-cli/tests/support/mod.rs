@@ -65,6 +65,11 @@ impl Drop for TempProject {
 pub const VALID_STELLAR_VALUE_BASE64: &str =
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
+/// Canonical base64 that is not a complete `StellarValue`, so a fixture
+/// using it parses and then fails the decode assertion at run time rather
+/// than being rejected as an invalid fixture.
+pub const DECODE_FAILURE_BASE64: &str = "AAAA";
+
 /// Runs the built `stellar-canary` binary with `args` inside `dir`.
 pub fn run_in(dir: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stellar-canary"))

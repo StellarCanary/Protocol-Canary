@@ -91,6 +91,8 @@ impl CapabilityEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetailedDetection {
     pub context: ProjectContext,
+    /// The auto-detected project type before any configuration override is applied.
+    pub detected_type: ProjectType,
     pub inspected: Vec<String>,
     pub workspace_members: Vec<String>,
     pub diagnostics: Vec<crate::workspace::Diagnostic>,
@@ -113,6 +115,30 @@ impl DetailedDetection {
 /// recognizable Stellar surface and needs explicit configuration.
 pub fn detect(root: &Path) -> ProjectContext {
     detect_details(root).context
+}
+
+/// Runs full detection on `root` and applies an optional explicit configured project type.
+///
+/// If `configured_type` is `Some(configured)` and differs from the auto-detected project type,
+/// an [`crate::workspace::DiagnosticCode::OverrideNotice`] diagnostic is appended to `diagnostics`
+/// with a message including both types, and the context's `project_type` is set to `configured`.
+///
+/// The original auto-detected project type is preserved in `detected_type`.
+pub fn detect_project(root: &Path, configured_type: Option<ProjectType>) -> DetailedDetection {
+    let mut details = detect_details(root);
+    if let Some(configured) = configured_type {
+        let detected = details.detected_type;
+        if detected != ProjectType::Unknown && configured != detected {
+            details.diagnostics.push(crate::workspace::Diagnostic {
+                code: crate::workspace::DiagnosticCode::OverrideNotice,
+                detail: format!(
+                    "configured project type '{configured}' overrides detected type '{detected}'"
+                ),
+            });
+        }
+        details.context.project_type = configured;
+    }
+    details
 }
 
 /// Runs full detection on `root`, returning the project context along with
@@ -472,6 +498,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
 
     DetailedDetection {
         context,
+        detected_type: project_type,
         inspected,
         workspace_members,
         diagnostics,
@@ -1343,5 +1370,72 @@ mod tests {
             "expected manifest-unparseable diagnostic"
         );
         assert!(unparseable.unwrap().detail.contains("pyproject.toml"));
+    }
+
+    #[test]
+    fn detect_project_emits_override_notice_when_configured_differs_from_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-differs");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, Some(ProjectType::RpcConsumer));
+        assert_eq!(details.context.project_type, ProjectType::RpcConsumer);
+        assert_eq!(details.detected_type, ProjectType::Soroban);
+
+        let notice = details
+            .diagnostics
+            .iter()
+            .find(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice)
+            .expect("expected OverrideNotice diagnostic");
+        assert!(notice.detail.contains("rpc-consumer"));
+        assert!(notice.detail.contains("soroban"));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_configured_matches_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-matches");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, Some(ProjectType::Soroban));
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_unconfigured() {
+        let dir = crate::test_support::temp_dir("detect-override-unconfigured");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, None);
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_nothing_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-nothing-detected");
+        let details = detect_project(&dir.path, Some(ProjectType::Soroban));
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
     }
 }

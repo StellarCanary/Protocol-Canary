@@ -12,8 +12,8 @@ pub use capabilities::{
     SOROBAN_DEPENDENCIES, STELLAR_SDK_DEPENDENCIES,
 };
 pub use detector::{
-    detect, detect_details, find_wasm_artifacts, resolve_project_type, CapabilityEvidence,
-    DetailedDetection, DetectionEvidence,
+    detect, detect_details, detect_project, find_wasm_artifacts, resolve_project_type,
+    CapabilityEvidence, DetailedDetection, DetectionEvidence,
 };
 pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,

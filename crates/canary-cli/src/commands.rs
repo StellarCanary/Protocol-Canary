@@ -642,15 +642,14 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
-    let details = canary_project::detect_details(&root);
-    let detected = details.context.clone();
     let explicit_type = match config.project.project_type {
         canary_config::ProjectTypeSetting::Auto => None,
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
     };
-    let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
-    let mut project = detected.clone();
-    project.project_type = resolved_type;
+    let details = canary_project::detect_project(&root, explicit_type);
+    let project = details.context.clone();
+    let mut detected = project.clone();
+    detected.project_type = details.detected_type;
 
     let target_source = if args.protocol.is_some() {
         "flag"

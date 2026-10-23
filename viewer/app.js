@@ -27,6 +27,34 @@
   var currentSurface = "all";
   var currentQuery = "";
 
+  /* Readiness grouping of the results list (E-085): a passed check is
+   * Ready, a warned or failed one needs Attention Required, and an
+   * errored or skipped one leaves the run Incomplete. The heading of each
+   * group carries its live (filtered) count. The separate skipped-fixtures
+   * section below the groups is unchanged: it lists fixtures that never
+   * produced a result at all. */
+  var GROUPS = [
+    { key: "ready", label: "Ready", statuses: ["pass"] },
+    { key: "attention", label: "Attention Required", statuses: ["warning", "fail"] },
+    { key: "incomplete", label: "Incomplete", statuses: ["error", "skipped"] },
+  ];
+
+  function readinessOf(status) {
+    for (var i = 0; i < GROUPS.length; i++) {
+      if (GROUPS[i].statuses.indexOf(status) !== -1) return GROUPS[i].key;
+    }
+    /* A status outside the schema's set can never validate, but if one
+     * ever arrives it belongs with the evidence that is missing, not with
+     * the evidence that holds. */
+    return "incomplete";
+  }
+
+  /* A duration as a person reads it: whole milliseconds below a second,
+   * two-decimal seconds at or above. */
+  function formatDuration(ms) {
+    return ms >= 1000 ? (ms / 1000).toFixed(2) + " s" : Math.round(ms) + " ms";
+  }
+
   function el(id) {
     return document.getElementById(id);
   }
@@ -147,6 +175,7 @@
     row.appendChild(span("meta", result.surface));
     row.appendChild(span("identity", idOfResult(result)));
     row.appendChild(span("summary", result.summary));
+    row.appendChild(span("timing", formatDuration(result.durationMs)));
 
     if (typeof result.details === "string") {
       var more = document.createElement("details");
@@ -201,19 +230,24 @@
   function renderFindings() {
     if (!currentReport) return;
 
-    var list = el("findings-list");
     var skippedList = el("skipped-list");
-    clearChildren(list);
     clearChildren(skippedList);
 
     var matched = 0;
     var skippedMatched = 0;
+    var groupCount = {};
+    GROUPS.forEach(function (group) {
+      groupCount[group.key] = 0;
+      clearChildren(el(group.key + "-list"));
+    });
 
     currentReport.results.forEach(function (result) {
       if (!surfaceAllowed(result.surface)) return;
       if (searchHidden(result.summary, idOfResult(result))) return;
       matched++;
-      list.appendChild(findingRow(result));
+      var key = readinessOf(result.status);
+      groupCount[key]++;
+      el(key + "-list").appendChild(findingRow(result));
     });
 
     var skipped = Array.isArray(currentReport.skipped) ? currentReport.skipped : [];
@@ -222,6 +256,15 @@
       if (searchHidden(skip.reason, skip.surface + "/" + skip.fixtureId)) return;
       skippedMatched++;
       skippedList.appendChild(skippedRow(skip));
+    });
+
+    /* A group with no visible cards is hidden whole, so a search that
+     * matches nothing shows the empty-state notice and no empty
+     * headings. */
+    GROUPS.forEach(function (group) {
+      var count = groupCount[group.key];
+      setText(group.key + "-heading", group.label + " (" + count + ")");
+      el("group-" + group.key).hidden = count === 0;
     });
 
     el("findings-empty").hidden = matched !== 0;

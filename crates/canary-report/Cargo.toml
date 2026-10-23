@@ -19,4 +19,4 @@ serde_json.workspace = true
 [dev-dependencies]
 # Used only by the JUnit integration tests to parse the rendered XML and
 # validate its element/attribute structure, rather than substring-matching.
-quick-xml = "0.41"
+quick-xml = "0.42"

@@ -5,17 +5,30 @@
 //! 2020-12) for `.stellar-canary.toml`; `crates/canary-config` is its
 //! implementation. This suite pins the two together so neither can drift:
 //! every key the loader's structs carry is declared by the schema, every key
-//! the schema declares is known to the loader, and across the corpus below the
-//! two reach the same accept-or-reject decision for every document.
+//! the schema declares is known to the loader, and across the corpus below no
+//! document the schema accepts is one the loader refuses.
 //!
-//! The validator interprets the schema *as data*, using only the keywords the
-//! schema document contains (asserted by
+//! One direction is deliberately asymmetric. Issue #455 pinned the *shapes* of
+//! the three optional run settings — `network`, `rpc_url`, `fixtures_dir` — so
+//! an editor or a CI job reports a malformed endpoint before a run is spent,
+//! while the loader keeps storing those values verbatim, because a bad stored
+//! value must not stop an explicit `--network`/`--rpc-url`/`--fixtures-dir`
+//! from winning (issue #474). The schema is therefore the stricter side at
+//! exactly those documents, and [`DOCUMENTED_DIVERGENCES`] is the list of them:
+//! a case that is not on the list diverging, a listed case that stops
+//! diverging, or the schema ever being the *more accepting* side fails
+//! [`the_loader_and_the_schema_reach_the_same_decision_for_every_case`].
+//!
+//! The validator in `tests/support/schema_check.rs`, shared with
+//! `tests/schema.rs` so the published file has exactly one interpreter here,
+//! reads the schema *as data* using only the keywords the document contains
+//! (asserted by
 //! [`the_schema_uses_only_keywords_the_test_validator_interprets`]), so these
-//! checks exercise the published file rather than a parallel re-statement of
-//! it. TOML documents are converted to the JSON instance model first; the one
-//! lossy step is a date-time value, which no key of this file accepts and which
-//! the converter therefore renders as JSON null, so that the schema refuses it
-//! for the same reason the loader does.
+//! checks exercise that file rather than a parallel re-statement of it. TOML
+//! documents are converted to the JSON instance model first; the one lossy step
+//! is a date-time value, which no key of this file accepts and which the
+//! converter therefore renders as JSON null, so that the schema refuses it for
+//! the same reason the loader does.
 //!
 //! Two tests mutate the schema on purpose. They are the negative direction the
 //! issue asks for: they show that a loader field the schema has not caught up
@@ -28,136 +41,60 @@ use canary_config::{
     parse_config, ConfigFile, PolicySection, ProjectSection, ProjectTypeSetting, TestsSection,
     DEFAULT_PROTOCOL, SUPPORTED_CONFIG_VERSION,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
+
+/// The `pattern` matcher these suites share with `tests/schema.rs`: the
+/// published schema constrains string shapes with it, so parity cannot be
+/// checked without interpreting it.
+#[path = "support/schema_pattern.rs"]
+mod schema_pattern;
+
+/// The keyword interpreter these suites share with `tests/schema.rs`, so that
+/// one implementation reads the published document.
+#[path = "support/schema_check.rs"]
+mod schema_check;
 
 const SCHEMA: &str = include_str!("../../../docs/schemas/config-v1.schema.json");
 
 /// The name used in diagnostics only: nothing here touches the filesystem.
 const PATH: &str = ".stellar-canary.toml";
 
-/// Every keyword the schema document may use. Adding a keyword to the schema
-/// without teaching this file about it fails
-/// [`the_schema_uses_only_keywords_the_test_validator_interprets`], which keeps
-/// the validator an honest — if small — implementation of exactly the subset
-/// the schema needs.
-const SUPPORTED_KEYWORDS: &[&str] = &[
-    "$schema",
-    "$id",
-    "title",
-    "description",
-    "type",
-    "const",
-    "enum",
-    "default",
-    "required",
-    "properties",
-    "additionalProperties",
-    "minimum",
-    "maximum",
-    "not",
+/// The corpus cases on which the schema is allowed to be the stricter side,
+/// each with the reason it is on the list: the shapes are issue #455's, the
+/// loader's verbatim storage is issue #474's. A case not named here may not
+/// diverge, and a case named here that stops diverging fails the corpus test —
+/// so this list cannot quietly grow into a way of excusing drift.
+const DOCUMENTED_DIVERGENCES: &[(&str, &str)] = &[
+    (
+        "rpc_url the runtime cannot use",
+        "an ftp endpoint is invalid configuration to an editor, and only a \
+         runtime failure to the loader",
+    ),
+    (
+        "rpc_url with no authority",
+        "a bare scheme names no endpoint, and the loader stores it anyway",
+    ),
+    (
+        "network name the runtime cannot use",
+        "a name with a space is unusable, and the loader stores it anyway",
+    ),
+    (
+        "fixtures_dir given as an absolute path",
+        "the file documents a path relative to the project root; an absolute \
+         one works through --fixtures-dir",
+    ),
 ];
+
+/// Why the schema may be the stricter side for this corpus case, if it may.
+fn documented_divergence(name: &str) -> Option<&'static str> {
+    DOCUMENTED_DIVERGENCES
+        .iter()
+        .find(|(case, _)| *case == name)
+        .map(|(_, reason)| *reason)
+}
 
 fn schema() -> Value {
     serde_json::from_str(SCHEMA).expect("the published schema is valid JSON")
-}
-
-fn type_of(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
-/// Validates `instance` against `schema`, returning `Err` with a
-/// path-qualified message for the first violation.
-fn validate(instance: &Value, schema: &Value, path: &str) -> Result<(), String> {
-    if let Some(expected) = schema.get("type") {
-        let wanted: Vec<&str> = match expected {
-            Value::String(name) => vec![name.as_str()],
-            Value::Array(names) => names.iter().filter_map(Value::as_str).collect(),
-            other => return Err(format!("{path}: schema has an unusable `type`: {other}")),
-        };
-        if !wanted.contains(&type_of(instance)) {
-            return Err(format!(
-                "{path}: expected type {expected}, found {}",
-                type_of(instance)
-            ));
-        }
-    }
-    if let Some(constant) = schema.get("const") {
-        if instance != constant {
-            return Err(format!("{path}: expected {constant}, found {instance}"));
-        }
-    }
-    if let Some(values) = schema.get("enum") {
-        if !values
-            .as_array()
-            .is_some_and(|values| values.contains(instance))
-        {
-            return Err(format!("{path}: {instance} is not one of {values}"));
-        }
-    }
-    if let Some(minimum) = schema.get("minimum") {
-        match (instance.as_f64(), minimum.as_f64()) {
-            (Some(value), Some(min)) if value >= min => {}
-            _ => return Err(format!("{path}: {instance} is below the minimum {minimum}")),
-        }
-    }
-    if let Some(maximum) = schema.get("maximum") {
-        match (instance.as_f64(), maximum.as_f64()) {
-            (Some(value), Some(max)) if value <= max => {}
-            _ => return Err(format!("{path}: {instance} is above the maximum {maximum}")),
-        }
-    }
-    if let Some(required) = schema.get("required").and_then(Value::as_array) {
-        if let Some(object) = instance.as_object() {
-            for field in required.iter().filter_map(Value::as_str) {
-                if !object.contains_key(field) {
-                    return Err(format!("{path}: required field `{field}` is missing"));
-                }
-            }
-        }
-    }
-    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
-        if let Some(object) = instance.as_object() {
-            for (name, sub_schema) in properties {
-                if let Some(value) = object.get(name) {
-                    validate(value, sub_schema, &format!("{path}.{name}"))?;
-                }
-            }
-        }
-    }
-    if let Some(extra) = schema.get("additionalProperties") {
-        if let Some(object) = instance.as_object() {
-            let declared = schema.get("properties").and_then(Value::as_object);
-            for (name, value) in object {
-                if declared.is_some_and(|properties| properties.contains_key(name)) {
-                    continue;
-                }
-                match extra {
-                    Value::Bool(true) => {}
-                    Value::Bool(false) => {
-                        return Err(format!("{path}.{name} is not a declared configuration key"));
-                    }
-                    sub_schema => validate(value, sub_schema, &format!("{path}.{name}"))?,
-                }
-            }
-        }
-    }
-    // A `not` subschema is a rejection: matching it is the violation. The
-    // configuration schema uses exactly one, for the rule that a file cannot
-    // turn off every surface at once.
-    if let Some(negated) = schema.get("not") {
-        if validate(instance, negated, path).is_ok() {
-            return Err(format!("{path}: matches the schema's `not` constraint"));
-        }
-    }
-    Ok(())
 }
 
 /// What one side of the contract decided about one document.
@@ -179,31 +116,6 @@ impl Outcome {
     }
 }
 
-/// Converts a TOML value into the JSON instance model the schema validates.
-///
-/// A date-time becomes `null` deliberately: `.stellar-canary.toml` has no key
-/// that accepts one, and the loader refuses it for every key, so the converted
-/// document has to be refused by the schema for the same reason.
-fn to_json(value: toml::Value) -> Value {
-    match value {
-        toml::Value::String(text) => Value::String(text),
-        toml::Value::Integer(number) => json!(number),
-        toml::Value::Float(number) => serde_json::Number::from_f64(number)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-        toml::Value::Boolean(flag) => json!(flag),
-        toml::Value::Datetime(_) => Value::Null,
-        toml::Value::Array(items) => Value::Array(items.into_iter().map(to_json).collect()),
-        toml::Value::Table(table) => {
-            let mut object = Map::new();
-            for (key, item) in table {
-                object.insert(key, to_json(item));
-            }
-            Value::Object(object)
-        }
-    }
-}
-
 fn rust_outcome(text: &str) -> Outcome {
     match parse_config(text, Path::new(PATH)) {
         Ok(_) => Outcome::Accepted,
@@ -212,26 +124,36 @@ fn rust_outcome(text: &str) -> Outcome {
 }
 
 fn schema_outcome(text: &str, schema: &Value) -> Outcome {
-    let table: toml::Table = match toml::from_str(text) {
-        Ok(table) => table,
-        Err(error) => return Outcome::Rejected(format!("not a TOML document: {error}")),
-    };
-    let instance = to_json(toml::Value::Table(table));
-    match validate(&instance, schema, "$") {
+    match schema_check::validate_toml_with(text, schema) {
         Ok(()) => Outcome::Accepted,
         Err(reason) => Outcome::Rejected(reason),
     }
 }
-
-/// The name of the difference between the two sides, or `None` when they agree.
+/// Why one corpus case breaks parity, or `None` when the two sides agree or
+/// differ only in the one documented way.
+///
+/// The schema may never be the more accepting side: a document the loader
+/// refuses has to be refused here too, or the file promises a shape the CLI
+/// does not implement. The reverse — schema refuses, loader accepts — is
+/// allowed only for the cases in [`DOCUMENTED_DIVERGENCES`].
 fn parity_miss(name: &str, text: &str, schema: &Value) -> Option<String> {
     let rust = rust_outcome(text);
     let model = schema_outcome(text, schema);
     if rust.accepted() == model.accepted() {
         return None;
     }
+    if rust.accepted() && documented_divergence(name).is_some() {
+        return None;
+    }
+    let difference = if rust.accepted() {
+        "the loader accepts it and the schema does not, which is only allowed for a documented \
+         divergence"
+            .to_string()
+    } else {
+        "the schema accepts a document the loader refuses".to_string()
+    };
     Some(format!(
-        "{name}: the loader would {} but the schema would {}\ndocument:\n{text}",
+        "{name}: the loader would {} but the schema would {}; {difference}\ndocument:\n{text}",
         rust.describe(),
         model.describe()
     ))
@@ -346,11 +268,24 @@ fn corpus() -> Vec<(String, String)> {
             "project table with nothing in it",
             "version = 1\nprotocol = 28\n\n[project]\n",
         ),
-        // The loader stores `rpc_url` verbatim: an unusable scheme is a
-        // runtime problem, not a configuration-format one, so both accept it.
+        // The four documented divergences: the loader stores these values
+        // verbatim, while the schema pins the shape issue #455 documents. Each
+        // name is in DOCUMENTED_DIVERGENCES, which is what keeps them honest.
         (
             "rpc_url the runtime cannot use",
             "version = 1\nprotocol = 28\nrpc_url = \"ftp://rpc.example.invalid\"\n",
+        ),
+        (
+            "rpc_url with no authority",
+            "version = 1\nprotocol = 28\nrpc_url = \"https://\"\n",
+        ),
+        (
+            "network name the runtime cannot use",
+            "version = 1\nprotocol = 28\nnetwork = \"main net\"\n",
+        ),
+        (
+            "fixtures_dir given as an absolute path",
+            "version = 1\nprotocol = 28\nfixtures_dir = \"/srv/fixtures\"\n",
         ),
     ] {
         cases.push((name.to_string(), text.to_string()));
@@ -493,9 +428,9 @@ fn the_schema_uses_only_keywords_the_test_validator_interprets() {
         };
         for (keyword, value) in map {
             assert!(
-                SUPPORTED_KEYWORDS.contains(&keyword.as_str()),
-                "the schema uses keyword `{keyword}` this suite does not interpret; \
-                 teach tests/schema_parity.rs about it (and extend the corpus)"
+                schema_check::SUPPORTED_KEYWORDS.contains(&keyword.as_str()),
+                "the schema uses keyword `{keyword}` these suites do not interpret; \
+                 teach tests/support/schema_check.rs about it (and extend the corpus)"
             );
             match keyword.as_str() {
                 "properties" => value
@@ -766,4 +701,55 @@ fn a_schema_key_the_loader_does_not_know_breaks_parity() {
     let miss = parity_miss("drift probe", text, &mutated)
         .expect("a schema key the loader lacks must show up as a parity miss");
     assert!(miss.contains("adopted_a_future_key"), "{miss}");
+}
+
+#[test]
+fn every_pattern_is_anchored_and_inside_the_supported_subset() {
+    // `pattern` is the one keyword here that carries syntax of its own, and
+    // these suites implement a deliberately narrow subset of it (see
+    // `support/schema_pattern.rs`). A schema pattern that steps outside that
+    // subset would either fail to parse or match substrings instead of whole
+    // values, silently making the schema the more accepting side.
+    let mut patterns = Vec::new();
+    schema_pattern::collect_patterns(&schema(), &mut patterns);
+    assert!(
+        !patterns.is_empty(),
+        "the schema constrains string shapes with `pattern`, so this guard must have \
+         something to check"
+    );
+    for text in &patterns {
+        let pattern = schema_pattern::parse(text)
+            .unwrap_or_else(|error| panic!("the schema pattern `{text}` cannot be read: {error}"));
+        assert!(
+            pattern.is_anchored(),
+            "the schema pattern `{text}` is not anchored at both ends, so it constrains a \
+             substring rather than a whole value"
+        );
+    }
+}
+
+#[test]
+fn every_documented_divergence_still_diverges() {
+    // The allowlist in DOCUMENTED_DIVERGENCES is only honest while each case
+    // really does diverge. If the loader ever starts validating these shapes,
+    // or the constraints are loosened, the entry must go — otherwise the list
+    // becomes a permanent excuse for the two sides to drift apart.
+    let schema = schema();
+    let cases = corpus();
+    for (name, reason) in DOCUMENTED_DIVERGENCES {
+        let (_, text) = cases
+            .iter()
+            .find(|(case, _)| case == name)
+            .unwrap_or_else(|| panic!("the corpus must contain the case {name:?}"));
+        assert!(
+            rust_outcome(text).accepted(),
+            "{name:?}: the loader no longer accepts it, so it is not a divergence \
+             ({reason})",
+        );
+        assert!(
+            !schema_outcome(text, &schema).accepted(),
+            "{name:?}: the schema no longer refuses it, so remove it from \
+             DOCUMENTED_DIVERGENCES or restore the constraint ({reason})",
+        );
+    }
 }

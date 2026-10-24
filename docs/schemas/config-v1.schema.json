@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://raw.githubusercontent.com/StellarCanary/Protocol-Canary/main/docs/schemas/config-v1.schema.json",
   "title": "Stellar Protocol Canary project configuration, version 1",
-  "description": "The `.stellar-canary.toml` contract, validated against the Rust loader in `crates/canary-config`. Unlike the report and inventory schemas this one is closed: every table sets `additionalProperties: false`, because the loader uses `#[serde(deny_unknown_fields)]` and an silently ignored key could drop a pin or disable nothing at all. A TOML file is converted to JSON (tables to objects, integers to integers, booleans to booleans, dates left as strings) before validation; the parity of these two accept/reject sets is pinned by `crates/canary-config/tests/schema_parity.rs`.",
+  "description": "The `.stellar-canary.toml` contract, validated against the Rust loader in `crates/canary-config`. Unlike the report and inventory schemas this one is closed: every table sets `additionalProperties: false`, because the loader uses `#[serde(deny_unknown_fields)]` and a silently ignored key could drop a pin or disable nothing at all. A TOML file is converted to JSON (tables to objects, integers to integers, booleans to booleans, and a date, which no key of this file accepts, to null so that both sides refuse it) before validation. `crates/canary-config/tests/schema_parity.rs` pins the two sides together: nothing the schema accepts is something the loader refuses, and the only divergence it allows runs the other way — a `network`, `rpc_url` or `fixtures_dir` shape this file documents but the loader stores verbatim, so that an explicit `--network`/`--rpc-url`/`--fixtures-dir` still outranks a bad stored value (issue #474) while an editor or a CI job sees the shape error first (issue #455). `crates/canary-config/tests/schema.rs` holds this schema's own accept-and-reject unit tests.",
   "type": "object",
   "additionalProperties": false,
   "required": ["version", "protocol"],
@@ -19,16 +19,19 @@
       "maximum": 4294967295
     },
     "network": {
-      "description": "The network live checks run against: `testnet`, `mainnet`, `futurenet`, or a custom name. Optional; absent means the CLI decides, cascading `--network` over the built-in `testnet` default. The loader stores the string verbatim and never validates it, so this schema deliberately sets no pattern: an unusable name is a runtime problem, not a configuration-format one.",
-      "type": "string"
+      "description": "The network live checks run against: `testnet`, `mainnet`, `futurenet`, or a custom name. Optional; absent means the CLI decides, cascading `--network` over the built-in `testnet` default. A name is one token: it starts alphanumeric and continues with letters, digits, `.`, `_` or `-`. The loader stores the string verbatim, so an unusable name only surfaces at run time; the pattern here is what an editor or a CI gate reports first.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
     "rpc_url": {
-      "description": "The Stellar RPC endpoint for live checks. Optional; absent means the CLI decides, cascading `--rpc-url` over the resolved network's built-in default. As with `network`, the loader stores the value verbatim and performs no scheme or reachability check, so no URL format constraint is declared here.",
-      "type": "string"
+      "description": "The Stellar RPC endpoint for live checks, for example `https://soroban-testnet.stellar.org`. Optional; absent means the CLI decides, cascading `--rpc-url` over the resolved network's built-in default. Must be an absolute `http` or `https` URL with a non-empty remainder after `://` made only of URL characters, so whitespace, a double quote and an angle bracket are all invalid; another scheme such as `ftp://`, and an authority-less `https://`, is not a configuration value. A bracketed IPv6 literal (`http://[::1]:8000`) is outside this pattern. The loader performs no scheme or reachability check and stores the value verbatim, because a bad stored value must not stop a valid `--rpc-url` from winning; this schema is where the endpoint shape is pinned.",
+      "type": "string",
+      "pattern": "^https?://[A-Za-z0-9._~%:#/?@!$&'()*+,;=-]+$"
     },
     "fixtures_dir": {
-      "description": "The directory holding fixture files, relative to the project root. Optional; absent means the CLI decides, cascading `--fixtures-dir` over the built-in `fixtures` default. A TOML string becomes an operating-system path, so anything the platform accepts as a path name is accepted here.",
-      "type": "string"
+      "description": "The directory holding fixture files, relative to the project root, for example `fixtures` or `tests/fixtures`. Optional; absent means the CLI decides, cascading `--fixtures-dir` over the built-in `fixtures` default. Must be a non-empty relative path: segments of letters, digits, `.`, `_`, `~`, `%`, `+`, `-`, spaces and `/` or `\\` separators. It may not start with a separator and may not carry a drive prefix, so an absolute path is not a value for this key — name one with `--fixtures-dir`. The loader turns the string into an operating-system path without checking it, so a path the platform happens to accept but this file does not document is a runtime finding, not a schema one.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~%+-][A-Za-z0-9 ._~%+\\-/\\\\]*$"
     },
     "project": {
       "description": "How to classify the project under test. Optional; every member has a default, so an absent table means `type = \"auto\"`.",

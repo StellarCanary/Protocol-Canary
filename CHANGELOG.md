@@ -79,6 +79,23 @@ All notable changes to this project are documented in this file.
   validates. Conformance tests validate real rendered reports and the
   CF-01 examples against it, and reject reports missing required sections
   or carrying invalid statuses.
+- The formal JSON Schema for `.stellar-canary.toml` is published at
+  `docs/schemas/config-v1.schema.json` (draft 2020-12, issue #455). It is the
+  closed counterpart of the report schema: every table sets
+  `additionalProperties: false`, because the loader uses
+  `#[serde(deny_unknown_fields)]` and a silently ignored key could drop a pin.
+  `version` and `protocol` are the required keys, `[tests]` carries the rule
+  that a file cannot disable every surface, and the three optional run
+  settings are pinned by shape: a `network` name is one token, an `rpc_url` is
+  an absolute `http` or `https` endpoint (so `ftp://` is not a configuration
+  value), and `fixtures_dir` is a path relative to the project root. The loader
+  keeps storing those three values verbatim, so a bad stored value cannot stop
+  `--network`, `--rpc-url` or `--fixtures-dir` from outranking it; the schema is
+  the stricter side at exactly those shapes, and the set is listed and
+  re-tested in `crates/canary-config/tests/schema_parity.rs`.
+  `crates/canary-config/tests/schema.rs` holds its own conformance tests,
+  including the shipped example files and the configuration `README.md`
+  documents.
 - `--rpc-max-retries <N>` (default `3`) and `--rpc-retry-delay-ms <MS>`
   (default `500`) on `check`: how many times a failed RPC attempt may be
   retried and the linear-backoff base delay between attempts. `0` retries

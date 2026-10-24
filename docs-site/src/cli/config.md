@@ -112,5 +112,18 @@ stellar-canary config validate --project-root "$(git rev-parse --show-toplevel)"
 
 The configuration shape is published as
 [`config-v1.schema.json`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/schemas/config-v1.schema.json),
-and `crates/canary-config/tests/schema_parity.rs` keeps that schema and this
-loader accepting exactly the same documents.
+a draft 2020-12 JSON Schema you can point an editor or a CI job at.
+`crates/canary-config/tests/schema.rs` tests that file against the documented
+shapes and the rejections version 1 states;
+`crates/canary-config/tests/schema_parity.rs` tests it against this loader.
+
+The two sides are deliberately not identical at one point. The schema also
+constrains the shape of `network`, `rpc_url` and `fixtures_dir` — a name is one
+token, an endpoint is an absolute `http` or `https` URL, a fixture directory is
+a path relative to the project root — while the loader stores those three values
+verbatim, so that a bad stored value cannot stop `--network`, `--rpc-url` or
+`--fixtures-dir` from outranking it. The schema is therefore the stricter side
+for exactly those documents, and that set is written down in the parity suite
+rather than left to chance: nothing the schema accepts is something the loader
+refuses, and every place the schema refuses more is listed, with its reason, and
+re-tested.

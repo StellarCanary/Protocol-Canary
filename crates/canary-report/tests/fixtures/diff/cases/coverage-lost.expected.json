@@ -1,0 +1,99 @@
+{
+  "case": "coverage-lost",
+  "pair": "coverage-lost",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "removed-warning",
+        "from": "warning",
+        "to": "absent",
+        "classification": "removed",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "unchanged",
+        "from": "fail",
+        "to": "fail",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "skipped-good",
+        "from": "pass",
+        "to": "skipped",
+        "classification": "skipped",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "removed",
+        "from": "pass",
+        "to": "absent",
+        "classification": "removed",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "warn-to-skipped",
+        "from": "warning",
+        "to": "skipped",
+        "classification": "skipped",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [
+      {
+        "surface": "rpc",
+        "id": "removed-warning"
+      },
+      {
+        "surface": "soroban",
+        "id": "skipped-good"
+      },
+      {
+        "surface": "xdr",
+        "id": "removed"
+      },
+      {
+        "surface": "xdr",
+        "id": "warn-to-skipped"
+      }
+    ],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 0,
+      "removed": 2,
+      "unchanged": 1,
+      "missing": 4
+    },
+    "verdict": "coverage-lost"
+  }
+}

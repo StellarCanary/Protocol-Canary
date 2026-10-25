@@ -1,0 +1,16 @@
+{
+  "case": "schema-version-2",
+  "pair": "schema-version-2",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "SchemaVersion",
+    "side": "current",
+    "contains": [
+      "current",
+      "schemaVersion 2",
+      "expected 1"
+    ]
+  }
+}

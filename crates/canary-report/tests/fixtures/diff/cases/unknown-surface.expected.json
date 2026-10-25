@@ -1,0 +1,16 @@
+{
+  "case": "unknown-surface",
+  "pair": "unknown-surface",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "InvalidReport",
+    "side": "current",
+    "contains": [
+      "current",
+      "unrecognized surface",
+      "\"wire\""
+    ]
+  }
+}

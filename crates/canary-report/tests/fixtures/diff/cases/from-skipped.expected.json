@@ -1,0 +1,100 @@
+{
+  "case": "from-skipped",
+  "pair": "from-skipped",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "anchor",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-absent",
+        "from": "skipped",
+        "to": "absent",
+        "classification": "unchanged-skip",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-error",
+        "from": "skipped",
+        "to": "error",
+        "classification": "added-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-fail",
+        "from": "skipped",
+        "to": "fail",
+        "classification": "added-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-pass",
+        "from": "skipped",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-skipped",
+        "from": "skipped",
+        "to": "skipped",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skipped-to-warning",
+        "from": "skipped",
+        "to": "warning",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 2,
+      "resolved": 0,
+      "added": 4,
+      "removed": 0,
+      "unchanged": 3,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

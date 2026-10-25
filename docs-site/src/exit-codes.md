@@ -45,7 +45,9 @@ prove nothing about compatibility either way.
 finishes with a `pass` (or `warning` — warnings do not fail a run unless
 `warnings_are_failures` is enabled in the policy) and no result recorded
 an execution error; `inspect`, `fixtures`, `report`, `cache clear`, and
-`version` complete successfully; and `check --allow-empty` exits `0` on
+`version` complete successfully; `config validate` finds the project's
+`.stellar-canary.toml` valid (or no file at all, which is valid: the
+built-in defaults apply); and `check --allow-empty` exits `0` on
 a run in which no fixture applies.
 
 **Example.** A nightly job runs `stellar-canary check` against the
@@ -61,6 +63,13 @@ value that no longer round-trips, or an RPC endpoint that no longer
 reports the expected protocol). A `warning` result also becomes a
 failure when the policy sets `warnings_are_failures = true`. The run
 completed — exit `1` is evidence, not an outage.
+
+The read-only verdict commands use the same number for the same reason:
+`lock verify` exits `1` when the pin does not hold and `config validate`
+exits `1` when `.stellar-canary.toml` is not a valid configuration. In
+each case the question the caller asked was answered, and the answer was
+no — which is why neither is a `2`, reserved for a call that could not be
+answered at all.
 
 **Example.** The configured RPC endpoint upgrades to protocol 29 while
 the pack still asserts protocol 28: the identity fixture fails, `check`

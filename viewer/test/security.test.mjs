@@ -9,13 +9,16 @@
 // either refused with the CF-01 reason or displayed as inert text — never
 // turned into markup, attributes or element creation — and no network
 // request is ever attempted (the page runs with connect-src 'none').
+// E-086 adds two more surfaces for that text: the fixture detail dialog
+// and the optional CA-02 inventory file, which is untrusted input of its
+// own and must never be able to make a fixture look verified.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
-import { createStubDom, loadReport } from "./stub-dom.mjs";
+import { createStubDom, loadReport, loadInventory, flush } from "./stub-dom.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerDir = path.join(here, "..");
@@ -135,11 +138,11 @@ test("rendering the malicious report keeps every payload inert in text nodes", a
     // No HTML sink was ever touched (the stub traps innerHTML, outerHTML,
     // insertAdjacentHTML and document.write by throwing on contact), and
     // createElement never produced anything beyond the allowlist {dt, dd,
-    // li, span, details, summary, p} — no img/link/script/iframe/svg/a,
-    // so no tracking pixel or remote script can enter the DOM.
+    // li, span, details, summary, p, button} — no img/link/script/iframe/
+    // svg/a, so no tracking pixel or remote script can enter the DOM.
     assert.deepEqual(
       [...stub.createdTags].sort(),
-      ["dd", "details", "dt", "li", "p", "span", "summary"],
+      ["button", "dd", "details", "dt", "li", "p", "span", "summary"],
     );
 
     // No attribute is ever set to a URL, an event handler or a tag string:
@@ -197,6 +200,183 @@ test("the malicious file text lands uninfluenced in the source dialog", async ()
 
   stub.byId("close-source").dispatch("click", {});
   assert.equal(stub.modalOps[stub.modalOps.length - 1], "close");
+});
+
+/* The fixture detail dialog (E-086) is a third place report text lands,
+ * and the optional CA-02 inventory a fourth source of untrusted text: the
+ * same rules have to hold there. */
+function hostileProvenanceReport() {
+  const report = maliciousReport();
+  report.results[0].verification = {
+    verificationVersion: 1,
+    fixtureId: report.results[0].fixtureId,
+    fixtureSha256: "<img src=https://tracker.example/sha onerror=alert(6)>",
+    method: "javascript:alert(7)",
+    checkedAt: "</dd><dd>2026-01-01T00:00:00Z</dd>",
+    network: { name: "testnet", passphrase: "<svg onload=alert(8)>", observedProtocol: 20 },
+    endpointHost: "rpc.example.invalid?token=secret",
+    verifier: { name: "stellar-canary", version: "<script>alert(9)</script>" },
+    evidenceRef: "https://tracker.example/evidence.json",
+    outcome: "matched",
+  };
+  report.fixturePack = {
+    digest: "sha256:<script>alert('packDigest')</script>",
+    registryVersion: 1,
+    source: "directory",
+    revision: null,
+  };
+  return report;
+}
+
+/* An inventory that claims everything a report does not carry. */
+function hostileInventory(report) {
+  return {
+    inventoryVersion: 1,
+    toolVersion: "0.2.0",
+    fixtureFormat: 1,
+    protocol: report.targetProtocol,
+    directoryFound: true,
+    counts: { total: 1, xdr: 1, rpc: 0, soroban: 0 },
+    otherProtocols: {},
+    packDigest: "sha256:<iframe src=javascript:alert(14)></iframe>",
+    fixtures: [
+      {
+        id: report.results[0].fixtureId,
+        protocol: report.targetProtocol,
+        surface: report.results[0].surface,
+        category: "<b>category</b>",
+        description: "<img src=https://tracker.example/i onerror=alert(11)>",
+        path: "../../../etc/passwd",
+        requiredCapabilities: ["<script>alert(12)</script>", "https://tracker.example/cap"],
+        sourceReference: "javascript:alert(13)",
+        sha256: "<script>alert('inventorySha256')</script>",
+      },
+    ],
+  };
+}
+
+/* The identity control of the first Attention Required card. */
+function openFirstDetail(stub) {
+  const card = stub.byId("attention-list").children[0];
+  card.children[2].dispatch("click", {});
+  return card.children[2];
+}
+
+test("the detail dialog renders hostile provenance as inert text only", async () => {
+  const called = collectNetworks();
+  try {
+    const stub = createStubDom();
+    stub.runApp();
+    const report = hostileProvenanceReport();
+    await loadReport(stub, JSON.stringify(report));
+
+    const identity = openFirstDetail(stub);
+    assert.equal(stub.byId("fixture-detail").open, true);
+    assert.equal(stub.byId("fixture-detail-title").textContent, "Fixture xdr/" + report.results[0].fixtureId);
+    assert.ok(!identity.attributes.has("data-value"), "the value is never placed in an attribute");
+
+    const facts = stub.byId("fixture-facts").textContent;
+    assert.ok(facts.includes("<img src=https://tracker.example/sha onerror=alert(6)>"), "the hostile SHA-256 is text");
+    assert.ok(facts.includes("javascript:alert(7)"), "the hostile method is text");
+    assert.ok(facts.includes("<script>alert('packDigest')</script>"), "the hostile pack digest is text");
+    assert.ok(facts.includes("rpc.example.invalid?token=secret"), "the endpoint host is text, query and all");
+    // The record's own hash wins over the inventory's claim, so an
+    // inventory cannot substitute a value the report carries.
+    assert.ok(!facts.includes("inventorySha256"), "the inventory does not overwrite the record");
+
+    // The cells of the dialog hold only the two kinds of node the page may
+    // build: a text span and, for the two hash rows, a copy button.
+    for (const cell of stub.byId("fixture-facts").children) {
+      for (const node of cell.children) {
+        assert.ok(["SPAN", "BUTTON"].includes(node.tagName), "unexpected node in a fact cell: " + node.tagName);
+      }
+    }
+
+    // Copying a hostile value moves it as a string and dispatches nothing.
+    const copyButton = stub.byId("fixture-facts").children[1].children[1];
+    assert.equal(copyButton.tagName, "BUTTON");
+    copyButton.dispatch("click", {});
+    await flush();
+    assert.deepEqual(stub.clipboardWrites, ["<img src=https://tracker.example/sha onerror=alert(6)>"]);
+    assert.equal(
+      stub.byId("copy-status").textContent,
+      "Copied the fixture SHA-256 to the clipboard.",
+    );
+    assert.deepEqual(called, []);
+  } finally {
+    resetNetworks();
+  }
+});
+
+test("a hostile inventory is inert text and cannot certify a fixture", async () => {
+  const stub = createStubDom();
+  stub.runApp();
+  const report = maliciousReport();
+  await loadReport(stub, JSON.stringify(report));
+  const picked = await loadInventory(stub, JSON.stringify(hostileInventory(report)));
+  assert.equal(picked.textCalls, 1, "the inventory is read exactly once");
+
+  openFirstDetail(stub);
+  const facts = stub.byId("fixture-facts").textContent;
+  assert.ok(facts.includes("<b>category</b>"), "the category is text");
+  assert.ok(facts.includes("https://tracker.example/cap"), "a hostile capability name is text");
+  assert.ok(!facts.includes("etc/passwd"), "the inventory file path is not shown at all");
+
+  // Nothing in an inventory can produce a verification claim: the report
+  // carries no record here, so the dialog says so and says it in every row.
+  const state = stub.byId("fixture-verification");
+  assert.match(state.textContent, /^No verification information/);
+  assert.equal(state.getAttribute("data-verification"), "unverified");
+  assert.ok(facts.includes("no verification record in this report"));
+
+  // The absence sentences name the source, and the layout is complete.
+  assert.ok(
+    facts.includes("<script>alert('inventorySha256')</script>"),
+    "an inventory hash is shown only because the report carries none",
+  );
+  const labels = stub.byId("fixture-facts").children.filter((c) => c.tagName === "DT");
+  assert.equal(labels.length, 12, "every fixture shows the same twelve rows");
+
+  // The attribute scan still holds with the dialog open: no URL, no
+  // handler, no markup outside the inert aria-label.
+  for (const { name, value } of stub.attributes) {
+    assert.doesNotMatch(name, /^on/i, "event handler attribute written: " + name);
+    if (name !== "aria-label") {
+      assert.doesNotMatch(value, /https?:|javascript:/i, "URL smuggled into attribute " + name);
+      assert.doesNotMatch(value, /<\s*[a-z]/i, "markup smuggled into attribute " + name);
+    }
+  }
+});
+
+test("an inventory that is not one is refused, and the report still renders", async () => {
+  const stub = createStubDom();
+  stub.runApp();
+  await loadReport(stub, JSON.stringify(hostileProvenanceReport()));
+
+  for (const text of [
+    "{not json",
+    JSON.stringify({ inventoryVersion: 2, fixtures: [] }),
+    JSON.stringify({ inventoryVersion: 1 }),
+    JSON.stringify({ inventoryVersion: 1, fixtures: [{ protocol: 28 }] }),
+  ]) {
+    await loadInventory(stub, text);
+    assert.match(stub.byId("inventory-status").textContent, /^Inventory not loaded: /);
+  }
+
+  // The refusal leaves the report view untouched, and the detail dialog
+  // still offers its rows with the inventory named as the missing source.
+  assert.equal(stub.byId("result").hidden, false);
+  assert.equal(stub.byId("heading").textContent, "Compatibility failures");
+  openFirstDetail(stub);
+  assert.match(stub.byId("fixture-facts").textContent, /no fixture inventory loaded/);
+});
+
+test("an over-sized inventory is refused before it is read", async () => {
+  const stub = createStubDom();
+  stub.runApp();
+  const out = await loadInventory(stub, "{}", 10 * 1024 * 1024 + 1);
+  assert.equal(out.textCalls, 0, "the 10 MiB limit is checked from the size without reading");
+  assert.match(stub.byId("inventory-status").textContent, /10 MiB/);
 });
 
 test("an over-sized file is refused before it is read", async () => {

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "coverage-lost",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "results": [
+    {
+      "testId": "unchanged",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "unchanged"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "warn-to-skipped",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-good",
+      "surface": "soroban",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

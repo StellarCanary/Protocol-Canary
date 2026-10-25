@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 2,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "schema-version-2",
+    "type": "unknown"
+  },
+  "status": "warning",
+  "counts": {
+    "total": 1,
+    "passed": 0,
+    "failed": 0,
+    "warnings": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "sample-check",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "sample-check"
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "from-skipped",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 5,
+    "passed": 2,
+    "failed": 1,
+    "warnings": 1,
+    "errors": 1,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "skipped-to-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skipped-to-pass"
+    },
+    {
+      "testId": "skipped-to-warning",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skipped-to-warning"
+    },
+    {
+      "testId": "skipped-to-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skipped-to-fail"
+    },
+    {
+      "testId": "skipped-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skipped-to-error"
+    },
+    {
+      "testId": "anchor",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "anchor"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "skipped-to-skipped",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

@@ -6,10 +6,19 @@
  *
  * Everything reachable by touch is reachable by keyboard: the surface
  * tabs follow the WAI-ARIA tabs pattern (roving tabindex, arrow keys,
- * Home and End), the findings list is plain list content, the report
- * source opens in a native modal <dialog> (which traps Tab focus and
- * returns it to the trigger when closed), and `<details>`+`<summary>`
- * rows toggle with Enter or Space natively.
+ * Home and End), the findings list is plain list content, both dialogs are
+ * native modal `<dialog>` elements (Escape and the Close button dismiss
+ * them, Tab focus is trapped, and the browser returns focus to the
+ * trigger), and `<details>`+`<summary>` rows toggle with Enter or Space
+ * natively.
+ *
+ * The fixture detail dialog (E-086) shows the provenance a report carries:
+ * the CF-04 verification record copied into `results[].verification`, the
+ * reserved `fixturePack.digest` pack digest and the protocol numbers, plus
+ * a fixture's category, description and required capabilities when the
+ * optional CA-02 inventory file is loaded. Whatever a source does not
+ * carry is stated as absent — the page computes no hash and verifies
+ * nothing itself.
  */
 (function () {
   "use strict";
@@ -26,6 +35,10 @@
   var currentReport = null;
   var currentSurface = "all";
   var currentQuery = "";
+  /* The optional CA-02 inventory (fixture category, description and
+   * capabilities). It is a second file the user picks in this tab; it is
+   * never fetched and never required for a report to be shown. */
+  var currentInventory = null;
 
   /* Readiness grouping of the results list (E-085): a passed check is
    * Ready, a warned or failed one needs Attention Required, and an
@@ -165,6 +178,25 @@
     el("findings-empty").hidden = true;
   }
 
+  /* The fixture id is the control that opens the detail dialog. A card is
+   * not made clickable as a whole because it holds a `<details>` toggle,
+   * and interactive content must not nest inside a button; the id is the
+   * part a reader is asking a question about, so it carries the action. */
+  function identityControl(entry) {
+    var button = document.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("class", "identity");
+    button.textContent = idOfResult(entry);
+    button.setAttribute(
+      "aria-label",
+      "Show detail for " + entry.surface + "/" + idOfResult(entry)
+    );
+    button.addEventListener("click", function () {
+      showFixtureDetail(entry);
+    });
+    return button;
+  }
+
   function findingRow(result) {
     var row = document.createElement("li");
     row.setAttribute("class", "finding");
@@ -173,7 +205,7 @@
     status.setAttribute("data-status", result.status);
     row.appendChild(status);
     row.appendChild(span("meta", result.surface));
-    row.appendChild(span("identity", idOfResult(result)));
+    row.appendChild(identityControl(result));
     row.appendChild(span("summary", result.summary));
     row.appendChild(span("timing", formatDuration(result.durationMs)));
 
@@ -196,7 +228,7 @@
     row.setAttribute("class", "finding skipped");
     row.appendChild(span("status", "skipped"));
     row.appendChild(span("meta", skip.surface));
-    row.appendChild(span("identity", skip.fixtureId));
+    row.appendChild(identityControl(skip));
     var reason = skip.reason;
     if (typeof skip.code === "string" && skip.code !== "") {
       reason += " (" + skip.code + ")";
@@ -326,6 +358,177 @@
     el("open-source").hidden = false;
   }
 
+  // ---------------------------------------------------------------
+  // The fixture detail dialog (E-086 / issue #462)
+  // ---------------------------------------------------------------
+
+  /* `navigator.clipboard` exists only where the browser offers it and only
+   * in a context it considers trustworthy, so the copy controls are built
+   * from what the environment actually provides. A value that cannot be
+   * copied is still selectable text. */
+  function clipboardBoard() {
+    var nav = self.navigator;
+    if (nav && nav.clipboard && typeof nav.clipboard.writeText === "function") {
+      return nav.clipboard;
+    }
+    return null;
+  }
+
+  function copyValue(value, what) {
+    var board = clipboardBoard();
+    if (board === null) {
+      setText("copy-status", "Clipboard access is not available here: select the value and copy it by hand.");
+      return;
+    }
+    board.writeText(value).then(function () {
+      setText("copy-status", "Copied " + what + " to the clipboard.");
+    }, function () {
+      setText("copy-status", "The copy did not complete. Select the value and copy it by hand.");
+    });
+  }
+
+  /* A row of the detail table. `absence` is the sentence shown when the
+   * source does not carry the value, so the row count never depends on the
+   * report and an unverified fixture is visibly unverified rather than
+   * blank. Only a value that is really there is offered for copying, and
+   * `copyName` names it in fixed words — never the value itself. */
+  function detailRow(label, value, absence, copyName) {
+    var present = value !== null && value !== undefined;
+    return {
+      label: label,
+      value: present ? String(value) : absence,
+      copyName: present && typeof copyName === "string" ? copyName : null,
+    };
+  }
+
+  function orText(value, fallback) {
+    return value === null || value === undefined ? fallback : String(value);
+  }
+
+  function protocolRow(detail) {
+    if (detail.targetProtocol === null) return null;
+    var text = "target " + detail.targetProtocol;
+    text += detail.observedProtocol === null
+      ? ", no protocol observed"
+      : ", observed " + detail.observedProtocol;
+    if (detail.evidenceProtocol !== null) {
+      text += ", evidence observed " + detail.evidenceProtocol;
+    }
+    return text;
+  }
+
+  function capabilityRow(detail) {
+    if (detail.capabilities === null) return null;
+    return detail.capabilities.length === 0
+      ? "none required"
+      : detail.capabilities.join(", ");
+  }
+
+  /* The fixed row set of the dialog (issue #462): the cryptographic and
+   * provenance values first, then the verification record, then the
+   * fixture description fields that only a CA-02 inventory carries. */
+  function detailRows(detail) {
+    var noReport = "not in this report";
+    var noInventory = detail.inventoryAbsence;
+    var recordless = detail.hasRecord ? noReport : "no verification record in this report";
+    return [
+      detailRow("Fixture SHA-256", detail.sha256,
+        "no SHA-256 in this report or inventory", "the fixture SHA-256"),
+      detailRow("Pack digest", detail.packDigest,
+        "no pack digest in this report or inventory", "the pack digest"),
+      detailRow("Protocol", protocolRow(detail), noReport),
+      detailRow("Verification method", detail.method, recordless),
+      detailRow("Verification outcome", detail.outcome, recordless),
+      detailRow("Checked at", detail.checkedAt, recordless),
+      detailRow("Verified by", detail.verifier, recordless),
+      detailRow("Verified against host", detail.endpointHost, recordless),
+      detailRow("Evidence reference", detail.evidenceRef,
+        detail.hasRecord ? "no evidence file in this record" : recordless),
+      detailRow("Category", detail.category, noInventory),
+      detailRow("Description", detail.description, noInventory),
+      detailRow("Required capabilities", capabilityRow(detail), noInventory),
+    ];
+  }
+
+  function detailFact(list, row) {
+    var term = document.createElement("dt");
+    term.textContent = row.label;
+    var value = document.createElement("dd");
+    var text = document.createElement("span");
+    text.setAttribute("class", "detail-value");
+    text.textContent = row.value;
+    value.appendChild(text);
+    if (row.copyName !== null && clipboardBoard() !== null) {
+      var button = document.createElement("button");
+      button.setAttribute("type", "button");
+      button.setAttribute("class", "copy");
+      button.textContent = "Copy";
+      button.setAttribute("aria-label", "Copy " + row.copyName);
+      button.addEventListener("click", function () {
+        copyValue(row.value, row.copyName);
+      });
+      value.appendChild(button);
+    }
+    list.appendChild(term);
+    list.appendChild(value);
+  }
+
+  function showFixtureDetail(entry) {
+    if (currentReport === null) return;
+    var detail = V.fixtureDetail(currentReport, entry, currentInventory);
+    var named = detail.surface === null
+      ? orText(detail.identity, "unknown")
+      : detail.surface + "/" + orText(detail.identity, "unknown");
+    setText("fixture-detail-title", "Fixture " + named);
+
+    var state = el("fixture-verification");
+    state.textContent = detail.state;
+    state.setAttribute(
+      "data-verification",
+      detail.hasRecord && detail.outcome === "matched" ? "verified" : "unverified"
+    );
+
+    var list = el("fixture-facts");
+    clearChildren(list);
+    detailRows(detail).forEach(function (row) {
+      detailFact(list, row);
+    });
+
+    setText("copy-status", clipboardBoard() === null
+      ? "This browser gives this page no clipboard access, so no copy control is offered: select a value and copy it by hand."
+      : "");
+    el("fixture-detail").showModal();
+  }
+
+  function loadInventory(file) {
+    var problem = V.checkSize(file.size);
+    if (problem) {
+      currentInventory = null;
+      setInventoryStatus("Inventory not loaded: " + problem + ".");
+      return;
+    }
+    file.text().then(function (text) {
+      var parsed = V.parseInventory(text);
+      if (parsed.ok) {
+        currentInventory = parsed.inventory;
+        setInventoryStatus(
+          "Fixture inventory loaded with " + parsed.inventory.document.fixtures.length +
+            " entries. Opening a fixture shows its category, description and required capabilities."
+        );
+      } else {
+        currentInventory = null;
+        setInventoryStatus("Inventory not loaded: " + parsed.reason + ".");
+      }
+    }, function () {
+      currentInventory = null;
+      setInventoryStatus("Inventory not loaded: the file could not be read.");
+    });
+  }
+
+  function setInventoryStatus(message) {
+    setText("inventory-status", message);
+  }
+
   function resetView() {
     currentReport = null;
     currentQuery = "";
@@ -333,6 +536,9 @@
     setSelectedTab("all", false);
     el("search-status").textContent = "";
     el("findings-empty").hidden = true;
+    /* A detail dialog left open on a report that is being replaced would
+     * otherwise keep showing facts that no longer belong to anything. */
+    if (el("fixture-detail").open) el("fixture-detail").close();
   }
 
   function showReport(report) {
@@ -371,7 +577,7 @@
     fact(list, "Failed", String(counts.failed));
     fact(list, "Errors", String(counts.errors));
     fact(list, "Skipped", String(counts.skipped));
-    fact(list, "Verification", "no verification information");
+    fact(list, "Verification", V.verificationSummary(report));
 
     showWarnings(el("warnings"), warnings);
 
@@ -661,6 +867,17 @@
       if (event.target === dialog) dialog.close();
     });
 
+    /* The fixture detail dialog opens from a card's identity control and
+     * closes from its button, its backdrop, or Escape (the latter handled
+     * by the native modal dialog, with focus returned to the card). */
+    var fixtureDialog = el("fixture-detail");
+    el("close-fixture").addEventListener("click", function () {
+      fixtureDialog.close();
+    });
+    fixtureDialog.addEventListener("click", function (event) {
+      if (event.target === fixtureDialog) fixtureDialog.close();
+    });
+
     var input = el("file");
     input.addEventListener("change", function () {
       if (input.files && input.files[0]) loadFile(input.files[0]);
@@ -690,6 +907,7 @@
     attachFilePicker(el("current-drop"), el("current-file"), function (file) {
       loadSide("current", file);
     });
+    attachFilePicker(el("inventory-drop"), el("inventory-file"), loadInventory);
   }
 
   init();

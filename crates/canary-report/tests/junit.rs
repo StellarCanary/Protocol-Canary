@@ -64,13 +64,13 @@ fn parse(xml: &str) -> Vec<Element> {
             Ok(Event::Eof) => break,
             Ok(Event::Start(start)) => {
                 stack.push(Element {
-                    name: String::from_utf8_lossy(start.name().as_ref()).into_owned(),
-                    attrs: attributes(&start, &reader),
+                    name: start.name().as_ref().to_owned(),
+                    attrs: attributes(&start),
                     text: String::new(),
                 });
             }
             Ok(Event::Text(text)) => {
-                let text = text.xml10_content().expect("well-formed text");
+                let text = text.xml10_content();
                 match stack.last_mut() {
                     Some(element) => element.text.push_str(&text),
                     // Whitespace before the root element and after it is
@@ -85,7 +85,7 @@ fn parse(xml: &str) -> Vec<Element> {
                 // quick-xml emits `&ref;` as its own event, so entity
                 // resolution happens here — skipping it would silently
                 // drop the character from the round-trip the tests assert.
-                let name = std::str::from_utf8(&entity).expect("entity name is ASCII");
+                let name: &str = &entity;
                 let resolved = quick_xml::escape::resolve_predefined_entity(name)
                     .unwrap_or_else(|| panic!("unknown entity `&{name};`"));
                 let element = stack
@@ -94,7 +94,7 @@ fn parse(xml: &str) -> Vec<Element> {
                 element.text.push_str(resolved);
             }
             Ok(Event::End(end)) => {
-                let name = String::from_utf8_lossy(end.name().as_ref()).into_owned();
+                let name = end.name().as_ref().to_owned();
                 let mut closed = stack.pop().expect("tags are balanced");
                 assert_eq!(
                     closed.name, name,
@@ -111,8 +111,8 @@ fn parse(xml: &str) -> Vec<Element> {
                 // Self-closing elements (e.g. `<skipped/>`) have no End
                 // event, so record them immediately.
                 elements.push(Element {
-                    name: String::from_utf8_lossy(empty.name().as_ref()).into_owned(),
-                    attrs: attributes(&empty, &reader),
+                    name: empty.name().as_ref().to_owned(),
+                    attrs: attributes(&empty),
                     text: String::new(),
                 });
             }
@@ -128,17 +128,14 @@ fn parse(xml: &str) -> Vec<Element> {
     elements
 }
 
-fn attributes(
-    start: &quick_xml::events::BytesStart<'_>,
-    reader: &Reader<&[u8]>,
-) -> Vec<(String, String)> {
+fn attributes(start: &quick_xml::events::BytesStart<'_>) -> Vec<(String, String)> {
     start
         .attributes()
         .map(|attr| {
             let attr = attr.expect("well-formed attribute");
-            let key = String::from_utf8_lossy(attr.key.as_ref()).into_owned();
+            let key = attr.key.as_ref().to_owned();
             let value = attr
-                .decoded_and_normalized_value(quick_xml::XmlVersion::Explicit1_0, reader.decoder())
+                .normalized_value(quick_xml::XmlVersion::Explicit1_0)
                 .expect("well-formed attribute value")
                 .into_owned();
             (key, value)

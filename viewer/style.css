@@ -38,6 +38,8 @@
     --banner-bg: #8c1d18;
     --banner-fg: #ffe9e6;
     --banner-border: #ff7b72;
+    --schema-warning-bg: #b42318;
+    --schema-warning-fg: #ffffff;
   }
 }
 
@@ -138,6 +140,18 @@ a:focus-visible,
   border-radius: 6px;
   background: var(--banner-bg);
   color: var(--banner-fg);
+  font-weight: 600;
+}
+
+/* The schema version warning banner: uses a distinct amber/orange palette
+ * to differentiate it from the protocol-mismatch banner. */
+.schema-warning-banner {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--schema-warning-fg);
+  border-radius: 6px;
+  background: var(--schema-warning-bg);
+  color: var(--schema-warning-fg);
   font-weight: 600;
 }
 

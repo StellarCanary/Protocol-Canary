@@ -18,6 +18,9 @@
 //! on the platform, the checkout location, directory iteration order, or
 //! file modification times. Contents are hashed as raw bytes with no
 //! newline or encoding normalization.
+//!
+//! This module is public so the CLI can verify fixture packs against
+//! registry manifests.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -26,7 +29,9 @@ use sha2::{Digest, Sha256};
 
 /// Plain SHA-256 of `bytes` as lowercase hex (no framing, unlike
 /// `canary_core::sha256_hex`, which length-prefixes its parts).
-fn sha256_hex(bytes: &[u8]) -> String {
+///
+/// This is public so the CLI can verify file checksums against registry entries.
+pub fn sha256_hex(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .map(|byte| format!("{byte:02x}"))

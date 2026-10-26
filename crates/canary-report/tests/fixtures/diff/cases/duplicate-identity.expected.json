@@ -1,0 +1,17 @@
+{
+  "case": "duplicate-identity",
+  "pair": "duplicate-identity",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "DuplicateIdentity",
+    "side": "baseline",
+    "contains": [
+      "baseline",
+      "xdr",
+      "\"dup\"",
+      "more than once"
+    ]
+  }
+}

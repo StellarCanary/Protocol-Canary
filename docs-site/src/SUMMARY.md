@@ -17,6 +17,7 @@
   - [report](./cli/report.md)
   - [diff](./cli/diff.md)
   - [lock](./cli/lock.md)
+  - [config](./cli/config.md)
   - [completions](./cli/completions.md)
   - [version](./cli/version.md)
 - [Exit Codes](./exit-codes.md)

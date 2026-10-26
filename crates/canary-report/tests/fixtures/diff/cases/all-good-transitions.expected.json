@@ -1,0 +1,118 @@
+{
+  "case": "all-good-transitions",
+  "pair": "all-good-transitions",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "absent-to-skipped",
+        "from": "absent",
+        "to": "skipped",
+        "classification": "unchanged-skip",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "error-resolved",
+        "from": "error",
+        "to": "warning",
+        "classification": "resolved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "skip-to-pass",
+        "from": "skipped",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "improved-error",
+        "from": "error",
+        "to": "fail",
+        "classification": "improved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "added",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "degraded",
+        "from": "pass",
+        "to": "warning",
+        "classification": "degraded",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "improved",
+        "from": "warning",
+        "to": "pass",
+        "classification": "improved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "resolved",
+        "from": "fail",
+        "to": "pass",
+        "classification": "resolved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "unchanged-pass",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 0,
+      "resolved": 2,
+      "added": 2,
+      "removed": 0,
+      "unchanged": 2,
+      "missing": 0
+    },
+    "verdict": "improved"
+  }
+}

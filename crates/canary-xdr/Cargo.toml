@@ -21,4 +21,4 @@ toml.workspace = true
 # directly to distinguish invalid base64 from invalid XDR and to report the
 # byte offset at which decoding failed.
 base64 = "0.23"
-stellar-xdr = { version = "=28.0.1", features = ["base64", "alloc", "serde"] }
+stellar-xdr = { version = "=30.0.0", features = ["base64", "alloc", "serde"] }

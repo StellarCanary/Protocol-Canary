@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "regressions",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 6,
+    "passed": 0,
+    "failed": 2,
+    "warnings": 1,
+    "errors": 3,
+    "skipped": 2
+  },
+  "results": [
+    {
+      "testId": "regressed",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "regressed"
+    },
+    {
+      "testId": "fail-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "fail-to-error"
+    },
+    {
+      "testId": "skip-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skip-to-error"
+    },
+    {
+      "testId": "warn-to-error",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warn-to-error"
+    },
+    {
+      "testId": "absent-to-warning",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "absent-to-warning"
+    },
+    {
+      "testId": "absent-to-fail",
+      "protocol": 28,
+      "surface": "soroban",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "absent-to-fail"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "fail-to-skipped",
+      "surface": "rpc",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "error-to-skipped",
+      "surface": "soroban",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "case": "policy-degradation-default",
+  "pair": "policy-degradation",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "warning"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "degraded",
+        "from": "pass",
+        "to": "warning",
+        "classification": "degraded",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 0,
+      "removed": 0,
+      "unchanged": 0,
+      "missing": 0
+    },
+    "verdict": "no-change"
+  }
+}

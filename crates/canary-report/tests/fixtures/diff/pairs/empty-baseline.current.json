@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "empty-baseline",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "added-check",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "added-check"
+    },
+    {
+      "testId": "failing-check",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "failing-check"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "skip-only",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

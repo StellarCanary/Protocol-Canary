@@ -124,7 +124,7 @@ jobs:
           [System.IO.File]::WriteAllText($shaPath, "$hash  ${{ matrix.archive_name }}.zip`n")
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-artifacts-${{ matrix.target }}
           path: dist/*

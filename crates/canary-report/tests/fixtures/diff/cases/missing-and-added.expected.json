@@ -1,0 +1,60 @@
+{
+  "case": "missing-and-added",
+  "pair": "missing-and-added",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "dropped",
+        "from": "pass",
+        "to": "absent",
+        "classification": "removed",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "new-check",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [
+      {
+        "surface": "xdr",
+        "id": "dropped"
+      }
+    ],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 1,
+      "removed": 1,
+      "unchanged": 0,
+      "missing": 1
+    },
+    "verdict": "coverage-lost"
+  }
+}

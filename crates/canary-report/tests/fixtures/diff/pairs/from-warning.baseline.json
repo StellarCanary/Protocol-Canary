@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "from-warning",
+    "type": "unknown"
+  },
+  "status": "warning",
+  "counts": {
+    "total": 6,
+    "passed": 0,
+    "failed": 0,
+    "warnings": 6,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "warning-to-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-pass"
+    },
+    {
+      "testId": "warning-to-warning",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-warning"
+    },
+    {
+      "testId": "warning-to-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-fail"
+    },
+    {
+      "testId": "warning-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-error"
+    },
+    {
+      "testId": "warning-to-skipped",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-skipped"
+    },
+    {
+      "testId": "warning-to-absent",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warning-to-absent"
+    }
+  ]
+}

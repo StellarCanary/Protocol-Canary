@@ -1,0 +1,82 @@
+{
+  "case": "cached-results",
+  "pair": "cached-results",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "re-missed",
+        "from": "pass",
+        "to": "fail",
+        "classification": "regressed",
+        "regression": true,
+        "sourceChanged": true
+      },
+      {
+        "surface": "xdr",
+        "id": "cache-to-cache",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": false
+      },
+      {
+        "surface": "xdr",
+        "id": "cache-to-live",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": true
+      },
+      {
+        "surface": "xdr",
+        "id": "live-to-cache",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": true
+      },
+      {
+        "surface": "xdr",
+        "id": "no-source-change",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 1,
+      "resolved": 0,
+      "added": 0,
+      "removed": 0,
+      "unchanged": 4,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

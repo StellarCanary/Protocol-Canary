@@ -275,12 +275,77 @@ pub struct GetTransactionsResponse {
     pub cursor: Option<String>,
 }
 
+/// Transaction status values returned by Stellar RPC's `getTransaction`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TransactionStatus {
+    /// The transaction was included and applied successfully.
+    Success,
+    /// The transaction hash is outside the node's retained history.
+    NotFound,
+    /// The transaction was included but failed to apply.
+    Failed,
+}
+
+/// The result of `getTransaction`.
+///
+/// XDR fields remain base64 strings for decoding by `canary-xdr`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GetTransactionResponse {
+    pub status: TransactionStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tx_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_ledger_close_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub oldest_ledger_close_time: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub envelope_xdr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_xdr: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_meta_xdr: Option<String>,
+}
+
 /// One transaction in a `getTransactions` response.
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
     pub ledger: u32,
     pub status: String,
+}
+
+#[cfg(test)]
+mod transaction_tests {
+    use super::{GetTransactionResponse, TransactionStatus};
+
+    #[test]
+    fn deserializes_each_transaction_status_and_optional_xdr() {
+        for (status, expected) in [
+            ("SUCCESS", TransactionStatus::Success),
+            ("NOT_FOUND", TransactionStatus::NotFound),
+            ("FAILED", TransactionStatus::Failed),
+        ] {
+            let response: GetTransactionResponse = serde_json::from_value(serde_json::json!({
+                "status": status,
+                "resultXdr": "AAAA",
+                "resultMetaXdr": "BBBB",
+                "envelopeXdr": "CCCC"
+            }))
+            .expect("known transaction status");
+            assert_eq!(response.status, expected);
+            assert_eq!(response.result_xdr.as_deref(), Some("AAAA"));
+            assert_eq!(response.result_meta_xdr.as_deref(), Some("BBBB"));
+            assert_eq!(response.envelope_xdr.as_deref(), Some("CCCC"));
+        }
+    }
 }
 
 /// The result of `simulateTransaction`.

@@ -195,7 +195,15 @@ dd { margin: 0; }
 .finding .status[data-status="warning"] { color: var(--warning); }
 .finding .status[data-status="fail"], .finding .status[data-status="error"] { color: var(--fail); }
 .finding .meta { color: var(--muted); }
-.finding .identity { font-family: ui-monospace, monospace; }
+/* The identity is a button, not a label: it opens the fixture detail
+ * dialog. It keeps the monospace identity look and reads as a control
+ * through the shared button border, padding and focus ring. */
+.finding .identity {
+  font-family: ui-monospace, monospace;
+  color: var(--accent);
+  background: var(--bg);
+  padding: 0.1rem 0.4rem;
+}
 .finding .summary { display: block; }
 .finding .timing {
   display: inline-block;
@@ -297,3 +305,35 @@ aside { margin-top: 2rem; color: var(--muted); }
 
 .outcome[data-classification="unchanged"],
 .outcome[data-classification="unchanged-skip"] { color: var(--muted); }
+
+/* --- Fixture detail (E-086) --- */
+
+/* The inventory is optional, so its zone and its status line stay quiet
+ * until a file is chosen. */
+.drop-optional { margin-top: 0.5rem; }
+#inventory-status { color: var(--muted); margin: 0.5rem 0 0; overflow-wrap: anywhere; }
+
+.hint { color: var(--muted); font-size: 0.9rem; }
+
+/* Every fixture shows the same rows, so an absent value is a sentence in
+ * its own cell rather than a missing line that shifts the layout. A 64-hex
+ * digest needs a value track that can shrink, and on a narrow screen the
+ * label track would otherwise starve it, so the rows stack instead. */
+#fixture-facts { margin: 0.5rem 0; grid-template-columns: minmax(0, 1fr); gap: 0.1rem 1rem; }
+#fixture-facts dd { margin-bottom: 0.35rem; }
+
+@media (min-width: 40rem) {
+  #fixture-facts { grid-template-columns: max-content minmax(0, 1fr); gap: 0.25rem 1rem; }
+  #fixture-facts dd { margin-bottom: 0; }
+}
+
+#fixture-facts .detail-value { overflow-wrap: anywhere; }
+
+/* The verification line is text in both states; the colour only repeats
+ * what the words already say. */
+.verification-state { font-weight: 600; }
+.verification-state[data-verification="verified"] { color: var(--pass); }
+.verification-state[data-verification="unverified"] { color: var(--warning); }
+
+#fixture-detail .copy { margin-left: 0.5rem; font-size: 0.85rem; white-space: nowrap; }
+#copy-status { color: var(--muted); overflow-wrap: anywhere; }

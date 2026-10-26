@@ -932,3 +932,68 @@ fn custom_limits_enforced() {
 
     sandbox.assert_nothing_written_outside();
 }
+
+// ============================================================================
+// 14. Failed extraction leaves the destination as it found it
+// ============================================================================
+
+#[test]
+fn failed_extraction_removes_what_it_wrote() {
+    let sandbox = TestSandbox::new("cleanup-partial");
+    // The first two entries are valid and are written before the symlink is
+    // rejected, so there is partial output to remove.
+    let archive = ArchiveFixtureBuilder::new()
+        .file("pack/ok.txt", b"written first")
+        .file("loose.txt", b"also written")
+        .symlink("pack/link", "/etc/passwd")
+        .build();
+
+    let result = extract_archive(archive.as_slice(), &sandbox.dest);
+    assert!(matches!(
+        result,
+        Err(ArchiveSafetyError::UnsupportedEntryType { .. })
+    ));
+
+    let left: Vec<_> = std::fs::read_dir(&sandbox.dest).unwrap().collect();
+    assert!(left.is_empty(), "partial output remained: {left:?}");
+    sandbox.assert_nothing_written_outside();
+}
+
+#[test]
+fn failed_extraction_keeps_files_that_were_already_in_the_destination() {
+    let sandbox = TestSandbox::new("cleanup-preexisting");
+    std::fs::write(sandbox.dest.join("keep.txt"), "mine").unwrap();
+    std::fs::create_dir_all(sandbox.dest.join("keep_dir")).unwrap();
+    std::fs::write(sandbox.dest.join("keep_dir/inner.txt"), "mine too").unwrap();
+
+    let archive = ArchiveFixtureBuilder::new()
+        .file("new.txt", b"written first")
+        .symlink("link", "/etc/passwd")
+        .build();
+
+    assert!(extract_archive(archive.as_slice(), &sandbox.dest).is_err());
+
+    assert_eq!(
+        std::fs::read_to_string(sandbox.dest.join("keep.txt")).unwrap(),
+        "mine"
+    );
+    assert_eq!(
+        std::fs::read_to_string(sandbox.dest.join("keep_dir/inner.txt")).unwrap(),
+        "mine too"
+    );
+    assert!(!sandbox.dest.join("new.txt").exists());
+}
+
+#[test]
+fn successful_extraction_is_not_cleaned_up() {
+    let sandbox = TestSandbox::new("cleanup-success");
+    let archive = ArchiveFixtureBuilder::new()
+        .file("pack/ok.txt", b"kept")
+        .build();
+
+    extract_archive(archive.as_slice(), &sandbox.dest).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(sandbox.dest.join("pack/ok.txt")).unwrap(),
+        "kept"
+    );
+}

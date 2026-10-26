@@ -7,9 +7,12 @@
 use std::path::{Path, PathBuf};
 
 use canary_config::{
-    load_lock, parse_lock, serialize_lock, LockError, LockFile, LockFixtures, LockSource, LockTool,
-    LOCK_FILE_NAME, MAX_LOCK_FILE_BYTES, SUPPORTED_LOCK_VERSION, SUPPORTED_REGISTRY_VERSION,
+    load_lock, parse_lock, serialize_lock, validate_report_against_lock,
+    validate_stored_report_against_lock, LockError, LockFile, LockFixtures, LockMismatchError,
+    LockSource, LockTool, LOCK_FILE_NAME, MAX_LOCK_FILE_BYTES, SUPPORTED_LOCK_VERSION,
+    SUPPORTED_REGISTRY_VERSION,
 };
+use canary_core::{CanaryError, ExitCode};
 
 const DIGEST: &str = "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 const REVISION: &str = "0000000000000000000000000000000000000000";
@@ -543,4 +546,81 @@ fn every_lock_error_is_a_configuration_error_with_the_path_in_it() {
         canary_core::ExitCode::from(&canary_error),
         canary_core::ExitCode::ConfigurationError
     );
+}
+
+// ------------------------------------------------ report lock validation
+
+#[test]
+fn validates_report_against_lock_matching_pair() {
+    let lock = full_lock();
+    assert!(validate_report_against_lock(&lock, DIGEST, 28).is_ok());
+}
+
+#[test]
+fn validates_report_against_lock_pack_digest_mismatch_fails_with_exit_code_2() {
+    let lock = full_lock();
+    let other_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+
+    let err: LockMismatchError = validate_report_against_lock(&lock, other_digest, 28).unwrap_err();
+    assert_eq!(err.field, "packDigest");
+    assert_eq!(err.expected, DIGEST);
+    assert_eq!(err.found, other_digest);
+
+    let diagnostic = err.to_string();
+    assert!(diagnostic.contains("packDigest"), "{diagnostic}");
+    assert!(diagnostic.contains(DIGEST), "{diagnostic}");
+    assert!(diagnostic.contains(other_digest), "{diagnostic}");
+
+    let canary_err = CanaryError::from(err);
+    assert_eq!(ExitCode::from(&canary_err), ExitCode::ConfigurationError);
+    assert_eq!(ExitCode::from(&canary_err).code(), 2);
+}
+
+#[test]
+fn validates_report_against_lock_protocol_mismatch_fails_with_exit_code_2() {
+    let lock = full_lock();
+
+    let err = validate_report_against_lock(&lock, DIGEST, 29).unwrap_err();
+    assert_eq!(err.field, "protocol");
+    assert_eq!(err.expected, "28");
+    assert_eq!(err.found, "29");
+
+    let diagnostic = err.to_string();
+    assert!(diagnostic.contains("protocol"), "{diagnostic}");
+    assert!(diagnostic.contains("28"), "{diagnostic}");
+    assert!(diagnostic.contains("29"), "{diagnostic}");
+
+    let canary_err = CanaryError::from(err);
+    assert_eq!(ExitCode::from(&canary_err), ExitCode::ConfigurationError);
+    assert_eq!(ExitCode::from(&canary_err).code(), 2);
+}
+
+#[test]
+fn validate_stored_report_against_lock_missing_lockfile_fails_with_exit_code_2() {
+    let dir = Scratch::new("missing_lock_validation");
+    let missing_path = dir.0.join("non_existent.lock");
+
+    let err = validate_stored_report_against_lock(&missing_path, DIGEST, 28).unwrap_err();
+    assert_eq!(ExitCode::from(&err), ExitCode::ConfigurationError);
+    assert_eq!(ExitCode::from(&err).code(), 2);
+}
+
+#[test]
+fn report_built_against_different_pack_digest_fails_validation_with_exit_code_2() {
+    let dir = Scratch::new("different_pack_digest");
+    let lock_path = dir.file(FULL.as_bytes());
+
+    let different_digest =
+        "sha256:9999999999999999999999999999999999999999999999999999999999999999";
+
+    // Validating stored report built against a different pack digest
+    let err = validate_stored_report_against_lock(&lock_path, different_digest, 28).unwrap_err();
+
+    let diagnostic = err.to_string();
+    assert!(diagnostic.contains("packDigest"), "{diagnostic}");
+    assert!(diagnostic.contains(DIGEST), "{diagnostic}");
+    assert!(diagnostic.contains(different_digest), "{diagnostic}");
+
+    assert_eq!(ExitCode::from(&err), ExitCode::ConfigurationError);
+    assert_eq!(ExitCode::from(&err).code(), 2);
 }

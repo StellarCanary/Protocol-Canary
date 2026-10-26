@@ -101,6 +101,8 @@ Status: PASS
 
 Protocol Canary reads `.stellar-canary.toml` from the project root:
 
+<!-- config-example: v1 -->
+
 ```toml
 version = 1
 protocol = 28
@@ -117,9 +119,35 @@ soroban = true
 warnings_are_failures = false
 ```
 
+Three run settings are optional and can be written anywhere before the first
+table, so a file can pin the network, endpoint or fixture directory a project
+always uses:
+
+<!-- config-example: v1 -->
+
+```toml
+version = 1
+protocol = 28
+network = "testnet"
+rpc_url = "https://soroban-testnet.stellar.org"
+fixtures_dir = "fixtures"
+```
+
+`network` is one token (`testnet`, `stg-2.canary.dev`), `rpc_url` is an absolute
+`http` or `https` endpoint, and `fixtures_dir` is a path relative to the project
+root. A CLI flag outranks the stored value, so `--network`, `--rpc-url` and
+`--fixtures-dir` still win over anything written here.
+
 From `0.2.0` an unknown section or key is an error (exit code `2`, naming the
 field), not ignored. Before, a misspelling such as `[test]` for `[tests]` left
 every surface enabled without a word.
+
+The shape of this file is published as
+[`docs/schemas/config-v1.schema.json`](docs/schemas/config-v1.schema.json), a
+draft 2020-12 JSON Schema you can point an editor at. Two suites keep it
+honest: `crates/canary-config/tests/schema.rs` checks the documented shapes and
+rejections, and `crates/canary-config/tests/schema_parity.rs` checks the schema
+against the loader itself.
 
 ## Protocol 28
 
@@ -147,7 +175,9 @@ rather than guessed at here.
 No database, no persistent server, no Docker, and no private key or
 seed phrase are required for either path. See
 [docs/architecture.md](docs/architecture.md) for the full execution
-topology, external dependencies, and failure behavior.
+topology, external dependencies, and failure behavior, and
+[docs/reproducibility.md](docs/reproducibility.md) for reproducing runs
+from lockfiles and fixture packs.
 
 ## Ecosystem
 
@@ -162,7 +192,9 @@ sibling repositories build on it:
   artifact from its JSON output.
 
 See [docs/architecture.md](docs/architecture.md) for how the three
-repositories fit together, [docs/json-report-contract.md](docs/json-report-contract.md)
+repositories fit together, [docs/reproducibility.md](docs/reproducibility.md)
+for step-by-step test run reproduction,
+[docs/json-report-contract.md](docs/json-report-contract.md)
 for the exact `--json` shape a consumer like the Action should parse, and
 [docs/fixture-contract.md](docs/fixture-contract.md) for how fixtures are
 supplied via `--fixtures-dir`.

@@ -1,0 +1,15 @@
+{
+  "case": "bad-json",
+  "pair": "bad-json",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "InvalidReport",
+    "side": "baseline",
+    "contains": [
+      "baseline",
+      "valid report"
+    ]
+  }
+}

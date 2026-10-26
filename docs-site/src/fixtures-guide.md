@@ -91,9 +91,41 @@ target project doesn't have is **skipped**, not failed.
 
 | `surface` | Required body fields |
 |---|---|
-| `xdr` | `type` (`StellarValue` \| `ContractExecutable` \| `ScVal` \| `LedgerEntry` \| `TransactionEnvelope`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `xdr` | `type` (`StellarValue` \| `ContractExecutable` \| `ScVal` \| `LedgerEntry` \| `TransactionEnvelope`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals` \| `decode-json-equals`), `value_base64`, `expected_base64` (only for `encode-equals`), and `expected_json` (only for `decode-json-equals`) |
 | `rpc` | `method` (`get-network` \| `get-latest-ledger`), `assert` — an array of `{kind, field, value?, expected_type?}` |
 | `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`; `simulation-success` may additionally declare `[[expect.required_auth]]` entries — `{address, function_name?, min_sub_invocations?}` — checked against the simulation's reported authorization entries) |
+
+#### Comparing decoded XDR to expected JSON
+
+A `decode-json-equals` fixture decodes `value_base64` as `type` and compares
+the result with `expected_json`, so the expected contents can be written as
+readable JSON instead of bytes:
+
+```toml
+type = "ScVal"
+kind = "decode-json-equals"
+value_base64 = "AAAABQAAAAAAAAAq"
+expected_json = '''
+{ "u64": "42" }
+'''
+```
+
+- The JSON form is `stellar-xdr`'s own (the one `stellar xdr decode --output
+  json` prints): `snake_case` field names, union arms as a single-key object
+  (or a bare string for an arm without a payload), 64-bit integers as decimal
+  strings, opaque bytes as lowercase hex, and keys as strkeys.
+- `expected_json` is JSON text, not a TOML table, because decoded values can
+  contain `null`, which TOML cannot express. Malformed JSON makes the fixture
+  invalid (exit 4), with the position counted from the start of that text.
+- The comparison is exact on the parsed JSON. Object key order and whitespace
+  are ignored; every key, value, JSON type, array element and array position
+  must match. A field left out of `expected_json` is reported as an unexpected
+  field, not treated as a wildcard.
+- A mismatch fails the check and lists each difference by its JSON Pointer
+  path (RFC 6901, so `/` in a key is written `~1` and `~` is `~0`), for
+  example `/tx/tx/fee: expected 200, found 100`, or
+  `/tx/tx/time_bounds: missing field (expected null)`. Input that does not
+  decode fails with the decode error.
 
 For Soroban argument typing and XDR `ScVal` authoring details, see [`docs/fixtures/scval.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixtures/scval.md).
 

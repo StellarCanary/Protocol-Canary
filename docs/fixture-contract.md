@@ -115,8 +115,8 @@ common part, and a body the surface cannot read is exit code 4 (before, it was
 reported as an execution error, exit 3, which contradicted the paragraph above):
 
 - an unknown key in the body is an error that names it and lists the accepted keys
-  (`type`, `kind`, `value_base64`, and `expected_base64` for `encode-equals` on
-  `xdr`; `method` and `assert` on `rpc`; `source_account`, `contract_id`,
+  (`type`, `kind`, `value_base64`, `expected_base64` for `encode-equals` and
+  `expected_json` for `decode-json-equals` on `xdr`; `method` and `assert` on `rpc`; `source_account`, `contract_id`,
   `function`, `sequence_number`, `args`, `expect` on `soroban`), and likewise in an
   `[[assert]]`, `[[args]]` or `[expect]` entry. A misspelled `[[asert]]` used to be
   dropped silently;
@@ -155,7 +155,7 @@ which surface crate parses its body:
 
 | `surface` | Parsed by | Expected body fields |
 |---|---|---|
-| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (`"StellarValue"`, `"ContractExecutable"`, `"ScVal"`, `"LedgerEntry"`, or `"TransactionEnvelope"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `"xdr"` | `canary_xdr::XdrFixture::from_loaded` | `type` (`"StellarValue"`, `"ContractExecutable"`, `"ScVal"`, `"LedgerEntry"`, or `"TransactionEnvelope"`), `kind` (`"decode-success"` \| `"decode-failure"` \| `"roundtrip"` \| `"encode-equals"` \| `"decode-json-equals"`), `value_base64`, `expected_base64` (only for `encode-equals`), and `expected_json` (only for `decode-json-equals`: JSON text compared structurally with the decoded value's `stellar-xdr` JSON form; see the fixtures guide) |
 | `"rpc"` | `canary_rpc::RpcFixture::from_loaded` | `method` (`"get-network"` \| `"get-latest-ledger"`), `[[assert]]` array of `{kind, field, value?, expected_type?}` |
 | `"soroban"` | `canary_soroban::SorobanFixture::from_loaded` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `[[args]]`, and `[expect]` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
 

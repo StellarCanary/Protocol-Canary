@@ -41,6 +41,21 @@ impl fmt::Display for Surface {
     }
 }
 
+impl std::str::FromStr for Surface {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "xdr" => Ok(Surface::Xdr),
+            "rpc" => Ok(Surface::Rpc),
+            "soroban" => Ok(Surface::Soroban),
+            other => Err(format!(
+                "unknown surface {other:?}: expected 'xdr', 'rpc', or 'soroban'"
+            )),
+        }
+    }
+}
+
 /// The outcome of running a single compatibility test.
 ///
 /// `Fail` means the compatibility assertion ran and failed; `Error` means
@@ -360,6 +375,11 @@ impl FixtureStore {
         &self.fixtures
     }
 
+    /// Returns the number of fixture metadata entries in the store.
+    ///
+    /// This counts all entries regardless of protocol or compatibility
+    /// surface. Use [`FixtureStore::is_empty`] when only checking whether
+    /// any fixtures are present.
     pub fn len(&self) -> usize {
         self.fixtures.len()
     }

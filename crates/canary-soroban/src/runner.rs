@@ -191,14 +191,27 @@ impl SorobanFixture {
         ) {
             return Err(invalid(format!("[expect]: {message}")));
         }
+        // A present but non-string `message_contains` must not be treated as
+        // absent: that would silently weaken a simulation-error fixture to
+        // "the simulation failed". An empty needle is likewise rejected,
+        // because `str::contains("")` always matches.
+        let message_contains = match expect.get("message_contains") {
+            Some(value) => {
+                let text = value.as_str().ok_or_else(|| {
+                    invalid("expect.message_contains must be a string".to_string())
+                })?;
+                if text.is_empty() {
+                    return Err(invalid(
+                        "expect.message_contains must not be empty".to_string(),
+                    ));
+                }
+                Some(text.to_string())
+            }
+            None => None,
+        };
         let assertion = match expect.get("kind").and_then(toml::Value::as_str) {
             Some("simulation-success") => SorobanAssertion::SimulationSuccess,
-            Some("simulation-error") => SorobanAssertion::SimulationError {
-                message_contains: expect
-                    .get("message_contains")
-                    .and_then(toml::Value::as_str)
-                    .map(str::to_string),
-            },
+            Some("simulation-error") => SorobanAssertion::SimulationError { message_contains },
             Some(other) => {
                 return Err(invalid(format!(
                     "unsupported expectation kind {other:?}: expected \"simulation-success\" or \"simulation-error\""
@@ -902,6 +915,38 @@ mod tests {
             err,
             SorobanFixtureError::InvalidFixtureBody { .. }
         ));
+    }
+
+    #[test]
+    fn rejects_a_non_string_message_contains() {
+        let loaded = fixture(
+            "bad-message-type",
+            "simulation-error",
+            "message_contains = 28\n",
+        );
+        let err = SorobanFixture::from_loaded(&loaded).unwrap_err();
+        match err {
+            SorobanFixtureError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("message_contains"), "{reason}");
+                assert!(reason.contains("string"), "{reason}");
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_an_empty_message_contains() {
+        let loaded = fixture(
+            "empty-message",
+            "simulation-error",
+            "message_contains = \"\"\n",
+        );
+        let err = SorobanFixture::from_loaded(&loaded).unwrap_err();
+        match err {
+            SorobanFixtureError::InvalidFixtureBody { reason, .. } => {
+                assert!(reason.contains("message_contains"), "{reason}");
+                assert!(reason.contains("empty"), "{reason}");
+            }
+        }
     }
 
     /// Parses a fixture whose single `[[args]]` entry has the given

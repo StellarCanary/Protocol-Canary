@@ -12,8 +12,8 @@ pub use capabilities::{
     SOROBAN_DEPENDENCIES, STELLAR_SDK_DEPENDENCIES,
 };
 pub use detector::{
-    detect, detect_details, find_wasm_artifacts, resolve_project_type, CapabilityEvidence,
-    DetailedDetection, DetectionEvidence,
+    detect, detect_details, detect_project, find_wasm_artifacts, resolve_project_type,
+    CapabilityEvidence, DetailedDetection, DetectionEvidence,
 };
 pub use fingerprint::{
     compute_fingerprint, ProjectFingerprint, DETECTOR_REVISION, FINGERPRINT_VERSION,
@@ -28,8 +28,9 @@ pub use manifest::{
 };
 pub use models::{CapabilityEvidence as ModelCapabilityEvidence, CapabilityModel};
 pub use workspace::{
-    scan_cargo_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode, WorkspaceMember,
-    WorkspaceScan, MAX_DIRECTORIES_VISITED, MAX_WORKSPACE_DEPTH, MAX_WORKSPACE_MEMBERS,
+    scan_cargo_workspace, scan_npm_workspace, scan_pnpm_workspace, Diagnostic, DiagnosticCode,
+    WorkspaceMember, WorkspaceScan, MAX_DIRECTORIES_VISITED, MAX_WORKSPACE_DEPTH,
+    MAX_WORKSPACE_MEMBERS,
 };
 
 /// Test-only temp-directory helper shared by this crate's unit tests, so no

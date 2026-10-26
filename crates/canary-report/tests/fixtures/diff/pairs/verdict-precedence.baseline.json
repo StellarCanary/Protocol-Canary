@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "verdict-precedence",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 3,
+    "passed": 1,
+    "failed": 1,
+    "warnings": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "a-regressed",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "a-regressed"
+    },
+    {
+      "testId": "b-missing",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "b-missing"
+    },
+    {
+      "testId": "c-resolved",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "c-resolved"
+    }
+  ]
+}

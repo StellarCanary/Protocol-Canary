@@ -15,6 +15,16 @@ canary-core.workspace = true
 sha2 = "0.11"
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 flate2 = "1.0"
 tar = "0.4"
+
+[dev-dependencies]
+# Used by the integration tests that load fixture TOML through this crate and
+# hand the body to a surface parser. These are dev-only edges: each surface
+# crate still depends on canary-fixtures, never the reverse.
+canary-rpc.workspace = true
+canary-xdr.workspace = true
+canary-soroban.workspace = true
+serde_json.workspace = true

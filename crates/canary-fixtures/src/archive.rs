@@ -207,6 +207,36 @@ pub fn extract_archive_with_limits<R: Read>(
         }
     }
 
+    // Entries already in `dest` are never ours to delete: remember them so a
+    // failed extraction removes only what it created.
+    let preexisting: HashSet<std::ffi::OsString> = std::fs::read_dir(dest)
+        .map(|entries| entries.flatten().map(|entry| entry.file_name()).collect())
+        .unwrap_or_default();
+
+    let result = perform_extraction(reader, dest, limits);
+    if result.is_err() {
+        // Safe failure behavior: leave no partially extracted output behind.
+        if let Ok(entries) = std::fs::read_dir(dest) {
+            for entry in entries.flatten() {
+                if preexisting.contains(&entry.file_name()) {
+                    continue;
+                }
+                let path = entry.path();
+                let _ = match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => std::fs::remove_dir_all(&path),
+                    _ => std::fs::remove_file(&path),
+                };
+            }
+        }
+    }
+    result
+}
+
+fn perform_extraction<R: Read>(
+    reader: R,
+    dest: &Path,
+    limits: &ArchiveLimits,
+) -> Result<ExtractionSummary, ArchiveSafetyError> {
     let gz = GzDecoder::new(reader);
     let mut archive = Archive::new(gz);
 

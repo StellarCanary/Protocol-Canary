@@ -15,9 +15,10 @@ canary-core.workspace = true
 canary-fixtures.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 toml.workspace = true
 # Already in the dependency tree through stellar-xdr (same version); used
 # directly to distinguish invalid base64 from invalid XDR and to report the
 # byte offset at which decoding failed.
 base64 = "0.23"
-stellar-xdr = { version = "=28.0.1", features = ["base64", "alloc"] }
+stellar-xdr = { version = "=30.0.0", features = ["base64", "alloc", "serde"] }

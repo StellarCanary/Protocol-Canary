@@ -7,7 +7,10 @@
  * - `innerHTML`, `outerHTML`, `insertAdjacentHTML` and `document.write`
  *   throw if touched, so any HTML sink iscaught at runtime,
  * - localStorage can be a real map or a throwing stub (private browsing),
- * - matchMedia answers the `prefers-color-scheme` query statically.
+ * - navigator.clipboard can be available, absent (an insecure context) or
+ *   refusing the write, because the page must degrade in all three,
+ * - matchMedia answers the `prefers-color-scheme` query statically,
+ * - a modal dialog dismisses on Escape, as a browser does.
  */
 
 import { readFileSync } from "node:fs";
@@ -19,16 +22,33 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerDir = path.join(here, "..");
 
 /* Exactly the element kinds the page is allowed to build: the fact list,
- * the findings and skipped rows, and the collapsed-details blocks. */
-export const ALLOWED_TAGS = new Set(["dt", "dd", "li", "span", "details", "summary", "p"]);
+ * the findings and skipped rows, the collapsed-details blocks, the fixture
+ * detail dialog's controls, and the comparison table's rows and cells. */
+export const ALLOWED_TAGS = new Set([
+  "dt",
+  "dd",
+  "li",
+  "span",
+  "details",
+  "summary",
+  "p",
+  "tr",
+  "td",
+  "button",
+]);
 
 const HTML_TRAPS = ["innerHTML", "outerHTML"];
 
-export function createStubDom({ allowStorage = true, systemDark = false } = {}) {
+export function createStubDom({
+  allowStorage = true,
+  systemDark = false,
+  clipboard = "available",
+} = {}) {
   const createdTags = new Set();
   const attributes = []; // every setAttribute: { element, name, value }
   const focusLog = []; // focused element ids, in order
   const modalOps = []; // "show"/"close" for the dialog
+  const clipboardWrites = []; // every navigator.clipboard.writeText value
   const storageAttempts = { reads: 0, writes: 0 };
   const storage = new Map();
 
@@ -44,6 +64,7 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
       this.files = null;
       this.text = "";
       this.open = false;
+      this.isDialog = false;
       this.parentNode = null;
     }
 
@@ -103,8 +124,6 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
     }
 
     dispatch(type, event = {}) {
-      const handlers = this.listeners.get(type);
-      if (!handlers) return;
       const base = {
         type,
         target: this,
@@ -113,7 +132,14 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
       };
       const merged = Object.assign(base, event);
       merged.target = merged.target ?? this;
-      handlers.forEach((handler) => handler(merged));
+      const handlers = this.listeners.get(type);
+      if (handlers) handlers.forEach((handler) => handler(merged));
+      /* A browser dismisses a modal dialog on Escape without the page
+       * listening; the stub mirrors that so the keyboard contract of the
+       * issue is exercised rather than assumed. */
+      if (type === "keydown" && merged.key === "Escape" && this.isDialog && this.open) {
+        this.close();
+      }
     }
 
     focus() {
@@ -155,6 +181,7 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
     if (byId.has(id)) continue;
     const element = new StubElement(id);
     if (/\bhidden\b/.test(tag[0])) element.hidden = true;
+    if (/^<dialog\b/i.test(tag[0])) element.isDialog = true;
     for (const attr of tag[0].matchAll(/\s([a-zA-Z-]+)="([^"]*)"/g)) {
       if (attr[1] === "id") continue;
       element.attributes.set(attr[1], attr[2]);
@@ -217,6 +244,22 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
     },
   };
 
+  /* The clipboard is environment-provided and can be missing (an
+   * insecure context, a sandbox) or refuse a write (no user
+   * activation), so the page has to cope with all three. */
+  if (clipboard !== "absent") {
+    self.navigator = {
+      clipboard: {
+        writeText(value) {
+          clipboardWrites.push(value);
+          return clipboard === "denied"
+            ? Promise.reject(new Error("NotAllowedError"))
+            : Promise.resolve();
+        },
+      },
+    };
+  }
+
   const appSource = readFileSync(path.join(viewerDir, "app.js"), "utf8");
   const runApp = new Function("self", "document", appSource);
 
@@ -231,6 +274,7 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
     createdTags,
     focusLog,
     modalOps,
+    clipboardWrites,
     storageAttempts,
     storage,
     runApp() {
@@ -239,19 +283,40 @@ export function createStubDom({ allowStorage = true, systemDark = false } = {}) 
   };
 }
 
+/* Let every pending microtask settle: a `File.text()` resolution, or the
+ * promise a clipboard write returns. */
+export async function flush(rounds = 10) {
+  for (let i = 0; i < rounds; i++) await Promise.resolve();
+}
+
 /* Drive a report file through the file input and let all pending promise
  * work settle (File.text() -> then -> render). */
 export async function loadReport(stub, text, size = text.length) {
-  let textCalls = 0;
-  const file = {
+  const picked = fileSize(text, size);
+  stub.byId("file").files = [picked.handle];
+  stub.byId("file").dispatch("change", {});
+  await flush();
+  return { file: picked.handle, textCalls: picked.counter.calls };
+}
+
+/* Drive the optional CA-02 inventory through its own input. */
+export async function loadInventory(stub, text, size = text.length) {
+  const picked = fileSize(text, size);
+  stub.byId("inventory-file").files = [picked.handle];
+  stub.byId("inventory-file").dispatch("change", {});
+  await flush();
+  return { file: picked.handle, textCalls: picked.counter.calls };
+}
+
+/* One counted local file: the tests assert the page reads it exactly once. */
+function fileSize(text, size) {
+  const counter = { calls: 0 };
+  const handle = {
     size,
     text() {
-      textCalls++;
+      counter.calls++;
       return Promise.resolve(text);
     },
   };
-  stub.byId("file").files = [file];
-  stub.byId("file").dispatch("change", {});
-  for (let i = 0; i < 10; i++) await Promise.resolve();
-  return { file, textCalls };
+  return { handle, counter };
 }

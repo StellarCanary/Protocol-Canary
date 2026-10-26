@@ -1,0 +1,73 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "regressions",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 5,
+    "passed": 1,
+    "failed": 2,
+    "warnings": 1,
+    "errors": 1,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "regressed",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "regressed"
+    },
+    {
+      "testId": "fail-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "fail-to-error"
+    },
+    {
+      "testId": "warn-to-error",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warn-to-error"
+    },
+    {
+      "testId": "fail-to-skipped",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "fail-to-skipped"
+    },
+    {
+      "testId": "error-to-skipped",
+      "protocol": 28,
+      "surface": "soroban",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-skipped"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "skip-to-error",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

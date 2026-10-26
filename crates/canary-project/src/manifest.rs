@@ -227,6 +227,48 @@ pub(crate) fn parse_pnpm_workspace_patterns(
         .collect()
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum NpmWorkspaceParseError {
+    InvalidJson,
+    Unsupported,
+}
+
+/// Parses the `workspaces` field of a root `package.json`.
+///
+/// The contract only needs the two npm spellings: an array of strings
+/// (`"workspaces": ["packages/*"]`) and the object form
+/// (`"workspaces": { "packages": ["packages/*"] }`). A `package.json`
+/// without a `workspaces` field is an empty member list, not an error —
+/// the caller can still use the manifest for dependency evidence.
+pub(crate) fn parse_npm_workspace_patterns(
+    raw: &str,
+) -> Result<Vec<String>, NpmWorkspaceParseError> {
+    let value: serde_json::Value =
+        serde_json::from_str(raw).map_err(|_| NpmWorkspaceParseError::InvalidJson)?;
+    let Some(workspaces) = value.get("workspaces") else {
+        return Ok(Vec::new());
+    };
+    let packages = match workspaces {
+        serde_json::Value::Array(_) => workspaces,
+        serde_json::Value::Object(_) => workspaces
+            .get("packages")
+            .ok_or(NpmWorkspaceParseError::Unsupported)?,
+        _ => return Err(NpmWorkspaceParseError::Unsupported),
+    };
+    let Some(sequence) = packages.as_array() else {
+        return Err(NpmWorkspaceParseError::Unsupported);
+    };
+    sequence
+        .iter()
+        .map(|pattern| {
+            pattern
+                .as_str()
+                .map(str::to_string)
+                .ok_or(NpmWorkspaceParseError::Unsupported)
+        })
+        .collect()
+}
+
 /// An error encountered while parsing a `go.mod` file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GoModError {

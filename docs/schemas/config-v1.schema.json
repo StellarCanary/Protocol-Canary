@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/Protocol-Canary/main/docs/schemas/config-v1.schema.json",
+  "title": "Stellar Protocol Canary project configuration, version 1",
+  "description": "The `.stellar-canary.toml` contract, validated against the Rust loader in `crates/canary-config`. Unlike the report and inventory schemas this one is closed: every table sets `additionalProperties: false`, because the loader uses `#[serde(deny_unknown_fields)]` and a silently ignored key could drop a pin or disable nothing at all. A TOML file is converted to JSON (tables to objects, integers to integers, booleans to booleans, and a date, which no key of this file accepts, to null so that both sides refuse it) before validation. `crates/canary-config/tests/schema_parity.rs` pins the two sides together: nothing the schema accepts is something the loader refuses, and the only divergence it allows runs the other way — a `network`, `rpc_url` or `fixtures_dir` shape this file documents but the loader stores verbatim, so that an explicit `--network`/`--rpc-url`/`--fixtures-dir` still outranks a bad stored value (issue #474) while an editor or a CI job sees the shape error first (issue #455). `crates/canary-config/tests/schema.rs` holds this schema's own accept-and-reject unit tests.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "protocol"],
+  "properties": {
+    "version": {
+      "description": "The configuration format version. `canary_config::loader::validate` rejects any other value as an unsupported version, so this schema accepts exactly the version it documents.",
+      "type": "integer",
+      "const": 1
+    },
+    "protocol": {
+      "description": "The target Stellar protocol version for this project. Required, and zero is rejected by the loader as an invalid configuration rather than a parse failure. The range is the loader's `u32`.",
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 4294967295
+    },
+    "network": {
+      "description": "The network live checks run against: `testnet`, `mainnet`, `futurenet`, or a custom name. Optional; absent means the CLI decides, cascading `--network` over the built-in `testnet` default. A name is one token: it starts alphanumeric and continues with letters, digits, `.`, `_` or `-`. The loader stores the string verbatim, so an unusable name only surfaces at run time; the pattern here is what an editor or a CI gate reports first.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "rpc_url": {
+      "description": "The Stellar RPC endpoint for live checks, for example `https://soroban-testnet.stellar.org`. Optional; absent means the CLI decides, cascading `--rpc-url` over the resolved network's built-in default. Must be an absolute `http` or `https` URL with a non-empty remainder after `://` made only of URL characters, so whitespace, a double quote and an angle bracket are all invalid; another scheme such as `ftp://`, and an authority-less `https://`, is not a configuration value. A bracketed IPv6 literal (`http://[::1]:8000`) is outside this pattern. The loader performs no scheme or reachability check and stores the value verbatim, because a bad stored value must not stop a valid `--rpc-url` from winning; this schema is where the endpoint shape is pinned.",
+      "type": "string",
+      "pattern": "^https?://[A-Za-z0-9._~%:#/?@!$&'()*+,;=-]+$"
+    },
+    "fixtures_dir": {
+      "description": "The directory holding fixture files, relative to the project root, for example `fixtures` or `tests/fixtures`. Optional; absent means the CLI decides, cascading `--fixtures-dir` over the built-in `fixtures` default. Must be a non-empty relative path: segments of letters, digits, `.`, `_`, `~`, `%`, `+`, `-`, spaces and `/` or `\\` separators. It may not start with a separator and may not carry a drive prefix, so an absolute path is not a value for this key — name one with `--fixtures-dir`. The loader turns the string into an operating-system path without checking it, so a path the platform happens to accept but this file does not document is a runtime finding, not a schema one.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._~%+-][A-Za-z0-9 ._~%+\\-/\\\\]*$"
+    },
+    "project": {
+      "description": "How to classify the project under test. Optional; every member has a default, so an absent table means `type = \"auto\"`.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "`auto` runs the built-in detection; any other value overrides it with a user-declared project type. The strings are the loader's `ProjectTypeSetting`, and the five explicit ones are the `canary_core::ProjectType` names.",
+          "type": "string",
+          "enum": ["auto", "soroban", "rpc-consumer", "stellar-sdk", "generic-stellar", "unknown"],
+          "default": "auto"
+        }
+      }
+    },
+    "tests": {
+      "description": "Which surfaces are enabled for this project. Optional; an absent member defaults to `true`, exactly as the loader's `#[serde(default = \"default_true\")]` does.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "xdr": {
+          "description": "Enable the offline XDR surface. Defaults to true.",
+          "type": "boolean",
+          "default": true
+        },
+        "rpc": {
+          "description": "Enable the live RPC surface. Defaults to true.",
+          "type": "boolean",
+          "default": true
+        },
+        "soroban": {
+          "description": "Enable the Soroban simulation surface. Defaults to true.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "not": {
+        "description": "The loader's cross-field rule: a configuration that turns every surface off is invalid, because a run that executes nothing cannot claim to have checked anything. Only the case where all three are explicitly false is rejected; leaving any of them absent keeps its default of true.",
+        "type": "object",
+        "required": ["xdr", "rpc", "soroban"],
+        "properties": {
+          "xdr": { "const": false },
+          "rpc": { "const": false },
+          "soroban": { "const": false }
+        }
+      }
+    },
+    "policy": {
+      "description": "How results turn into the pass/warning/fail decision. Optional; every member defaults to false.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "warnings_are_failures": {
+          "description": "Treat warning results as failures for the overall status and exit code. Defaults to false.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    }
+  }
+}

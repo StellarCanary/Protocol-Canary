@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "accepted": [
+    {"id": "valid-xdr-decode-success", "path": "valid/xdr-decode-success.toml", "surface": "xdr", "covers": ["decode-success"]},
+    {"id": "valid-xdr-roundtrip", "path": "valid/xdr-roundtrip.toml", "surface": "xdr", "covers": ["roundtrip"]},
+    {"id": "valid-xdr-encode-equals", "path": "valid/xdr-encode-equals.toml", "surface": "xdr", "covers": ["encode-equals"]},
+    {"id": "valid-xdr-decode-failure", "path": "valid/xdr-decode-failure.toml", "surface": "xdr", "covers": ["decode-failure assertion"]},
+    {"id": "valid-xdr-oversized-payload", "path": "valid/xdr-oversized-payload.toml", "surface": "xdr", "covers": ["1 KiB inline payload"]},
+    {"id": "valid-rpc-field-exists", "path": "valid/rpc-field-exists.toml", "surface": "rpc", "covers": ["field-exists"]},
+    {"id": "valid-rpc-field-type", "path": "valid/rpc-field-type.toml", "surface": "rpc", "covers": ["field-type"]},
+    {"id": "valid-rpc-field-equals", "path": "valid/rpc-field-equals.toml", "surface": "rpc", "covers": ["field-equals"]},
+    {"id": "valid-rpc-field-absent", "path": "valid/rpc-field-absent.toml", "surface": "rpc", "covers": ["field-absent"]},
+    {"id": "valid-soroban-simulation-success", "path": "valid/soroban-simulation-success.toml", "surface": "soroban", "covers": ["simulation-success"]},
+    {"id": "valid-soroban-simulation-error", "path": "valid/soroban-simulation-error.toml", "surface": "soroban", "covers": ["simulation-error"]},
+    {"id": "valid-soroban-empty-args-boundary", "path": "valid/soroban-empty-args-boundary.toml", "surface": "soroban", "covers": ["empty args", "sequence number zero"]}
+  ],
+  "rejected": [
+    {"id": "invalid-xdr-toml-syntax", "path": "invalid/xdr-toml-syntax.toml", "surface": "xdr", "error_code": "invalid-toml", "diagnostic_contains": "invalid TOML"},
+    {"id": "invalid-xdr-missing-type", "path": "invalid/xdr-missing-type.toml", "surface": "xdr", "error_code": "missing-required-field", "diagnostic_contains": "missing required field 'type'"},
+    {"id": "invalid-xdr-base64", "path": "invalid/xdr-base64.toml", "surface": "xdr", "error_code": "invalid-base64", "diagnostic_contains": "field 'value_base64' is not valid base64"},
+    {"id": "invalid-xdr-encode-equals-missing-expected", "path": "invalid/xdr-encode-equals-missing-expected.toml", "surface": "xdr", "error_code": "missing-conditional-field", "diagnostic_contains": "missing required field 'expected_base64'"},
+    {"id": "invalid-rpc-missing-method", "path": "invalid/rpc-missing-method.toml", "surface": "rpc", "error_code": "missing-required-field", "diagnostic_contains": "missing required field 'method'"},
+    {"id": "invalid-rpc-unsupported-method", "path": "invalid/rpc-unsupported-method.toml", "surface": "rpc", "error_code": "unsupported-rpc-method", "diagnostic_contains": "field 'method' must be one of"},
+    {"id": "invalid-rpc-empty-assertions", "path": "invalid/rpc-empty-assertions.toml", "surface": "rpc", "error_code": "missing-rpc-assertions", "diagnostic_contains": "'assert' must be a non-empty array of tables"},
+    {"id": "invalid-rpc-assert-missing-field", "path": "invalid/rpc-assert-missing-field.toml", "surface": "rpc", "error_code": "missing-rpc-assert-field", "diagnostic_contains": "assert[0] missing required non-empty 'field'"},
+    {"id": "invalid-soroban-missing-expect", "path": "invalid/soroban-missing-expect.toml", "surface": "soroban", "error_code": "missing-required-field", "diagnostic_contains": "missing required field 'expect'"},
+    {"id": "invalid-soroban-sequence-type", "path": "invalid/soroban-sequence-type.toml", "surface": "soroban", "error_code": "wrong-field-type", "diagnostic_contains": "field 'sequence_number' must be of type int"},
+    {"id": "invalid-soroban-unknown-expect-key", "path": "invalid/soroban-unknown-expect-key.toml", "surface": "soroban", "error_code": "unknown-soroban-expect-key", "diagnostic_contains": "unexpected key(s) 'message_contain' in 'expect'"},
+    {"id": "invalid-soroban-message-type", "path": "invalid/soroban-message-type.toml", "surface": "soroban", "error_code": "wrong-soroban-message-type", "diagnostic_contains": "expect.message_contains must be a string"}
+  ]
+}

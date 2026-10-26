@@ -1,0 +1,64 @@
+{
+  "case": "v0-1-1-baseline",
+  "pair": "v0-1-1-baseline",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.1.1",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "p28-xdr-cap83",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "p28-xdr-invalid",
+        "from": "fail",
+        "to": "pass",
+        "classification": "resolved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "p28-xdr-valid",
+        "from": "pass",
+        "to": "fail",
+        "classification": "regressed",
+        "regression": true,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 1,
+      "resolved": 1,
+      "added": 1,
+      "removed": 0,
+      "unchanged": 0,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

@@ -175,7 +175,9 @@ fn allow_empty_does_not_hide_a_failure() {
     let dir = project();
     dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("p28-xdr-1", 28, "").replace(VALID_STELLAR_VALUE_BASE64, "not-valid-xdr!!"),
+        // `AAAA` is canonical base64 that is not a complete StellarValue:
+        // the fixture loads and its decode assertion fails at run time.
+        &xdr_fixture("p28-xdr-1", 28, "").replace(VALID_STELLAR_VALUE_BASE64, "AAAA"),
     );
 
     let output = run_in(&dir.path, &["check", "--allow-empty"]);

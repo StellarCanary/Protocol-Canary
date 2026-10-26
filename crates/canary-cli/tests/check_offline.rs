@@ -1,6 +1,8 @@
 mod support;
 
-use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{
+    run_in, stderr, stdout, TempProject, DECODE_FAILURE_BASE64, VALID_STELLAR_VALUE_BASE64,
+};
 
 const OFFLINE_CONFIG: &str = r#"
 version = 1
@@ -40,7 +42,7 @@ fn a_failing_xdr_fixture_exits_one_and_explains_the_failure() {
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
     dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("p28-xdr-1", "decode-success", "not-valid-xdr-bytes!!!"),
+        &xdr_fixture("p28-xdr-1", "decode-success", DECODE_FAILURE_BASE64),
     );
 
     let output = run_in(&dir.path, &["check"]);
@@ -169,7 +171,7 @@ fn a_real_compatibility_failure_is_reported_consistently_in_terminal_and_json() 
     let fail_fixture = xdr_fixture(
         "p28-xdr-regression-fail",
         "decode-success",
-        "not-valid-xdr-bytes!!!",
+        DECODE_FAILURE_BASE64,
     );
 
     let terminal_dir = TempProject::new("check-fail-terminal");
@@ -235,7 +237,7 @@ fn quiet_flag_prints_exactly_one_status_line_for_pass_and_fail_runs() {
     fail_dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
     fail_dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("p28-xdr-1", "decode-success", "not-valid-xdr-bytes!!!"),
+        &xdr_fixture("p28-xdr-1", "decode-success", DECODE_FAILURE_BASE64),
     );
 
     let fail_output = run_in(&fail_dir.path, &["check", "--quiet"]);

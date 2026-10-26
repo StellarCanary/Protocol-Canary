@@ -203,7 +203,8 @@ mod tests {
                 | ExitCode::ConfigurationError
                 | ExitCode::ExecutionError
                 | ExitCode::InvalidFixture
-                | ExitCode::InternalError => {}
+                | ExitCode::InternalError
+                | ExitCode::VerificationFailure => {}
             }
         }
     }

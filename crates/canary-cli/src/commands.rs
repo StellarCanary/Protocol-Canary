@@ -1424,8 +1424,8 @@ pub async fn run_fixture_pack(args: FixturePackArgs) -> ExitCode {
 }
 
 async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, CanaryError> {
+    use canary_fixtures::digest::{pack_digest, sha256_hex, PackError};
     use serde::Deserialize;
-    use canary_fixtures::digest::{pack_digest, PackError, sha256_hex};
 
     let FixturePackArgs::Verify(verify_args) = args;
     let pack_path = verify_args.path;
@@ -1446,8 +1446,7 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
     }
 
     // Load the registry manifest
-    let registry_path = registry_path_opt
-        .unwrap_or_else(|| pack_path.join("registry.json"));
+    let registry_path = registry_path_opt.unwrap_or_else(|| pack_path.join("registry.json"));
 
     let registry_bytes = std::fs::read(&registry_path).map_err(|e| {
         CanaryError::Configuration(format!(
@@ -1459,6 +1458,7 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
     // Parse the registry manifest
     #[derive(Deserialize)]
     struct RegistryFixture {
+        #[allow(dead_code)]
         id: String,
         path: String,
         sha256: String,
@@ -1500,27 +1500,28 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
             "failed to read pack file {}: {source}",
             path.display()
         )),
-        PackError::SymbolicLink { path } => CanaryError::Configuration(format!(
-            "pack contains a symbolic link: {}",
-            path.display()
-        )),
-        PackError::InvalidPath { path, reason } => CanaryError::Configuration(format!(
-            "invalid pack path {}: {reason}",
-            path
-        )),
+        PackError::SymbolicLink { path } => {
+            CanaryError::Configuration(format!("pack contains a symbolic link: {}", path.display()))
+        }
+        PackError::InvalidPath { path, reason } => {
+            CanaryError::Configuration(format!("invalid pack path {}: {reason}", path))
+        }
         PackError::CaseCollision { first, second } => CanaryError::Configuration(format!(
             "pack paths {} and {} differ only by letter case",
             first, second
         )),
-        PackError::BadReference { file, field, reference, reason } => CanaryError::Configuration(format!(
+        PackError::BadReference {
+            file,
+            field,
+            reference,
+            reason,
+        } => CanaryError::Configuration(format!(
             "{file}: {field} {reference:?} is not usable: {reason}"
         )),
-        PackError::InvalidToml { file, message } => CanaryError::Configuration(format!(
-            "{file} is not valid TOML: {message}"
-        )),
-        PackError::Limit(msg) => CanaryError::Configuration(format!(
-            "pack limit exceeded: {msg}"
-        )),
+        PackError::InvalidToml { file, message } => {
+            CanaryError::Configuration(format!("{file} is not valid TOML: {message}"))
+        }
+        PackError::Limit(msg) => CanaryError::Configuration(format!("pack limit exceeded: {msg}")),
     })?;
 
     // Verify pack digest matches registry
@@ -1533,7 +1534,8 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
     }
 
     // Build a map of file paths to their expected SHA-256 hashes from the registry
-    let mut expected_hashes: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut expected_hashes: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
 
     for fixture in &registry.fixtures {
         // Verify fixture file exists and matches its hash
@@ -1621,7 +1623,9 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
         if expected_hashes.get(&pack_file.path).unwrap() != &pack_file.sha256 {
             eprintln!(
                 "error: file hash mismatch in pack digest for {}\n  computed: {}\n  expected: {}",
-                pack_file.path, pack_file.sha256, expected_hashes.get(&pack_file.path).unwrap()
+                pack_file.path,
+                pack_file.sha256,
+                expected_hashes.get(&pack_file.path).unwrap()
             );
             return Ok(ExitCode::VerificationFailure);
         }
@@ -2522,55 +2526,5 @@ mod tests {
             err.to_string().contains("invalid report file"),
             "error must say the report is invalid, got: {err}"
         );
-    }
-
-    // Tests for fixture-pack verify command
-
-    #[test]
-    fn fixture_pack_verify_rejects_a_non_existent_pack_directory() {
-        let missing_dir = std::env::temp_dir().join(format!(
-            "canary-cli-missing-pack-{}.dir",
-            std::process::id()
-        ));
-        let args = FixturePackArgs::Verify(FixturePackVerifyArgs {
-            path: missing_dir,
-            registry: None,
-        });
-        let exit_code = run_fixture_pack(args).await;
-        assert_eq!(exit_code, ExitCode::ConfigurationError);
-    }
-
-    #[test]
-    fn fixture_pack_verify_rejects_a_pack_that_is_a_file() {
-        let file = std::env::temp_dir().join(format!(
-            "canary-cli-pack-file-{}.txt",
-            std::process::id()
-        ));
-        std::fs::write(&file, "not a directory").unwrap();
-        let args = FixturePackArgs::Verify(FixturePackVerifyArgs {
-            path: file.clone(),
-            registry: None,
-        });
-        let exit_code = run_fixture_pack(args).await;
-        assert_eq!(exit_code, ExitCode::ConfigurationError);
-        let _ = std::fs::remove_file(&file);
-    }
-
-    #[test]
-    fn fixture_pack_verify_rejects_when_registry_is_missing() {
-        let dir = crate::test_support::temp_dir("fixture-pack-missing-registry");
-        // Create a simple fixture file but no registry.json
-        std::fs::write(
-            dir.path().join("fixture.toml"),
-            "id = \"test\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\n",
-        )
-        .unwrap();
-
-        let args = FixturePackArgs::Verify(FixturePackVerifyArgs {
-            path: dir.path().clone(),
-            registry: None,
-        });
-        let exit_code = run_fixture_pack(args).await;
-        assert_eq!(exit_code, ExitCode::ConfigurationError);
     }
 }

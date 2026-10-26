@@ -497,9 +497,222 @@
     }
   }
 
+  // ---------------------------------------------------------------
+  // Fixture provenance for the detail modal (E-086, issue #462)
+  // ---------------------------------------------------------------
+
+  /* CA-02 bumps `inventoryVersion` on a breaking change to the shape;
+   * unknown extra fields are ignored (CA-02 section 5). */
+  var INVENTORY_VERSION = 1;
+
+  /* One string field of an object, or `null`. An empty string carries no
+   * information, so it reads the same as absent. */
+  function stringField(value, key) {
+    if (!isObject(value)) return null;
+    var item = value[key];
+    return typeof item === "string" && item !== "" ? item : null;
+  }
+
+  function integerField(value, key) {
+    if (!isObject(value)) return null;
+    return isInteger(value[key]) && value[key] >= 0 ? value[key] : null;
+  }
+
+  /* CF-01 reserves `results[].verification` as a copy of the fixture's
+   * CF-04 record and says it is never synthesized; a value that is not an
+   * object is therefore no record, not a record of unknown shape. Absence
+   * is the unknown state (CF-04 section 3), which CF-08 section 2.3 makes
+   * the viewer show rather than read as verified. */
+  function verificationRecord(result) {
+    return isObject(result) && isObject(result.verification) ? result.verification : null;
+  }
+
+  /* The verifier as one readable name: `stellar-canary 0.2.0`. A record
+   * with neither half gives what it carries. */
+  function verifierLabel(record) {
+    if (!isObject(record)) return null;
+    var name = stringField(record.verifier, "name");
+    var version = stringField(record.verifier, "version");
+    if (name !== null && version !== null) return name + " " + version;
+    return name !== null ? name : version;
+  }
+
+  /* One sentence naming what is known about a fixture's verification. The
+   * wording is fixed so a reader can never take a stale, mismatched or
+   * missing record for a pass: `matched` is the only state that reads as
+   * verified, and a mismatched record says it is not trusted (CF-04). */
+  function verificationState(record) {
+    if (record === null) {
+      return "No verification information: this report carries no verification record for this fixture.";
+    }
+    var method = stringField(record, "method");
+    var how = method === null ? "a record with no stated method" : "a " + method + " record";
+    var outcome = stringField(record, "outcome");
+    if (outcome === "matched") {
+      return "Verified by " + (method === null ? "an unstated method" : method) + ".";
+    }
+    if (outcome === null) return "Unverified: " + how + ", with no stated outcome.";
+    return "Unverified: " + how + " with outcome " + outcome + ".";
+  }
+
+  /* The report-level line in the facts list. It counts what the report
+   * actually carries, so a run whose fixtures were never verified keeps
+   * the "no verification information" wording instead of an empty count. */
+  function verificationSummary(report) {
+    var results = isObject(report) && Array.isArray(report.results) ? report.results : [];
+    var withRecord = 0;
+    for (var i = 0; i < results.length; i++) {
+      if (verificationRecord(results[i]) !== null) withRecord++;
+    }
+    if (withRecord === 0) return "no verification information";
+    return withRecord + " of " + results.length + " results carry a verification record";
+  }
+
+  /* CF-01 reserves `fixturePack` as
+   * `{ digest: "sha256:<hex>", registryVersion, source, revision }`. The
+   * viewer shows the digest string the report carries (CF-08 section 5:
+   * "shows if present") and computes nothing. */
+  function packDigest(report) {
+    return isObject(report) ? stringField(report.fixturePack, "digest") : null;
+  }
+
+  /* The inventory is a second local file, never fetched: it is the only
+   * place a fixture's category, description and required capabilities
+   * exist (CA-02 section 3), and a report carries none of them. Validation
+   * is deliberately permissive about fields the viewer does not show and
+   * strict about the ones it keys on. */
+  function parseInventory(text) {
+    var value;
+    try {
+      value = JSON.parse(text);
+    } catch (error) {
+      return fail("the inventory is not valid JSON");
+    }
+    if (!isObject(value)) return fail("the inventory must be a JSON object");
+    if (value.inventoryVersion !== INVENTORY_VERSION) {
+      return fail(
+        "inventoryVersion must be " + INVENTORY_VERSION + " (found " + describe(value.inventoryVersion) + ")"
+      );
+    }
+    if (!Array.isArray(value.fixtures)) return fail("fixtures must be an array");
+    var byId = Object.create(null);
+    for (var i = 0; i < value.fixtures.length; i++) {
+      var fixture = value.fixtures[i];
+      var where = "fixtures[" + i + "]";
+      if (!isObject(fixture)) return fail(where + " must be an object");
+      if (typeof fixture.id !== "string") return fail(where + ".id must be a string");
+      if (byId[fixture.id] !== undefined) {
+        return fail(where + " repeats the fixture id " + fixture.id);
+      }
+      byId[fixture.id] = fixture;
+    }
+    return {
+      ok: true,
+      inventory: {
+        document: value,
+        byId: byId,
+        /* CA-02 lists one protocol's fixtures, so the document is only
+         * evidence about a report that targets the same protocol. */
+        protocol: integerField(value, "protocol"),
+      },
+    };
+  }
+
+  /* CA-02 ids are unique across the directory, so the join is by id; the
+   * surface has to agree as well, because an entry describing a different
+   * surface is not evidence about this result. A result known only by its
+   * `testId` has no fixture to look up. */
+  function inventoryFixture(inventory, fixtureId, surface) {
+    if (!isObject(inventory) || typeof fixtureId !== "string") return null;
+    var entry = inventory.byId[fixtureId];
+    if (entry === undefined) return null;
+    var entrySurface = stringField(entry, "surface");
+    if (entrySurface !== null && typeof surface === "string" && entrySurface !== surface) {
+      return null;
+    }
+    return entry;
+  }
+
+  /* CA-02's `requiredCapabilities` is an array of strings and `[]` means
+   * "none required", which is a different answer from "the inventory does
+   * not say" (`null`). */
+  function capabilityList(fixture) {
+    if (!isObject(fixture) || !Array.isArray(fixture.requiredCapabilities)) return null;
+    var names = [];
+    for (var i = 0; i < fixture.requiredCapabilities.length; i++) {
+      if (typeof fixture.requiredCapabilities[i] === "string") {
+        names.push(fixture.requiredCapabilities[i]);
+      }
+    }
+    return names;
+  }
+
+  /* One sentence naming why an inventory-sourced value is missing. The
+   * modal always shows the row, so the reader learns which of the four
+   * situations they are in instead of finding a blank cell. */
+  function inventoryAbsence(inventory, fixture, protocol) {
+    if (!isObject(inventory)) return "no fixture inventory loaded";
+    if (inventory.protocol !== null && protocol !== null && inventory.protocol !== protocol) {
+      return "the loaded inventory lists protocol " + inventory.protocol + ", not " + protocol;
+    }
+    if (fixture === null) return "no inventory entry for this fixture";
+    return "not in this inventory";
+  }
+
+  /* Everything the detail modal can show about one fixture, joined from
+   * the three contracts that each hold a piece of it: CF-01's copy of the
+   * CF-04 record, CF-01's reserved pack digest, and the CA-02 inventory.
+   * `entry` is one `results[]` item or one `skipped[]` item.
+   *
+   * Every field is `null` when its source does not carry it. The modal
+   * then states the absence (issue #462 negative case: an unverified
+   * fixture must be visibly unverified, not blank), so no value is ever
+   * invented and the row set does not depend on what a report happens to
+   * carry. */
+  function fixtureDetail(report, entry, inventory) {
+    var record = verificationRecord(entry);
+    var id = isObject(entry) && typeof entry.fixtureId === "string" ? entry.fixtureId : null;
+    var surface = isObject(entry) ? entry.surface : null;
+    var fixture = id === null ? null : inventoryFixture(inventory, id, surface);
+    var target = isObject(report) && isInteger(report.targetProtocol) ? report.targetProtocol : null;
+
+    var digest = packDigest(report);
+    if (digest === null && isObject(inventory)) {
+      digest = stringField(inventory.document, "packDigest");
+    }
+    var sha256 = stringField(record, "fixtureSha256");
+    if (sha256 === null) sha256 = stringField(fixture, "sha256");
+
+    var recordNetwork = isObject(record) ? record.network : null;
+    return {
+      identity: id === null ? stringField(entry, "testId") : id,
+      surface: stringField(entry, "surface"),
+      hasRecord: record !== null,
+      state: verificationState(record),
+      method: stringField(record, "method"),
+      outcome: stringField(record, "outcome"),
+      checkedAt: stringField(record, "checkedAt"),
+      verifier: verifierLabel(record),
+      endpointHost: stringField(record, "endpointHost"),
+      evidenceRef: stringField(record, "evidenceRef"),
+      evidenceProtocol: integerField(recordNetwork, "observedProtocol"),
+      sha256: sha256,
+      category: stringField(fixture, "category"),
+      description: stringField(fixture, "description"),
+      capabilities: capabilityList(fixture),
+      packDigest: digest,
+      targetProtocol: target,
+      observedProtocol: isObject(report) ? observedProtocol(report) : null,
+      inventoryLoaded: isObject(inventory),
+      inventoryMatched: fixture !== null,
+      inventoryAbsence: inventoryAbsence(inventory, fixture, target),
+    };
+  }
+
   var api = {
     MAX_BYTES: MAX_BYTES,
     STORAGE_PREFIX: STORAGE_PREFIX,
+    INVENTORY_VERSION: INVENTORY_VERSION,
     validate: validate,
     parseReport: parseReport,
     deriveCounts: deriveCounts,
@@ -510,7 +723,14 @@
     classifyTransition: classifyTransition,
     stateIndex: stateIndex,
     compareReports: compareReports,
-    verdictHeading: verdictHeading
+    verdictHeading: verdictHeading,
+    verificationRecord: verificationRecord,
+    verificationState: verificationState,
+    verificationSummary: verificationSummary,
+    packDigest: packDigest,
+    parseInventory: parseInventory,
+    inventoryFixture: inventoryFixture,
+    fixtureDetail: fixtureDetail,
   };
 
   if (typeof module !== "undefined" && module.exports) module.exports = api;

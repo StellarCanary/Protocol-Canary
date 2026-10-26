@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "cached-results",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 5,
+    "passed": 4,
+    "failed": 1,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "cache-to-cache",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "cache-to-cache",
+      "source": "cache"
+    },
+    {
+      "testId": "cache-to-live",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "cache-to-live",
+      "source": "live"
+    },
+    {
+      "testId": "live-to-cache",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "live-to-cache",
+      "source": "cache"
+    },
+    {
+      "testId": "no-source-change",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "no-source-change",
+      "source": "live"
+    },
+    {
+      "testId": "re-missed",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "re-missed",
+      "source": "cache"
+    }
+  ]
+}

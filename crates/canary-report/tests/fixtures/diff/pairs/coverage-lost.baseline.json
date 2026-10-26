@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "coverage-lost",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 5,
+    "passed": 2,
+    "failed": 1,
+    "warnings": 2,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "removed",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "removed"
+    },
+    {
+      "testId": "warn-to-skipped",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warn-to-skipped"
+    },
+    {
+      "testId": "removed-warning",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "removed-warning"
+    },
+    {
+      "testId": "unchanged",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "unchanged"
+    },
+    {
+      "testId": "skipped-good",
+      "protocol": 28,
+      "surface": "soroban",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skipped-good"
+    }
+  ]
+}

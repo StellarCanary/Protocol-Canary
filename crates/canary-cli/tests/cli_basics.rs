@@ -22,6 +22,8 @@ fn help_lists_every_subcommand() {
         "fixtures",
         "report",
         "diff",
+        "cache",
+        "config",
         "lock",
         "completions",
         "version",

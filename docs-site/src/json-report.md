@@ -118,3 +118,15 @@ The same JSON report can be opened in the static
 `/viewer/` on this site. Drop the file onto that page: it is validated
 in the browser, shown as an accessible findings list, and never
 uploaded anywhere.
+
+Selecting a fixture id in that list opens a detail dialog with the
+provenance the report carries: the fixture SHA-256, the pack digest, the
+target and observed protocol numbers, and the verification record (its
+method, outcome, timestamp, verifier, endpoint host and evidence
+reference), with a copy control for the two hashes. Every field the file
+omits is named as missing rather than guessed, so a report with no
+`results[].verification` says there is no verification information. The
+dialog can also show a fixture's category, description and required
+capabilities, which a report does not carry: choose the matching
+`stellar-canary fixtures --format json` output in the optional second
+file picker, and it stays local too.

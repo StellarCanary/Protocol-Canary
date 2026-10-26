@@ -72,7 +72,7 @@ pub fn load(path: &Path) -> Result<ConfigFile, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    parse(&raw, path)
+    parse_config(&raw, path)
 }
 
 /// Looks for `.stellar-canary.toml` in `root` and loads it if present.
@@ -88,7 +88,13 @@ pub fn load_from_root(root: &Path) -> Result<Option<ConfigFile>, ConfigError> {
     load(&path).map(Some)
 }
 
-fn parse(raw: &str, path: &Path) -> Result<ConfigFile, ConfigError> {
+/// Parses and validates configuration text. `path` is only used in diagnostics.
+///
+/// This is [`load`] without the filesystem, so a caller that already holds the
+/// text — a documentation test, an editor integration, the schema parity suite
+/// — gets exactly what loading a file would have given, unknown-field
+/// rejection and the version, protocol and surface rules included.
+pub fn parse_config(raw: &str, path: &Path) -> Result<ConfigFile, ConfigError> {
     let config: ConfigFile = toml::from_str(raw).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
         source: Box::new(source),

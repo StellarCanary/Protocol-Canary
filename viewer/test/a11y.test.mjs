@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createStubDom, loadReport } from "./stub-dom.mjs";
+import { createStubDom, loadReport, loadInventory, flush } from "./stub-dom.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const viewerDir = path.join(here, "..");
@@ -372,6 +372,237 @@ test("an invalid report hides the findings view and keeps the reading order", as
   assert.equal(stub.byId("skipped-section").hidden, true);
   assert.equal(stub.byId("invalid-reason").hidden, false);
   assert.equal(stub.byId("facts").hidden, true);
+});
+
+/* --- the fixture detail dialog (E-086 / issue #462) --- */
+
+/* One CF-04 record, copied into the report the way CF-01 reserves. */
+const RECORD = {
+  verificationVersion: 1,
+  fixtureId: "f2",
+  fixtureSha256: "e".repeat(64),
+  method: "live-simulation",
+  checkedAt: "2026-10-01T00:00:00Z",
+  network: {
+    name: "testnet",
+    passphrase: "Test SDF Network ; September 2015",
+    observedProtocol: 28,
+  },
+  endpointHost: "rpc.example.invalid",
+  verifier: { name: "stellar-canary", version: "0.2.0" },
+  evidenceRef: "evidence/f2.json",
+  outcome: "matched",
+};
+
+function verifiedReport() {
+  const base = report();
+  base.results[1] = { ...base.results[1], verification: RECORD };
+  base.fixturePack = {
+    digest: "sha256:" + "aa".repeat(32),
+    registryVersion: 1,
+    source: "directory",
+    revision: null,
+  };
+  return base;
+}
+
+const INVENTORY = {
+  inventoryVersion: 1,
+  toolVersion: "0.2.0",
+  fixtureFormat: 1,
+  protocol: 28,
+  directoryFound: true,
+  counts: { total: 1, xdr: 0, rpc: 1, soroban: 0 },
+  otherProtocols: {},
+  fixtures: [
+    {
+      id: "f2",
+      protocol: 28,
+      surface: "rpc",
+      category: "transaction",
+      description: "simulateHostFunction probe",
+      path: "rpc/f2.toml",
+      requiredCapabilities: ["rpc-client", "wasm-artifact"],
+    },
+  ],
+};
+
+/* The identity control of the first card of one readiness group. */
+function identityOf(stub, group) {
+  return stub.byId(group + "-list").children[0].children[2];
+}
+
+function detailText(stub) {
+  return stub.byId("fixture-facts").textContent;
+}
+
+function copyButtons(stub) {
+  return stub
+    .byId("fixture-facts")
+    .children.filter((cell) => cell.tagName === "DD")
+    .reduce((all, cell) => all.concat(cell.children.filter((n) => n.tagName === "BUTTON")), []);
+}
+
+test("the fixture id is a real button that opens the detail dialog", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+
+  const identity = identityOf(stub, "attention");
+  assert.equal(identity.tagName, "BUTTON");
+  assert.equal(identity.getAttribute("type"), "button");
+  assert.equal(identity.getAttribute("class"), "identity");
+  assert.equal(identity.textContent, "f2");
+  // The accessible name carries the visible text (WCAG 2.5.3) and the
+  // surface, so ten fixtures with the same tail are still distinguishable.
+  assert.equal(identity.getAttribute("aria-label"), "Show detail for rpc/f2");
+
+  identity.dispatch("click", {});
+  assert.deepEqual(stub.modalOps.slice(-1), ["show"]);
+  assert.equal(stub.byId("fixture-detail").open, true);
+  assert.equal(stub.byId("fixture-detail-title").textContent, "Fixture rpc/f2");
+  assert.equal(stub.byId("fixture-verification").textContent, "Verified by live-simulation.");
+  assert.equal(stub.byId("fixture-verification").getAttribute("data-verification"), "verified");
+
+  const facts = detailText(stub);
+  for (const value of [
+    "e".repeat(64),
+    "sha256:" + "aa".repeat(32),
+    "live-simulation",
+    "matched",
+    "2026-10-01T00:00:00Z",
+    "stellar-canary 0.2.0",
+    "rpc.example.invalid",
+    "evidence/f2.json",
+    "target 28, no protocol observed",
+    "evidence observed 28",
+  ]) {
+    assert.ok(facts.includes(value), "the dialog shows " + value);
+  }
+});
+
+test("Escape, the Close button and the backdrop dismiss the detail dialog", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+  const identity = identityOf(stub, "attention");
+  const dialog = stub.byId("fixture-detail");
+
+  identity.dispatch("click", {});
+  // Escape is the keyboard contract of the issue; a modal <dialog> is
+  // dismissed by the browser, which the stub mirrors.
+  dialog.dispatch("keydown", { key: "Escape" });
+  assert.equal(dialog.open, false);
+
+  identity.dispatch("click", {});
+  stub.byId("close-fixture").dispatch("click", {});
+  assert.equal(dialog.open, false);
+
+  identity.dispatch("click", {});
+  dialog.dispatch("click", { target: dialog });
+  assert.equal(dialog.open, false);
+
+  identity.dispatch("click", {});
+  dialog.dispatch("click", { target: stub.byId("fixture-facts") });
+  assert.equal(dialog.open, true, "a click on the dialog's own content stays open");
+});
+
+test("an unverified fixture states it plainly and keeps the whole row set", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(report()));
+
+  identityOf(stub, "ready").dispatch("click", {});
+  assert.equal(stub.byId("fixture-verification").getAttribute("data-verification"), "unverified");
+  assert.match(
+    stub.byId("fixture-verification").textContent,
+    /^No verification information: this report carries no verification record for this fixture\.$/,
+  );
+
+  const cells = stub.byId("fixture-facts").children;
+  assert.equal(cells.length, 24, "the same twelve dt/dd pairs whatever the report carries");
+  const facts = detailText(stub);
+  assert.ok(facts.includes("no verification record in this report"));
+  assert.ok(facts.includes("no SHA-256 in this report or inventory"));
+  assert.ok(facts.includes("no pack digest in this report or inventory"));
+  assert.ok(facts.includes("no fixture inventory loaded"));
+  assert.deepEqual(copyButtons(stub), [], "nothing is offered for copying that the report does not carry");
+});
+
+test("loading a new report closes a detail dialog that is still open", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+  identityOf(stub, "attention").dispatch("click", {});
+  assert.equal(stub.byId("fixture-detail").open, true);
+
+  await loadReport(stub, JSON.stringify(report()));
+  assert.equal(stub.byId("fixture-detail").open, false);
+});
+
+test("the copy control writes the exact value and announces the outcome", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+  identityOf(stub, "attention").dispatch("click", {});
+
+  const buttons = copyButtons(stub);
+  assert.equal(buttons.length, 2, "the fixture SHA-256 and the pack digest are copyable");
+  assert.equal(buttons[0].getAttribute("aria-label"), "Copy the fixture SHA-256");
+  assert.equal(buttons[0].textContent, "Copy");
+
+  buttons[0].dispatch("click", {});
+  await flush();
+  assert.deepEqual(stub.clipboardWrites, ["e".repeat(64)]);
+  assert.equal(stub.byId("copy-status").textContent, "Copied the fixture SHA-256 to the clipboard.");
+
+  buttons[1].dispatch("click", {});
+  await flush();
+  assert.equal(stub.byId("copy-status").textContent, "Copied the pack digest to the clipboard.");
+  assert.deepEqual(stub.clipboardWrites, ["e".repeat(64), "sha256:" + "aa".repeat(32)]);
+});
+
+test("without clipboard access no control is offered, and a refused copy says so", async () => {
+  const absent = createStubDom({ clipboard: "absent" });
+  absent.runApp();
+  await loadReport(absent, JSON.stringify(verifiedReport()));
+  identityOf(absent, "attention").dispatch("click", {});
+
+  assert.deepEqual(copyButtons(absent), [], "no copy control without the API");
+  assert.match(absent.byId("copy-status").textContent, /no clipboard access/);
+  assert.ok(
+    detailText(absent).includes("e".repeat(64)),
+    "the value stays selectable text a person can copy by hand",
+  );
+
+  const denied = createStubDom({ clipboard: "denied" });
+  denied.runApp();
+  await loadReport(denied, JSON.stringify(verifiedReport()));
+  identityOf(denied, "attention").dispatch("click", {});
+  copyButtons(denied)[0].dispatch("click", {});
+  await flush();
+  assert.deepEqual(denied.clipboardWrites, ["e".repeat(64)], "the write was attempted");
+  assert.match(denied.byId("copy-status").textContent, /The copy did not complete/);
+});
+
+test("the optional inventory adds category, description and capabilities", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+
+  const picked = await loadInventory(stub, JSON.stringify(INVENTORY));
+  assert.equal(picked.textCalls, 1, "the inventory is read exactly once");
+  assert.match(stub.byId("inventory-status").textContent, /^Fixture inventory loaded with 1 entries/);
+
+  identityOf(stub, "attention").dispatch("click", {});
+  const facts = detailText(stub);
+  assert.ok(facts.includes("transaction"), "the category is shown");
+  assert.ok(facts.includes("simulateHostFunction probe"), "the description is shown");
+  assert.ok(facts.includes("rpc-client, wasm-artifact"), "the capabilities are shown");
+});
+
+test("a refused inventory is explained and the dialog falls back to absence", async () => {
+  const stub = dom();
+  await loadReport(stub, JSON.stringify(verifiedReport()));
+  await loadInventory(stub, "{not json");
+  assert.match(stub.byId("inventory-status").textContent, /^Inventory not loaded: the inventory is not valid JSON/);
+
+  identityOf(stub, "attention").dispatch("click", {});
+  assert.ok(detailText(stub).includes("no fixture inventory loaded"));
 });
 
 /* --- WCAG 2.1 contrast of both palettes, computed from the CSS --- */

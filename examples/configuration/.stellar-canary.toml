@@ -6,6 +6,12 @@ version = 1
 # The Stellar protocol version to check compatibility against.
 protocol = 28
 
+# Optional run settings. A CLI flag outranks a value written here, so
+# --network, --rpc-url and --fixtures-dir still win over these.
+# network = "testnet"
+# rpc_url = "https://soroban-testnet.stellar.org"
+# fixtures_dir = "fixtures"
+
 [project]
 # "auto" runs detection (Cargo.toml dependencies, stellar.toml, WASM
 # artifacts). Set an explicit type to skip detection entirely:

@@ -51,6 +51,7 @@ pub enum RpcMethod {
     GetFeeStats,
     GetEvents,
     GetLedgers,
+    GetTransaction,
     GetLedgerEntries,
 }
 
@@ -66,11 +67,12 @@ impl std::str::FromStr for RpcMethod {
             "get-fee-stats" => Ok(RpcMethod::GetFeeStats),
             "get-events" => Ok(RpcMethod::GetEvents),
             "get-ledgers" => Ok(RpcMethod::GetLedgers),
+            "get-transaction" => Ok(RpcMethod::GetTransaction),
             "get-ledger-entries" => Ok(RpcMethod::GetLedgerEntries),
             other => Err(format!(
                 "unsupported rpc method {other:?}: supported methods are: \"get-network\", \
                  \"get-latest-ledger\", \"get-health\", \"get-version-info\", \"get-fee-stats\", \
-                 \"get-events\", \"get-ledgers\", \"get-ledger-entries\""
+                 \"get-events\", \"get-ledgers\", \"get-ledger-entries\", \"get-transaction\""
             )),
         }
     }
@@ -156,6 +158,54 @@ pub struct FieldRangeAssertion {
     pub field: String,
     pub min: Option<serde_json::Number>,
     pub max: Option<serde_json::Number>,
+}
+
+/// Inclusive item-count bounds for a JSON array field.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FieldLengthAssertion {
+    pub field: String,
+    pub exact: Option<usize>,
+    pub min_items: Option<usize>,
+    pub max_items: Option<usize>,
+}
+
+impl FieldLengthAssertion {
+    fn check_value(&self, found: Option<&JsonValue>) -> Result<(), String> {
+        let Some(value) = found else {
+            return Err(format!(
+                "expected field {:?} to be present, but it was missing",
+                self.field
+            ));
+        };
+        let Some(items) = value.as_array() else {
+            return Err(format!(
+                "expected field {:?} to be an array, but found {}",
+                self.field, value
+            ));
+        };
+        if self.exact.is_some_and(|exact| items.len() != exact)
+            || self.min_items.is_some_and(|min| items.len() < min)
+            || self.max_items.is_some_and(|max| items.len() > max)
+        {
+            return Err(format!(
+                "expected field {:?} array length in {}, but found {}",
+                self.field,
+                self.bounds_description(),
+                items.len()
+            ));
+        }
+        Ok(())
+    }
+
+    fn bounds_description(&self) -> String {
+        match (self.min_items, self.max_items) {
+            _ if self.exact.is_some() => format!("exactly {}", self.exact.unwrap_or_default()),
+            (Some(min), Some(max)) => format!("[{min}, {max}]"),
+            (Some(min), None) => format!("at least {min}"),
+            (None, Some(max)) => format!("at most {max}"),
+            (None, None) => "any length".to_string(),
+        }
+    }
 }
 
 impl FieldRangeAssertion {
@@ -361,6 +411,7 @@ pub enum FieldAssertion {
     Equals { field: String, value: JsonValue },
     TypeIs { field: String, expected: JsonType },
     NumberRange(FieldRangeAssertion),
+    Length(FieldLengthAssertion),
     OneOf(FieldOneOfAssertion),
     EventTopics(EventTopicsAssertion),
 }
@@ -376,6 +427,7 @@ impl FieldAssertion {
             | FieldAssertion::Equals { field, .. }
             | FieldAssertion::TypeIs { field, .. } => Some(field),
             FieldAssertion::NumberRange(assertion) => Some(&assertion.field),
+            FieldAssertion::Length(assertion) => Some(&assertion.field),
             FieldAssertion::OneOf(assertion) => Some(&assertion.field),
             FieldAssertion::EventTopics(_) => None,
         }
@@ -390,7 +442,7 @@ impl FieldAssertion {
         let field = self
             .field()
             .expect("a non-event assertion always names a field");
-        let found = response.get(field);
+        let found = resolve_field(response, field);
         match self {
             FieldAssertion::Exists { field } => found.map(|_| ()).ok_or_else(|| {
                 format!("expected field {field:?} to be present, but it was missing")
@@ -420,12 +472,68 @@ impl FieldAssertion {
                 )),
             },
             FieldAssertion::NumberRange(assertion) => assertion.check_value(found),
+            FieldAssertion::Length(assertion) => assertion.check_value(found),
             FieldAssertion::OneOf(assertion) => assertion.check_value(found),
             // Handled by the early return above; repeated so the match stays
             // exhaustive.
             FieldAssertion::EventTopics(assertion) => assertion.check_value(response),
         }
     }
+}
+
+/// Resolves a field path using object keys separated by dots and array
+/// indexes in brackets (for example `result.fee.max` or `items[0].id`).
+fn resolve_field<'a>(response: &'a JsonValue, path: &str) -> Option<&'a JsonValue> {
+    let mut current = response;
+    let mut token = String::new();
+    let mut chars = path.chars().peekable();
+    let mut after_index = false;
+    while let Some(ch) = chars.next() {
+        match ch {
+            '.' => {
+                if !token.is_empty() {
+                    current = current.get(&token)?;
+                    token.clear();
+                } else if !after_index {
+                    return None;
+                }
+                after_index = false;
+            }
+            '[' => {
+                if !token.is_empty() {
+                    current = current.get(&token)?;
+                    token.clear();
+                }
+                let mut index = String::new();
+                for next in chars.by_ref() {
+                    if next == ']' {
+                        break;
+                    }
+                    index.push(next);
+                }
+                if index.is_empty() || !index.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                current = current.get(index.parse::<usize>().ok()?)?;
+                if chars
+                    .peek()
+                    .is_some_and(|next| *next != '.' && *next != '[')
+                {
+                    return None;
+                }
+                after_index = true;
+            }
+            ']' => return None,
+            _ => {
+                token.push(ch);
+                after_index = false;
+            }
+        }
+    }
+    if !token.is_empty() {
+        current = current.get(&token)?;
+    }
+    Some(current)
 }
 
 /// A fully parsed RPC compatibility fixture.
@@ -532,6 +640,9 @@ fn parse_assertion(
             "expected_type",
             "min",
             "max",
+            "min_items",
+            "max_items",
+            "exact",
             "values",
             "index",
             "topics",
@@ -581,7 +692,9 @@ fn parse_assertion(
             let expected = table
                 .get("expected_type")
                 .and_then(toml::Value::as_str)
-                .ok_or_else(|| invalid("field-type assertion missing \"expected_type\"".to_string()))?
+                .ok_or_else(|| {
+                    invalid("field-type assertion missing \"expected_type\"".to_string())
+                })?
                 .parse()
                 .map_err(invalid)?;
             Ok(FieldAssertion::TypeIs {
@@ -609,6 +722,39 @@ fn parse_assertion(
                 field: field_or_error()?,
                 min,
                 max,
+            }))
+        }
+        "field-length" => {
+            let exact = parse_length_bound(table, "exact", &invalid)?;
+            let min_items = parse_length_alias(table, "min", "min_items", &invalid)?;
+            let max_items = parse_length_alias(table, "max", "max_items", &invalid)?;
+            if exact.is_none() && min_items.is_none() && max_items.is_none() {
+                return Err(invalid(
+                    "field-length assertion requires \"exact\", \"min_items\", or \"max_items\""
+                        .to_string(),
+                ));
+            }
+            if let Some(exact) = exact {
+                if min_items.is_some_and(|min| exact < min)
+                    || max_items.is_some_and(|max| exact > max)
+                {
+                    return Err(invalid(
+                        "field-length exact value conflicts with its bounds".to_string(),
+                    ));
+                }
+            }
+            if let (Some(min), Some(max)) = (min_items, max_items) {
+                if min > max {
+                    return Err(invalid(format!(
+                        "field-length assertion has min_items {min} greater than max_items {max}"
+                    )));
+                }
+            }
+            Ok(FieldAssertion::Length(FieldLengthAssertion {
+                field: field_or_error()?,
+                exact,
+                min_items,
+                max_items,
             }))
         }
         "field-one-of" => {
@@ -667,9 +813,50 @@ fn parse_assertion(
             }))
         }
         other => Err(invalid(format!(
-            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\", \"field-number-range\", \"field-one-of\", \"event-topics\""
+            "unsupported assertion kind {other:?}: expected one of \"field-exists\", \"field-absent\", \"field-equals\", \"field-type\", \"field-number-range\", \"field-one-of\", \"field-length\", \"event-topics\""
         ))),
     }
+}
+
+fn parse_length_bound(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    invalid: &impl Fn(String) -> RpcFixtureError,
+) -> Result<Option<usize>, RpcFixtureError> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let bound = value
+        .as_integer()
+        .and_then(|number| usize::try_from(number).ok())
+        .ok_or_else(|| {
+            invalid(format!(
+                "field-length {key:?} must be a non-negative integer"
+            ))
+        })?;
+    Ok(Some(bound))
+}
+
+fn parse_length_alias(
+    table: &toml::map::Map<String, toml::Value>,
+    alias: &str,
+    canonical: &str,
+    invalid: &impl Fn(String) -> RpcFixtureError,
+) -> Result<Option<usize>, RpcFixtureError> {
+    if table.contains_key(alias) && table.contains_key(canonical) {
+        return Err(invalid(format!(
+            "field-length cannot specify both {alias:?} and {canonical:?}"
+        )));
+    }
+    parse_length_bound(
+        table,
+        if table.contains_key(alias) {
+            alias
+        } else {
+            canonical
+        },
+        invalid,
+    )
 }
 
 /// Parses one `field-number-range` bound: a TOML integer or float.
@@ -692,7 +879,7 @@ fn parse_range_bound(
         other => {
             return Err(invalid(format!(
                 "field-number-range {key:?} must be a number, but found {other}"
-            )))
+            )));
         }
     };
     Ok(Some(number))
@@ -770,6 +957,11 @@ impl<C: RpcClient + Sync> RpcRunner for DefaultRpcRunner<C> {
             RpcMethod::GetFeeStats => self.client.get_fee_stats_raw().await,
             RpcMethod::GetEvents => self.client.get_events_raw(request_params(fixture)).await,
             RpcMethod::GetLedgers => self.client.get_ledgers_raw(request_params(fixture)).await,
+            RpcMethod::GetTransaction => {
+                self.client
+                    .get_transaction_raw(request_params(fixture))
+                    .await
+            }
             RpcMethod::GetLedgerEntries => {
                 self.client
                     .get_ledger_entries_raw(request_params(fixture))
@@ -1062,6 +1254,29 @@ mod tests {
 
         let mismatch_response = json!({ "history": ["a", "b", "d"] });
         assert!(assertion.check(&mismatch_response).is_err());
+    }
+
+    #[test]
+    fn resolves_nested_dot_and_index_paths() {
+        let response = json!({"result": {"fee": {"max": 42}}, "items": [{"id": "abc"}]});
+        assert_eq!(resolve_field(&response, "result.fee.max"), Some(&json!(42)));
+        assert_eq!(resolve_field(&response, "items[0].id"), Some(&json!("abc")));
+        assert_eq!(resolve_field(&response, "items[1].id"), None);
+        assert_eq!(resolve_field(&response, "items[0].missing"), None);
+    }
+
+    #[test]
+    fn checks_array_length_bounds_and_rejects_non_arrays() {
+        let assertion = FieldLengthAssertion {
+            field: "items".into(),
+            exact: None,
+            min_items: Some(1),
+            max_items: Some(3),
+        };
+        assert!(assertion.check_value(Some(&json!([1, 2]))).is_ok());
+        assert!(assertion.check_value(Some(&json!([]))).is_err());
+        let error = assertion.check_value(Some(&json!("items"))).unwrap_err();
+        assert!(error.contains("expected field \"items\" to be an array"));
     }
 
     /// Parses a single `[[assert]]` entry of the given kind into a

@@ -20,8 +20,8 @@ use canary_core::CanaryError;
 
 use crate::models::{
     EventFilter, EventResponse, FeeStatsResponse, GetHealthResponse, GetLedgerEntriesResponse,
-    GetLedgersResponse, GetTransactionsResponse, LatestLedger, NetworkInfo, SimulationRequest,
-    SimulationResponse, VersionInfoResponse,
+    GetLedgersResponse, GetTransactionResponse, GetTransactionsResponse, LatestLedger, NetworkInfo,
+    SimulationRequest, SimulationResponse, VersionInfoResponse,
 };
 
 /// Errors returned by the Stellar RPC client.
@@ -166,7 +166,9 @@ pub enum RpcError {
     /// decide what it means for their run (the CLI aborts as a
     /// configuration error, since results from the wrong network must not
     /// be attributed to the requested one).
-    #[error("the RPC endpoint's network passphrase ({actual:?}) does not match the expected passphrase ({expected:?})")]
+    #[error(
+        "the RPC endpoint's network passphrase ({actual:?}) does not match the expected passphrase ({expected:?})"
+    )]
     NetworkMismatch { expected: String, actual: String },
 
     /// The endpoint reports a different protocol version than the run
@@ -397,6 +399,18 @@ pub trait RpcClient {
         cursor: Option<&str>,
         limit: Option<u32>,
     ) -> impl std::future::Future<Output = Result<GetTransactionsResponse, RpcError>> + Send;
+
+    /// Fetches a transaction by its 64-character lowercase hexadecimal hash.
+    fn get_transaction(
+        &self,
+        hash: &str,
+    ) -> impl std::future::Future<Output = Result<GetTransactionResponse, RpcError>> + Send;
+
+    /// Fetches the raw `getTransaction` result for fixture assertions.
+    fn get_transaction_raw(
+        &self,
+        params: serde_json::Value,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
 }
 
 /// Bounded retry policy for transient failures.
@@ -693,13 +707,13 @@ impl HttpRpcClient {
                     return Err(RpcError::Timeout {
                         method,
                         attempts: attempt,
-                    })
+                    });
                 }
                 Err(RpcError::RateLimited { method, .. }) => {
                     return Err(RpcError::RateLimited {
                         method,
                         attempts: attempt,
-                    })
+                    });
                 }
                 Err(err) => return Err(err),
             }
@@ -1179,6 +1193,27 @@ impl RpcClient for HttpRpcClient {
         }
         self.call("getTransactions", params).await
     }
+
+    async fn get_transaction(&self, hash: &str) -> Result<GetTransactionResponse, RpcError> {
+        if hash.len() != 64
+            || !hash
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+        {
+            return Err(RpcError::InvalidArgument {
+                method: "getTransaction".to_string(),
+                reason: "hash must be 64 lowercase hexadecimal characters".to_string(),
+            });
+        }
+        self.call("getTransaction", json!({ "hash": hash })).await
+    }
+
+    async fn get_transaction_raw(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getTransaction", params).await
+    }
 }
 
 #[cfg(test)]
@@ -1187,6 +1222,53 @@ mod tests {
     use crate::models::EventFilter;
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn get_transaction_sends_hash_and_parses_success_xdr() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .and(wiremock::matchers::body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getTransaction",
+                "params": { "hash": "a".repeat(64) }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "status": "SUCCESS",
+                    "txHash": "a".repeat(64),
+                    "ledger": 123,
+                    "envelopeXdr": "AAAA",
+                    "resultXdr": "BBBB",
+                    "resultMetaXdr": "CCCC"
+                }
+            })))
+            .mount(&server)
+            .await;
+
+        let response = HttpRpcClient::new(server.uri())
+            .get_transaction(&"a".repeat(64))
+            .await
+            .expect("valid transaction response");
+        assert_eq!(response.status, crate::models::TransactionStatus::Success);
+        assert_eq!(response.ledger, Some(123));
+        assert_eq!(response.result_xdr.as_deref(), Some("BBBB"));
+        assert_eq!(response.result_meta_xdr.as_deref(), Some("CCCC"));
+    }
+
+    #[tokio::test]
+    async fn get_transaction_rejects_invalid_hash_before_sending() {
+        let server = MockServer::start().await;
+        let error = HttpRpcClient::new(server.uri())
+            .get_transaction("not-a-hash")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, RpcError::InvalidArgument { .. }));
+        assert!(server.received_requests().await.unwrap().is_empty());
+    }
 
     #[tokio::test]
     async fn get_network_raw_keeps_fields_the_typed_model_drops() {

@@ -166,6 +166,10 @@ fn soroban_fixture(id: &str, expect: &str) -> SorobanFixture {
 const VALID_STELLAR_VALUE: &str =
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
+/// Canonical base64 that is not a complete `StellarValue`, so the fixture
+/// parses and then fails the decode assertion at run time.
+const DECODE_FAILURE_BASE64: &str = "AAAA";
+
 fn xdr_plan(fixture: XdrFixture) -> CompatibilityPlan {
     let mut plan = CompatibilityPlan::default();
     plan.xdr.push(fixture);
@@ -435,7 +439,11 @@ async fn xdr_decode_failure_is_a_fail() {
     let cache = TempCache::new("xdr-fail");
 
     let result = run_one(
-        &xdr_plan(xdr_fixture("xdr-fail", "decode-success", "not-valid-xdr!!")),
+        &xdr_plan(xdr_fixture(
+            "xdr-fail",
+            "decode-success",
+            DECODE_FAILURE_BASE64,
+        )),
         &context(cache.store(default_policy())),
         NO_ENDPOINT,
     )

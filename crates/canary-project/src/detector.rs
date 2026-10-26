@@ -91,6 +91,8 @@ impl CapabilityEvidence {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetailedDetection {
     pub context: ProjectContext,
+    /// The auto-detected project type before any configuration override is applied.
+    pub detected_type: ProjectType,
     pub inspected: Vec<String>,
     pub workspace_members: Vec<String>,
     pub diagnostics: Vec<crate::workspace::Diagnostic>,
@@ -113,6 +115,30 @@ impl DetailedDetection {
 /// recognizable Stellar surface and needs explicit configuration.
 pub fn detect(root: &Path) -> ProjectContext {
     detect_details(root).context
+}
+
+/// Runs full detection on `root` and applies an optional explicit configured project type.
+///
+/// If `configured_type` is `Some(configured)` and differs from the auto-detected project type,
+/// an [`crate::workspace::DiagnosticCode::OverrideNotice`] diagnostic is appended to `diagnostics`
+/// with a message including both types, and the context's `project_type` is set to `configured`.
+///
+/// The original auto-detected project type is preserved in `detected_type`.
+pub fn detect_project(root: &Path, configured_type: Option<ProjectType>) -> DetailedDetection {
+    let mut details = detect_details(root);
+    if let Some(configured) = configured_type {
+        let detected = details.detected_type;
+        if detected != ProjectType::Unknown && configured != detected {
+            details.diagnostics.push(crate::workspace::Diagnostic {
+                code: crate::workspace::DiagnosticCode::OverrideNotice,
+                detail: format!(
+                    "configured project type '{configured}' overrides detected type '{detected}'"
+                ),
+            });
+        }
+        details.context.project_type = configured;
+    }
+    details
 }
 
 /// Runs full detection on `root`, returning the project context along with
@@ -406,7 +432,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
     inspected.dedup();
 
     let has_stellar_toml = root.join("stellar.toml").is_file();
-    let wasm_artifacts = find_wasm_artifacts_bounded(root, &mut diagnostics);
+    let wasm_artifacts = find_wasm_artifacts(root);
     let has_wasm_artifact = !wasm_artifacts.is_empty();
 
     if has_wasm_artifact {
@@ -472,6 +498,7 @@ pub fn detect_details(root: &Path) -> DetailedDetection {
 
     DetailedDetection {
         context,
+        detected_type: project_type,
         inspected,
         workspace_members,
         diagnostics,
@@ -618,21 +645,11 @@ fn classify(capabilities: &[canary_core::Capability], has_stellar_toml: bool) ->
 /// deterministic, root-relative form (e.g. the CA-04 fingerprint) sort
 /// and normalize them themselves.
 pub fn find_wasm_artifacts(root: &Path) -> Vec<PathBuf> {
-    let mut diagnostics = Vec::new();
-    find_wasm_artifacts_bounded(root, &mut diagnostics)
-}
-
-pub fn find_wasm_artifacts_bounded(
-    root: &Path,
-    diagnostics: &mut Vec<crate::workspace::Diagnostic>,
-) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for known in KNOWN_WASM_OUTPUT_DIRS {
         collect_wasm_in_dir(&root.join(known), &mut found);
     }
-    let mut dirs_visited = 0;
     collect_wasm_shallow(root, 2, &mut found);
-    check_tree_depth_and_dir_count(root, root, 0, &mut dirs_visited, diagnostics);
     found
 }
 
@@ -645,68 +662,6 @@ fn collect_wasm_in_dir(dir: &Path, found: &mut Vec<PathBuf>) {
         if path.extension().is_some_and(|ext| ext == "wasm") {
             found.push(path);
         }
-    }
-}
-
-fn check_tree_depth_and_dir_count(
-    _root: &Path,
-    dir: &Path,
-    depth: usize,
-    dirs_visited: &mut usize,
-    diagnostics: &mut Vec<crate::workspace::Diagnostic>,
-) {
-    if *dirs_visited >= crate::workspace::MAX_DIRECTORIES_VISITED {
-        if !diagnostics.iter().any(|d| {
-            d.code == crate::workspace::DiagnosticCode::ScanBoundHit
-                && d.detail.contains("directories visited limit")
-        }) {
-            diagnostics.push(crate::workspace::Diagnostic {
-                code: crate::workspace::DiagnosticCode::ScanBoundHit,
-                detail: format!(
-                    "directories visited limit {} reached; traversal stopped",
-                    crate::workspace::MAX_DIRECTORIES_VISITED
-                ),
-            });
-        }
-        return;
-    }
-
-    *dirs_visited += 1;
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-
-    let mut subdirs = Vec::new();
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        let file_name = entry.file_name();
-        let file_name_str = file_name.to_string_lossy();
-        if path.is_dir()
-            && !SKIP_DIRS.contains(&file_name_str.as_ref())
-            && file_name_str != "target"
-        {
-            subdirs.push(path);
-        }
-    }
-    subdirs.sort();
-
-    for subdir in subdirs {
-        if depth + 1 > crate::workspace::MAX_WORKSPACE_DEPTH {
-            if !diagnostics.iter().any(|d| {
-                d.code == crate::workspace::DiagnosticCode::ScanBoundHit
-                    && d.detail.contains("scan depth limit")
-            }) {
-                diagnostics.push(crate::workspace::Diagnostic {
-                    code: crate::workspace::DiagnosticCode::ScanBoundHit,
-                    detail: format!(
-                        "scan depth limit {} reached; traversal stopped",
-                        crate::workspace::MAX_WORKSPACE_DEPTH
-                    ),
-                });
-            }
-            break;
-        }
-        check_tree_depth_and_dir_count(_root, &subdir, depth + 1, dirs_visited, diagnostics);
     }
 }
 
@@ -1343,5 +1298,72 @@ mod tests {
             "expected manifest-unparseable diagnostic"
         );
         assert!(unparseable.unwrap().detail.contains("pyproject.toml"));
+    }
+
+    #[test]
+    fn detect_project_emits_override_notice_when_configured_differs_from_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-differs");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, Some(ProjectType::RpcConsumer));
+        assert_eq!(details.context.project_type, ProjectType::RpcConsumer);
+        assert_eq!(details.detected_type, ProjectType::Soroban);
+
+        let notice = details
+            .diagnostics
+            .iter()
+            .find(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice)
+            .expect("expected OverrideNotice diagnostic");
+        assert!(notice.detail.contains("rpc-consumer"));
+        assert!(notice.detail.contains("soroban"));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_configured_matches_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-matches");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, Some(ProjectType::Soroban));
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_unconfigured() {
+        let dir = crate::test_support::temp_dir("detect-override-unconfigured");
+        std::fs::write(
+            dir.path.join("Cargo.toml"),
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+        )
+        .unwrap();
+
+        let details = detect_project(&dir.path, None);
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
+    }
+
+    #[test]
+    fn detect_project_no_notice_when_nothing_detected() {
+        let dir = crate::test_support::temp_dir("detect-override-nothing-detected");
+        let details = detect_project(&dir.path, Some(ProjectType::Soroban));
+        assert_eq!(details.context.project_type, ProjectType::Soroban);
+        assert!(!details
+            .diagnostics
+            .iter()
+            .any(|d| d.code == crate::workspace::DiagnosticCode::OverrideNotice));
     }
 }

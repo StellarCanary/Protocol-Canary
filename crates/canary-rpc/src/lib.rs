@@ -6,14 +6,17 @@ pub mod models;
 pub mod request;
 pub mod runner;
 
-pub use client::{HttpRpcClient, RetryPolicy, RpcClient, RpcError, validate_network_info};
+pub use client::{
+    validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError, MAX_RESPONSE_BYTES,
+};
 pub use models::{
-    GetHealthResponse, GetLedgersResponse, GetTransactionResponse, GetTransactionsResponse,
-    LatestLedger, LedgerHeaderInfo, NetworkInfo, SimulationRequest, SimulationResponse,
-    TransactionStatus,
+    FeeDistribution, FeeStatsResponse, GetHealthResponse, GetLedgerEntriesResponse,
+    GetLedgersResponse, GetTransactionResponse, GetTransactionsResponse, LatestLedger,
+    LedgerEntryResult, LedgerHeaderInfo, NetworkInfo, SimulationRequest, SimulationResponse,
+    TransactionStatus, VersionInfoResponse,
 };
 pub use runner::{
-    DefaultRpcRunner, EventTopicsAssertion, FieldAssertion, FieldLengthAssertion,
-    FieldRangeAssertion, JsonType, RpcFixture, RpcFixtureError, RpcMethod, RpcRunner,
-    observe_health, observe_latest_ledger, observe_network,
+    observe_health, observe_latest_ledger, observe_network, DefaultRpcRunner, EventTopicsAssertion,
+    FieldAssertion, FieldLengthAssertion, FieldOneOfAssertion, FieldRangeAssertion, JsonType,
+    RpcFixture, RpcFixtureError, RpcMethod, RpcRunner,
 };

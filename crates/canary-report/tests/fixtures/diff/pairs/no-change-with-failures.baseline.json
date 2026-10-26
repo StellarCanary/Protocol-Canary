@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "no-change-with-failures",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 4,
+    "passed": 0,
+    "failed": 2,
+    "warnings": 1,
+    "errors": 1,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "fail-to-absent",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "fail-to-absent"
+    },
+    {
+      "testId": "unchanged-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "unchanged-fail"
+    },
+    {
+      "testId": "error-to-absent",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-absent"
+    },
+    {
+      "testId": "warn-unchanged",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warn-unchanged"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "skip-to-absent",
+      "surface": "soroban",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

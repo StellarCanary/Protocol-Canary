@@ -72,7 +72,7 @@ pub fn load(path: &Path) -> Result<ConfigFile, ConfigError> {
         path: path.to_path_buf(),
         source,
     })?;
-    parse(&raw, path)
+    parse_config(&raw, path)
 }
 
 /// Looks for `.stellar-canary.toml` in `root` and loads it if present.
@@ -88,7 +88,13 @@ pub fn load_from_root(root: &Path) -> Result<Option<ConfigFile>, ConfigError> {
     load(&path).map(Some)
 }
 
-fn parse(raw: &str, path: &Path) -> Result<ConfigFile, ConfigError> {
+/// Parses and validates configuration text. `path` is only used in diagnostics.
+///
+/// This is [`load`] without the filesystem, so a caller that already holds the
+/// text — a documentation test, an editor integration, the schema parity suite
+/// — gets exactly what loading a file would have given, unknown-field
+/// rejection and the version, protocol and surface rules included.
+pub fn parse_config(raw: &str, path: &Path) -> Result<ConfigFile, ConfigError> {
     let config: ConfigFile = toml::from_str(raw).map_err(|source| ConfigError::Parse {
         path: path.to_path_buf(),
         source: Box::new(source),
@@ -233,6 +239,69 @@ impl From<LockError> for CanaryError {
     fn from(error: LockError) -> Self {
         CanaryError::Configuration(error.to_string())
     }
+}
+
+/// An error returned when a report's digest or target protocol does not match
+/// the pinned values in a project's `.stellar-canary.lock` file.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error(
+    "lockfile mismatch for field '{field}': lockfile expected '{expected}', report found '{found}'"
+)]
+pub struct LockMismatchError {
+    pub field: String,
+    pub expected: String,
+    pub found: String,
+}
+
+impl From<LockMismatchError> for CanaryError {
+    fn from(error: LockMismatchError) -> Self {
+        CanaryError::Configuration(error.to_string())
+    }
+}
+
+/// Compares a report's `packDigest` and `targetProtocol` against a loaded [`LockFile`].
+///
+/// Returns `Ok(())` if both match the lockfile's `[fixtures]` section.
+/// On mismatch, returns a [`LockMismatchError`] naming the mismatched field and both values.
+///
+/// Note: The call site will pass the report's `packDigest` once #442 adds it to the report structure.
+pub fn validate_report_against_lock(
+    lock: &LockFile,
+    pack_digest: &str,
+    target_protocol: u32,
+) -> Result<(), LockMismatchError> {
+    if lock.fixtures.pack_digest != pack_digest {
+        return Err(LockMismatchError {
+            field: "packDigest".to_string(),
+            expected: lock.fixtures.pack_digest.clone(),
+            found: pack_digest.to_string(),
+        });
+    }
+    if lock.fixtures.protocol != target_protocol {
+        return Err(LockMismatchError {
+            field: "protocol".to_string(),
+            expected: lock.fixtures.protocol.to_string(),
+            found: target_protocol.to_string(),
+        });
+    }
+    Ok(())
+}
+
+/// Loads `.stellar-canary.lock` at `path` using [`load_lock`] and verifies that
+/// a report's `pack_digest` and `target_protocol` match the lockfile's contents.
+///
+/// On any mismatch or lockfile read/parse failure, returns a [`CanaryError`] which
+/// maps to CLI exit code 2 ([`ExitCode::ConfigurationError`](canary_core::ExitCode::ConfigurationError)).
+///
+/// Note: The call site will pass the report's `packDigest` once #442 adds it to the report structure.
+pub fn validate_stored_report_against_lock(
+    path: &Path,
+    pack_digest: &str,
+    target_protocol: u32,
+) -> Result<(), CanaryError> {
+    let lock = load_lock(path)?;
+    validate_report_against_lock(&lock, pack_digest, target_protocol)?;
+    Ok(())
 }
 
 /// Reads and validates the lockfile at `path` (CF-03 sections 2 and 3).

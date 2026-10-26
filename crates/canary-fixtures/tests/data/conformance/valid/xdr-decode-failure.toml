@@ -1,0 +1,10 @@
+id = "conformance-valid-xdr-decode-failure"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "Accepted fixture shape whose downstream assertion expects XDR decoding to fail."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "decode-failure"
+value_base64 = "AAAAAA=="

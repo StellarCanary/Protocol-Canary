@@ -6,7 +6,9 @@
 
 mod support;
 
-use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{
+    run_in, stderr, stdout, TempProject, DECODE_FAILURE_BASE64, VALID_STELLAR_VALUE_BASE64,
+};
 
 const OFFLINE_CONFIG: &str = r#"
 version = 1
@@ -81,7 +83,7 @@ fn output_is_additive_to_stdout_and_does_not_change_the_exit_code_on_failure() {
     dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
     dir.write(
         "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("p28-xdr-1", "not-valid-xdr-bytes!!!"),
+        &xdr_fixture("p28-xdr-1", DECODE_FAILURE_BASE64),
     );
     let report = dir.path.join("result.txt");
 

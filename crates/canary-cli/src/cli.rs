@@ -17,9 +17,9 @@ use canary_core::Surface;
 /// `Cli` is the `clap` entry point: it holds the one required subcommand the
 /// user typed — [`Command::Check`], [`Command::Inspect`],
 /// [`Command::Fixtures`], [`Command::Report`], [`Command::Diff`],
-/// [`Command::Cache`], [`Command::Lock`], [`Command::Completions`] or
-/// [`Command::Version`] — together with that subcommand's own argument
-/// struct. The binary name and
+/// [`Command::Cache`], [`Command::Config`], [`Command::Lock`],
+/// [`Command::Completions`] or [`Command::Version`] — together with that
+/// subcommand's own argument struct. The binary name and
 /// version banner come from the `#[command(...)]` attributes above, and flags
 /// that apply to a single run live on the per-command `*Args` types rather
 /// than here.
@@ -43,9 +43,10 @@ pub struct Cli {
 /// `Check` runs compatibility assertions, while `Inspect` and `Fixtures`
 /// provide offline project and fixture information. `Report` renders a
 /// previously generated JSON report, `Diff` compares two stored reports
-/// (CF-05), `Cache` manages cached execution results, `Lock` writes and
-/// verifies the fixture-pack pin, `Completions` prints a shell
-/// completion script, and `Version` prints the tool version. Parsing
+/// (CF-05), `Cache` manages cached execution results, `Config` validates
+/// the project configuration file without running anything (issue #457),
+/// `Lock` writes and verifies the fixture-pack pin, `Completions` prints a
+/// shell completion script, and `Version` prints the tool version. Parsing
 /// this enum is handled by `clap`; the variants themselves do not perform
 /// I/O or panic during argument parsing.
 pub enum Command {
@@ -62,6 +63,9 @@ pub enum Command {
     /// Manage the local result cache.
     #[command(subcommand)]
     Cache(CacheArgs),
+    /// Validate the project configuration without running any check.
+    #[command(subcommand)]
+    Config(ConfigArgs),
     /// Manage the fixture-pack lockfile: bare `lock` writes the pin
     /// (CF-03-B), `lock verify` re-checks it (CF-03-D).
     Lock(LockArgs),
@@ -255,6 +259,13 @@ pub struct CheckArgs {
         value_parser = clap::value_parser!(u64).range(1..)
     )]
     pub live_cache_ttl: Option<u64>,
+
+    /// Require the .stellar-canary.lock lockfile to exist and its pinned
+    /// fixtures.packDigest to match the current fixture pack. A missing or
+    /// stale lockfile fails the run with exit code 2 before any fixture
+    /// executes, so CI pipelines can enforce strict dependency pinning.
+    #[arg(long)]
+    pub locked: bool,
 }
 
 /// Surface choices accepted by `check --surface`.
@@ -280,6 +291,44 @@ impl From<SurfaceFilter> for Surface {
 pub enum CacheArgs {
     /// Delete cached fixture execution results and report reclaimed space.
     Clear(CacheClearArgs),
+}
+
+/// Arguments for the `config` command group (issue #457).
+#[derive(Debug, Subcommand)]
+pub enum ConfigArgs {
+    /// Check .stellar-canary.toml without running any compatibility check.
+    Validate(ConfigValidateArgs),
+}
+
+/// Arguments for `stellar-canary config validate`.
+///
+/// The command reads one file and does nothing else: no fixture is loaded,
+/// no check runs, no socket is opened, and no file is written. It parses the
+/// configuration with the same strict loader `check` uses, so a file this
+/// command accepts is a file `check` reads identically — and a file it
+/// rejects tells the contributor about the problem before CI runs the suite.
+///
+/// # Examples
+///
+/// ```text
+/// stellar-canary config validate
+/// stellar-canary config validate --project-root path/to/project
+/// stellar-canary config validate --config ci/stellar-canary.toml
+/// ```
+#[derive(Debug, Parser)]
+pub struct ConfigValidateArgs {
+    /// Directory to treat as the project root (default: the current
+    /// directory). A relative `--config` path is resolved against it. The
+    /// root is never searched for in parent directories.
+    #[arg(long = "project-root", value_name = "PATH")]
+    pub project_root: Option<PathBuf>,
+
+    /// Path to the configuration file to validate (default:
+    /// .stellar-canary.toml in the project root). Unlike the default, an
+    /// explicitly named file that cannot be read is an error: the caller
+    /// asked for that file.
+    #[arg(long)]
+    pub config: Option<PathBuf>,
 }
 
 /// Subcommands of the `lock` command group (CF-03).
@@ -505,6 +554,14 @@ pub struct FixturesArgs {
     /// Shorthand for --format json.
     #[arg(long)]
     pub json: bool,
+
+    /// Filter fixtures by compatibility surface.
+    #[arg(long, value_enum)]
+    pub surface: Option<SurfaceFilter>,
+
+    /// Filter fixtures by category.
+    #[arg(long)]
+    pub category: Option<String>,
 }
 
 #[derive(Debug, Parser)]
@@ -962,6 +1019,62 @@ mod tests {
         }
     }
 
+    /// `config validate` is the only way to use the `config` group, and it
+    /// takes no positional arguments: bare `config` is a usage error, never
+    /// a silent validation of some guessed file.
+    #[test]
+    fn config_requires_a_subcommand() {
+        let err = Cli::try_parse_from(["stellar-canary", "config"])
+            .expect_err("bare `config` must fail argument validation");
+        // clap answers a missing group subcommand by printing the group's
+        // help; what matters here is that it is a *usage* error, so the
+        // binary exits 2 rather than validating something by guesswork.
+        assert_eq!(
+            err.kind(),
+            clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand,
+            "{err}"
+        );
+        let text = err.to_string();
+        assert!(text.contains("validate"), "the help lists it: {text}");
+        assert!(
+            text.contains("config <COMMAND>"),
+            "the usage line names the group: {text}"
+        );
+    }
+
+    #[test]
+    fn config_validate_flags_default_to_none() {
+        let cli = Cli::parse_from(["stellar-canary", "config", "validate"]);
+        if let Command::Config(ConfigArgs::Validate(args)) = cli.command {
+            assert_eq!(args.project_root, None);
+            assert_eq!(args.config, None);
+        } else {
+            panic!("Expected Config::Validate command");
+        }
+    }
+
+    #[test]
+    fn config_validate_takes_a_project_root_and_a_config_path() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "config",
+            "validate",
+            "--project-root",
+            "member",
+            "--config",
+            "member/.stellar-canary.toml",
+        ]);
+        if let Command::Config(ConfigArgs::Validate(args)) = cli.command {
+            assert_eq!(args.project_root, Some(PathBuf::from("member")));
+            assert_eq!(
+                args.config,
+                Some(PathBuf::from("member/.stellar-canary.toml"))
+            );
+        } else {
+            panic!("Expected Config::Validate command");
+        }
+    }
+
     #[test]
     fn completions_parses_every_supported_shell_name() {
         for shell in ["bash", "zsh", "fish", "powershell"] {
@@ -1013,5 +1126,23 @@ mod tests {
             .map(|shell| shell.to_possible_value().unwrap().get_name().to_string())
             .collect();
         assert_eq!(names, ["bash", "zsh", "fish", "powershell"]);
+    }
+
+    #[test]
+    fn fixtures_flags_parse_surface_and_category() {
+        let cli = Cli::parse_from([
+            "stellar-canary",
+            "fixtures",
+            "--surface",
+            "rpc",
+            "--category",
+            "network",
+        ]);
+        if let Command::Fixtures(args) = cli.command {
+            assert_eq!(args.surface, Some(SurfaceFilter::Rpc));
+            assert_eq!(args.category.as_deref(), Some("network"));
+        } else {
+            panic!("Expected Fixtures command");
+        }
     }
 }

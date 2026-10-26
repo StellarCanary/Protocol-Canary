@@ -376,7 +376,10 @@ fn every_difference_is_listed_in_path_order() {
 
 #[test]
 fn input_that_does_not_decode_fails_without_comparing() {
-    let result = run(&json_fixture("ScVal", "!!!not-xdr!!!", "{}"));
+    // `AAAA` is canonical base64, but its three bytes are not a complete
+    // ScVal, so the fixture parses and the decode failure is the check's
+    // outcome rather than a load error.
+    let result = run(&json_fixture("ScVal", "AAAA", "{}"));
     assert_eq!(result.status, Status::Fail);
     assert_eq!(result.summary, "failed to decode ScVal");
 }

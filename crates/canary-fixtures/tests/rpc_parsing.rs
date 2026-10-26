@@ -202,6 +202,8 @@ fn unknown_assertion_kind_names_the_kind_and_the_supported_kinds() {
             "unsupported assertion kind \"field-contains\"",
             "\"field-exists\"",
             "\"field-equals\"",
+            "\"field-number-range\"",
+            "\"field-one-of\"",
             "\"event-topics\"",
         ],
     );
@@ -210,9 +212,20 @@ fn unknown_assertion_kind_names_the_kind_and_the_supported_kinds() {
 #[test]
 fn unknown_expected_type_is_named() {
     let reason = invalid_reason(
-        "method = \"get-network\"\n\n[[assert]]\nkind = \"field-type\"\nfield = \"protocolVersion\"\nexpected_type = \"integer\"\n",
+        "method = \"get-network\"\n\n[[assert]]\nkind = \"field-type\"\nfield = \"protocolVersion\"\nexpected_type = \"int\"\n",
     );
-    assert_mentions(&reason, &["unsupported json type \"integer\""]);
+    assert_mentions(&reason, &["unsupported json type \"int\"", "\"integer\""]);
+}
+
+/// CA-01 section 4.2 adds `integer` to the accepted `expected_type`
+/// values, so a fixture using it is valid rather than an invalid fixture.
+#[test]
+fn integer_is_an_accepted_expected_type() {
+    let fixture = parse_rpc(
+        "method = \"get-network\"\n\n[[assert]]\nkind = \"field-type\"\nfield = \"protocolVersion\"\nexpected_type = \"integer\"\n",
+    )
+    .expect("integer is a supported expected_type");
+    assert_eq!(fixture.assertions.len(), 1);
 }
 
 #[test]

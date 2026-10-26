@@ -217,8 +217,11 @@ version = "0.2.0"
 dependencies = [
  "canary-core",
  "canary-rpc",
+ "canary-soroban",
+ "canary-xdr",
  "flate2",
  "serde",
+ "serde_json",
  "sha2 0.11.0",
  "tar",
  "thiserror",

@@ -12,15 +12,16 @@
 
 use std::time::{Duration, Instant};
 
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json::json;
 
 use canary_core::CanaryError;
 
 use crate::models::{
-    EventFilter, EventResponse, GetHealthResponse, GetLedgersResponse, GetTransactionResponse,
-    GetTransactionsResponse, LatestLedger, NetworkInfo, SimulationRequest, SimulationResponse,
+    EventFilter, EventResponse, FeeStatsResponse, GetHealthResponse, GetLedgerEntriesResponse,
+    GetLedgersResponse, GetTransactionResponse, GetTransactionsResponse, LatestLedger, NetworkInfo,
+    SimulationRequest, SimulationResponse, VersionInfoResponse,
 };
 
 /// Errors returned by the Stellar RPC client.
@@ -40,11 +41,12 @@ use crate::models::{
 ///   at which point `attempts` holds how many attempts were made.
 /// - **Protocol-level** ([`RpcError::InvalidJson`],
 ///   [`RpcError::JsonRpcError`], [`RpcError::MethodNotAvailable`],
-///   [`RpcError::InvalidResponse`]): the
+///   [`RpcError::InvalidResponse`], [`RpcError::ResponseTooLarge`]): the
 ///   endpoint answered, but the answer is unusable — not JSON, a JSON-RPC
-///   `error` object, or a `result` that does not deserialize into the
-///   expected type. These are deterministic, so retrying them would never
-///   help and they are returned on the first attempt.
+///   `error` object, a `result` that does not deserialize into the
+///   expected type, or a body larger than [`MAX_RESPONSE_BYTES`]. These are
+///   deterministic, so retrying them would never help and they are returned
+///   on the first attempt.
 /// - **Semantic** ([`RpcError::NetworkMismatch`],
 ///   [`RpcError::ProtocolMismatch`]): the endpoint answered correctly but
 ///   reports a different network passphrase or protocol version than the run
@@ -177,7 +179,9 @@ pub enum RpcError {
     /// upcoming protocol against a not-yet-upgraded network is a core use
     /// case — so callers decide whether to treat it as a warning (the CLI
     /// does) or a failure.
-    #[error("the RPC endpoint reports protocol {observed}, but this run targets protocol {target}")]
+    #[error(
+        "the RPC endpoint reports protocol {observed}, but this run targets protocol {target}"
+    )]
     ProtocolMismatch { target: u32, observed: u32 },
 
     /// The endpoint rejected the request with HTTP 429 (Too Many Requests).
@@ -186,6 +190,19 @@ pub enum RpcError {
     /// how many attempts were made before giving up.
     #[error("RPC endpoint rate-limited {method} after {attempts} attempt(s)")]
     RateLimited { method: String, attempts: u32 },
+
+    /// The response body is larger than [`MAX_RESPONSE_BYTES`].
+    ///
+    /// Raised before the body is buffered — from the declared
+    /// `Content-Length` when the endpoint sends one, otherwise as soon as
+    /// the streamed body passes the cap — and the connection is dropped at
+    /// that point rather than read to completion, so a runaway or
+    /// malicious endpoint cannot exhaust this process's memory (D-06).
+    ///
+    /// Deterministic for the same response, so it is not retried. `limit`
+    /// echoes the cap that was exceeded, in bytes, for the diagnostic.
+    #[error("response body from {method} exceeds the {limit}-byte size cap and was not read")]
+    ResponseTooLarge { method: String, limit: usize },
 }
 
 impl From<RpcError> for CanaryError {
@@ -235,6 +252,17 @@ pub fn validate_network_info(
     Ok(())
 }
 
+/// Hard cap on the number of bytes read from one RPC response body
+/// (16 MiB, approved under D-06).
+///
+/// It is far above the largest response the project has observed (a
+/// Mainnet `getLatestLedger` with its `metadataXdr` is about 1.3 MB) and
+/// far below anything that would exhaust memory, so it only ever rejects
+/// a runaway or hostile endpoint. Exceeding it is
+/// [`RpcError::ResponseTooLarge`], never a truncated or partially parsed
+/// body.
+pub const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
+
 /// The subset of Stellar RPC this project depends on.
 pub trait RpcClient {
     fn get_network(
@@ -248,6 +276,33 @@ pub trait RpcClient {
     fn get_health(
         &self,
     ) -> impl std::future::Future<Output = Result<GetHealthResponse, RpcError>> + Send;
+
+    /// `getVersionInfo`, the endpoint's RPC and protocol build information.
+    ///
+    /// The returned [`VersionInfoResponse::observed_protocol`] is the
+    /// protocol version the endpoint itself reports, which may differ from
+    /// the network's target protocol (see [`validate_network_info`]).
+    fn get_version_info(
+        &self,
+    ) -> impl std::future::Future<Output = Result<VersionInfoResponse, RpcError>> + Send;
+
+    /// `getFeeStats`, the current inclusion-fee distributions.
+    fn get_fee_stats(
+        &self,
+    ) -> impl std::future::Future<Output = Result<FeeStatsResponse, RpcError>> + Send;
+
+    /// `getLedgerEntries` for the requested `LedgerKey` XDR values.
+    ///
+    /// Each key is a base64-encoded `LedgerKey`. At least one key and at
+    /// most 200 keys are accepted; a key that is not standard-alphabet
+    /// base64 is rejected with [`RpcError::InvalidArgument`] before a
+    /// request is sent, because the endpoint would otherwise report the
+    /// malformed key as a protocol-level error that looks like a failed
+    /// check.
+    fn get_ledger_entries(
+        &self,
+        keys: &[String],
+    ) -> impl std::future::Future<Output = Result<GetLedgerEntriesResponse, RpcError>> + Send;
 
     /// `getNetwork`'s JSON `result` object exactly as the endpoint returned
     /// it, including every field [`NetworkInfo`] does not model.
@@ -270,6 +325,26 @@ pub trait RpcClient {
     /// returned it. See [`RpcClient::get_network_raw`].
     fn get_health_raw(
         &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
+
+    /// `getVersionInfo`'s JSON `result` object exactly as the endpoint
+    /// returned it. See [`RpcClient::get_network_raw`].
+    fn get_version_info_raw(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
+
+    /// `getFeeStats`'s JSON `result` object exactly as the endpoint
+    /// returned it. See [`RpcClient::get_network_raw`].
+    fn get_fee_stats_raw(
+        &self,
+    ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
+
+    /// `getLedgerEntries`'s JSON `result` object exactly as the endpoint
+    /// returned it, for the request parameters in `params`. See
+    /// [`RpcClient::get_network_raw`].
+    fn get_ledger_entries_raw(
+        &self,
+        params: serde_json::Value,
     ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
 
     fn simulate_transaction(
@@ -696,10 +771,7 @@ impl HttpRpcClient {
             });
         }
 
-        let text = response.text().await.map_err(|e| RpcError::Transport {
-            method: method.to_string(),
-            message: e.to_string(),
-        })?;
+        let text = read_body_capped(response, method).await?;
 
         let envelope: serde_json::Value =
             serde_json::from_str(&text).map_err(|e| RpcError::InvalidJson {
@@ -746,6 +818,50 @@ impl HttpRpcClient {
     }
 }
 
+/// Reads a response body while enforcing [`MAX_RESPONSE_BYTES`].
+///
+/// The declared `Content-Length` is checked first, so a response that
+/// announces an oversized body is refused without reading any of it. When
+/// there is no length (a chunked or connection-closed body) the stream is
+/// read incrementally and abandoned as soon as the running total would
+/// pass the cap, so an oversized body is never fully buffered even though
+/// its length was unknown in advance. Dropping the response at that point
+/// closes the connection.
+///
+/// Bytes are decoded lossily rather than strictly, matching what the
+/// previous `Response::text()` call did: an invalid UTF-8 body is handed to
+/// the JSON parser, which reports it as [`RpcError::InvalidJson`], instead
+/// of being reported as a transport failure.
+async fn read_body_capped(
+    mut response: reqwest::Response,
+    method: &str,
+) -> Result<String, RpcError> {
+    if let Some(declared) = response.content_length() {
+        if declared > MAX_RESPONSE_BYTES as u64 {
+            return Err(RpcError::ResponseTooLarge {
+                method: method.to_string(),
+                limit: MAX_RESPONSE_BYTES,
+            });
+        }
+    }
+
+    let mut body: Vec<u8> = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(|e| RpcError::Transport {
+        method: method.to_string(),
+        message: e.to_string(),
+    })? {
+        if body.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
+            return Err(RpcError::ResponseTooLarge {
+                method: method.to_string(),
+                limit: MAX_RESPONSE_BYTES,
+            });
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(String::from_utf8_lossy(&body).into_owned())
+}
+
 /// JSON-RPC standard error code for "Method not found".
 const JSON_RPC_METHOD_NOT_FOUND: i64 = -32601;
 
@@ -767,6 +883,39 @@ fn json_kind(value: &serde_json::Value) -> &'static str {
 /// this one only keeps a caller of the typed method within what the
 /// endpoint will accept.
 const MAX_GET_LEDGERS_LIMIT: u32 = 200;
+
+/// The largest number of keys `getLedgerEntries` accepts upstream.
+///
+/// The fixture engine's own bound on `[request] keys` is lower (see
+/// `crate::request::MAX_KEYS`); this one only keeps a caller of the typed
+/// method within what the endpoint will accept.
+const MAX_GET_LEDGER_ENTRY_KEYS: usize = 200;
+
+/// Builds the `getLedgerEntries` params object, rejecting arguments the
+/// method cannot accept before anything is sent.
+fn get_ledger_entries_params(keys: &[String]) -> Result<serde_json::Value, RpcError> {
+    let invalid = |reason: String| RpcError::InvalidArgument {
+        method: "getLedgerEntries".to_string(),
+        reason,
+    };
+    if keys.is_empty() {
+        return Err(invalid(
+            "keys must contain at least one base64 LedgerKey".to_string(),
+        ));
+    }
+    if keys.len() > MAX_GET_LEDGER_ENTRY_KEYS {
+        return Err(invalid(format!(
+            "keys has {} entries; at most {MAX_GET_LEDGER_ENTRY_KEYS} are accepted",
+            keys.len()
+        )));
+    }
+    for (index, key) in keys.iter().enumerate() {
+        if !crate::request::is_base64(key) {
+            return Err(invalid(format!("keys[{index}] is not a base64 string")));
+        }
+    }
+    Ok(json!({ "keys": keys }))
+}
 
 /// Builds the `getLedgers` params object, rejecting arguments the method
 /// cannot accept before anything is sent.
@@ -942,6 +1091,22 @@ impl RpcClient for HttpRpcClient {
         self.call("getHealth", json!({})).await
     }
 
+    async fn get_version_info(&self) -> Result<VersionInfoResponse, RpcError> {
+        self.call("getVersionInfo", json!({})).await
+    }
+
+    async fn get_fee_stats(&self) -> Result<FeeStatsResponse, RpcError> {
+        self.call("getFeeStats", json!({})).await
+    }
+
+    async fn get_ledger_entries(
+        &self,
+        keys: &[String],
+    ) -> Result<GetLedgerEntriesResponse, RpcError> {
+        self.call("getLedgerEntries", get_ledger_entries_params(keys)?)
+            .await
+    }
+
     async fn get_network_raw(&self) -> Result<serde_json::Value, RpcError> {
         self.call_object("getNetwork", json!({})).await
     }
@@ -952,6 +1117,21 @@ impl RpcClient for HttpRpcClient {
 
     async fn get_health_raw(&self) -> Result<serde_json::Value, RpcError> {
         self.call_object("getHealth", json!({})).await
+    }
+
+    async fn get_version_info_raw(&self) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getVersionInfo", json!({})).await
+    }
+
+    async fn get_fee_stats_raw(&self) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getFeeStats", json!({})).await
+    }
+
+    async fn get_ledger_entries_raw(
+        &self,
+        params: serde_json::Value,
+    ) -> Result<serde_json::Value, RpcError> {
+        self.call_object("getLedgerEntries", params).await
     }
 
     async fn simulate_transaction(

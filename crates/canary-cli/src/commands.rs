@@ -17,8 +17,8 @@ use canary_runner::{EnabledSurfaces, NetworkMode};
 use clap::CommandFactory;
 
 use crate::cli::{
-    CacheClearArgs, CheckArgs, Cli, CompletionsArgs, DiffArgs, FixturesArgs, FixturesFormat,
-    InspectArgs, InspectFormat, LockArgs, LockVerifyArgs, OutputFormat, ReportArgs,
+    CacheClearArgs, CheckArgs, Cli, CompletionsArgs, ConfigValidateArgs, DiffArgs, FixturesArgs,
+    FixturesFormat, InspectArgs, InspectFormat, LockArgs, LockVerifyArgs, OutputFormat, ReportArgs,
 };
 use crate::error::{hint_for, print_error};
 use crate::fixtures_json;
@@ -202,6 +202,13 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
         },
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
+
+    // `--locked` is verified before any fixture loads or runs: a missing
+    // or stale pin must fail the whole run with exit code 2, not surface
+    // after fixtures have already executed (issue #446).
+    if args.locked {
+        verify_locked(&root, &fixtures_dir)?;
+    }
 
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
@@ -635,15 +642,14 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     );
     let fixtures_dir = project_root.resolve_input(&settings.fixtures_dir);
 
-    let details = canary_project::detect_details(&root);
-    let detected = details.context.clone();
     let explicit_type = match config.project.project_type {
         canary_config::ProjectTypeSetting::Auto => None,
         canary_config::ProjectTypeSetting::Explicit(t) => Some(t),
     };
-    let resolved_type = canary_project::resolve_project_type(detected.project_type, explicit_type);
-    let mut project = detected.clone();
-    project.project_type = resolved_type;
+    let details = canary_project::detect_project(&root, explicit_type);
+    let project = details.context.clone();
+    let mut detected = project.clone();
+    detected.project_type = details.detected_type;
 
     let target_source = if args.protocol.is_some() {
         "flag"
@@ -1117,7 +1123,12 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
     } else {
         Vec::new()
     };
-    let store = canary_fixtures::validate(&loaded_fixtures)?;
+    let _store = canary_fixtures::validate(&loaded_fixtures)?;
+
+    let surface_filter: Option<Surface> = args.surface.map(Into::into);
+    let category_filter = args.category.as_deref();
+    let filtered_fixtures =
+        canary_fixtures::filter_fixtures(&loaded_fixtures, surface_filter, category_filter);
 
     let format = if args.json {
         FixturesFormat::Json
@@ -1132,10 +1143,15 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
             let target = canary_core::ProtocolVersion(protocol);
             let mut any = false;
             for surface in canary_report::SURFACE_ORDER {
-                let ids: Vec<&str> = store
-                    .for_protocol(target)
-                    .filter(|f| f.surface == surface)
-                    .map(|f| f.id.as_str())
+                if let Some(expected) = surface_filter {
+                    if surface != expected {
+                        continue;
+                    }
+                }
+                let ids: Vec<&str> = filtered_fixtures
+                    .iter()
+                    .filter(|f| f.metadata.protocol == target && f.metadata.surface == surface)
+                    .map(|f| f.metadata.id.as_str())
                     .collect();
                 if ids.is_empty() {
                     continue;
@@ -1157,7 +1173,7 @@ fn run_fixtures_inner(args: FixturesArgs) -> Result<ExitCode, CanaryError> {
                 protocol,
                 fixtures_dir.is_dir(),
                 &fixtures_dir,
-                &loaded_fixtures,
+                &filtered_fixtures,
             );
             print!("{}", fixtures_json::render(&inventory));
         }
@@ -1425,6 +1441,53 @@ fn run_cache_clear_inner(args: CacheClearArgs) -> Result<ExitCode, CanaryError> 
     Ok(ExitCode::Pass)
 }
 
+/// Enforces the `.stellar-canary.lock` pin for `check --locked` (CF-03).
+///
+/// With `--locked`, the lockfile must exist next to the configuration in
+/// the project root, must parse under the CF-03 section 3 rules, and its
+/// pinned `[fixtures].packDigest` must equal the `canary-pack-v1` digest
+/// (CF-02) of the resolved fixture pack. Every deviation — a missing
+/// lockfile, an unreadable one, an undigestible pack, or a pack whose
+/// bytes no longer hash to the pinned digest — is a configuration error:
+/// the run exits with code 2 before any fixture executes, and the message
+/// names `stellar-canary lock` as the command that repairs the pin. This
+/// is deliberately stricter than `lock verify`, which reports the same
+/// conditions as a verification failure with exit code 1: `--locked` is a
+/// CI gate, and a gate that cannot tell "the pin does not hold" apart from
+/// "the pin was never set" is a gate that invites `|| true`.
+fn verify_locked(root: &Path, fixtures_dir: &Path) -> Result<(), CanaryError> {
+    let lock_path = root.join(canary_config::LOCK_FILE_NAME);
+    let lock = canary_config::load_lock(&lock_path).map_err(|err| match err {
+        LockError::Read { path, source } if source.kind() == std::io::ErrorKind::NotFound => {
+            CanaryError::Configuration(format!(
+                "--locked requires {}, but no lockfile exists: run 'stellar-canary lock' to pin the fixture pack",
+                path.display()
+            ))
+        }
+        other => CanaryError::Configuration(format!(
+            "--locked could not load the lockfile {}: {other}; run 'stellar-canary lock' to rewrite the pin",
+            lock_path.display()
+        )),
+    })?;
+
+    let pack = canary_fixtures::pack_digest(fixtures_dir).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "--locked could not digest the fixture pack at {}: {e}; restore the fixture pack, then run 'stellar-canary lock' to re-pin it",
+            fixtures_dir.display()
+        ))
+    })?;
+
+    if lock.fixtures.pack_digest != pack.digest {
+        return Err(CanaryError::Configuration(format!(
+            "--locked: the lockfile pins fixtures.packDigest {}, but the fixture pack at {} hashes to {}: run 'stellar-canary lock' to update the pin",
+            lock.fixtures.pack_digest,
+            fixtures_dir.display(),
+            pack.digest
+        )));
+    }
+    Ok(())
+}
+
 /// What `lock verify` decided (CF-03-D).
 ///
 /// The distinction only shapes the message and which stream it goes to:
@@ -1552,6 +1615,190 @@ fn lock_stale_message(lock: &canary_config::LockFile, computed: &str) -> Option<
     ))
 }
 
+/// What `config validate` came back with (issue #457).
+///
+/// The variants differ in the message, the stream it goes to and the exit
+/// code, and they are exhaustive about the three situations the command can
+/// meet: a file that is valid, a file that is not, and no file to validate
+/// at the default location. A fourth covers the invocation itself failing
+/// before any file was read.
+enum ConfigValidation {
+    /// The file parsed and passed every loader rule. Carries the settings
+    /// report, which goes to stdout.
+    Valid(String),
+    /// No `.stellar-canary.toml` exists at the project root. This is not an
+    /// invalid configuration: a project with no configuration file runs on
+    /// the built-in defaults, and the defaults are a valid configuration.
+    /// Carries the path that was looked for.
+    NoFile(PathBuf),
+    /// The file exists but is not a valid configuration: a TOML syntax
+    /// error, an unknown table or key (which is how a misspelled `[tests]`
+    /// presents), a value of the wrong type, an unsupported `version`, or a
+    /// rule the loader enforces after parsing. The message is the loader's
+    /// own diagnostic, so it names the offending field and — for anything
+    /// the parser rejected — the line and column it was found at.
+    Invalid(String),
+    /// Validation never started, because the invocation does not resolve
+    /// (`--project-root` is not a directory) or the named file cannot be
+    /// read. These are the caller's problem rather than the project's, so
+    /// they keep the configuration-error exit code.
+    Blocked(CanaryError),
+}
+
+/// Validates `.stellar-canary.toml` without running any check (issue #457).
+///
+/// The command reads one file and stops: it loads no fixture, executes no
+/// check, opens no socket and writes nothing. It parses with
+/// [`canary_config::parse_config`], the strict loader `check` uses, so the
+/// answer is exactly what a run would have concluded about the same bytes —
+/// unknown tables and keys rejected, types checked, and the `version`,
+/// `protocol` and surface rules enforced.
+///
+/// Exit codes follow the shared contract, read through the question the
+/// caller asked ("is my configuration valid?"): `0` when the file is valid
+/// (and when there is no file, since the defaults are valid), `1` when the
+/// file is not a valid configuration — that is the answer "no", the same
+/// reading as `lock verify` gives a pin that does not hold — and `2` when
+/// validation could not start because the invocation itself does not
+/// resolve or the file named by `--config` cannot be read.
+pub fn run_config_validate(args: ConfigValidateArgs) -> ExitCode {
+    match validate_project_config(args) {
+        ConfigValidation::Valid(report) => {
+            println!("{report}");
+            ExitCode::Pass
+        }
+        ConfigValidation::NoFile(path) => {
+            println!(
+                "No configuration file at {}: the project runs on the built-in defaults, which are valid.",
+                path.display()
+            );
+            ExitCode::Pass
+        }
+        ConfigValidation::Invalid(message) => {
+            eprintln!("error: {message}");
+            ExitCode::CompatibilityFailure
+        }
+        ConfigValidation::Blocked(err) => {
+            print_error(&err);
+            ExitCode::from(&err)
+        }
+    }
+}
+
+/// Reads and validates the configuration file `args` points at.
+///
+/// Split out from [`run_config_validate`] so the outcome is testable
+/// without capturing stdout, and so the exit-code mapping above is the
+/// only place the four outcomes turn into numbers.
+fn validate_project_config(args: ConfigValidateArgs) -> ConfigValidation {
+    let project_root = match ProjectRoot::resolve(args.project_root.as_deref()) {
+        Ok(root) => root,
+        Err(err) => return ConfigValidation::Blocked(err),
+    };
+
+    let (path, raw) = match &args.config {
+        // An explicitly named file must exist: the caller pointed at it, so
+        // a missing one is a broken invocation rather than a project with
+        // no configuration (which is the `None` branch below).
+        Some(explicit) => {
+            let path = project_root.resolve_input(explicit);
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => (path, raw),
+                Err(err) => {
+                    return ConfigValidation::Blocked(read_config_error(&path, err));
+                }
+            }
+        }
+        None => {
+            let path = project_root.path.join(canary_config::CONFIG_FILE_NAME);
+            match std::fs::read_to_string(&path) {
+                Ok(raw) => (path, raw),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                    return ConfigValidation::NoFile(path);
+                }
+                Err(err) => return ConfigValidation::Blocked(read_config_error(&path, err)),
+            }
+        }
+    };
+
+    match canary_config::parse_config(&raw, &path) {
+        Ok(config) => ConfigValidation::Valid(settings_report(&config, &path)),
+        Err(err) => ConfigValidation::Invalid(err.to_string()),
+    }
+}
+
+/// The "could not start" diagnostic for a configuration file that is there
+/// but unreadable, worded the way [`canary_config::load`] words its own
+/// read failure so every command reports one cause the same way.
+fn read_config_error(path: &Path, err: std::io::Error) -> CanaryError {
+    CanaryError::Configuration(format!(
+        "failed to read configuration file {}: {err}",
+        path.display()
+    ))
+}
+
+/// The "here is what this configuration says" report for a valid file.
+///
+/// One line per setting the loader understands, in the file's own key names,
+/// showing the value the file gives and — for the three optional run
+/// settings — the default that applies when the file leaves them unset.
+/// Deterministic and order-fixed, so the output is usable in a CI log.
+fn settings_report(config: &canary_config::ConfigFile, path: &Path) -> String {
+    let setting = |key: &str, value: String| format!("  {key:<28} = {value}");
+
+    let surfaces = [
+        ("xdr", config.tests.xdr),
+        ("rpc", config.tests.rpc),
+        ("soroban", config.tests.soroban),
+    ]
+    .map(|(name, enabled)| format!("{name}={enabled}"))
+    .join(" ");
+
+    let project_type = match config.project.project_type {
+        canary_config::ProjectTypeSetting::Auto => "auto".to_string(),
+        canary_config::ProjectTypeSetting::Explicit(kind) => kind.to_string(),
+    };
+
+    let lines = [
+        format!("Valid: {}", path.display()),
+        setting("version", config.version.to_string()),
+        setting("protocol", config.protocol.to_string()),
+        setting(
+            "network",
+            config.network.clone().unwrap_or_else(|| {
+                format!("(not set: defaults to {})", canary_config::DEFAULT_NETWORK)
+            }),
+        ),
+        setting(
+            "rpc_url",
+            config
+                .rpc_url
+                .clone()
+                .unwrap_or_else(|| "(not set)".to_string()),
+        ),
+        setting(
+            "fixtures_dir",
+            config.fixtures_dir.clone().map_or_else(
+                || {
+                    format!(
+                        "(not set: defaults to {})",
+                        canary_config::DEFAULT_FIXTURES_DIR
+                    )
+                },
+                |dir| dir.display().to_string(),
+            ),
+        ),
+        setting("project.type", project_type),
+        setting("tests", surfaces),
+        setting(
+            "policy.warnings_are_failures",
+            config.policy.warnings_are_failures.to_string(),
+        ),
+    ];
+
+    lines.join("\n")
+}
+
 /// Generates a shell completion script for `stellar-canary` and writes it
 /// to stdout.
 ///
@@ -1667,6 +1914,8 @@ mod tests {
             config: config.map(PathBuf::from),
             format: crate::cli::FixturesFormat::Terminal,
             json: false,
+            surface: None,
+            category: None,
         }
     }
 

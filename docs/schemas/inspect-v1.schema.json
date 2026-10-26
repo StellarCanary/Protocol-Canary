@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/Protocol-Canary/main/docs/schemas/inspect-v1.schema.json",
+  "title": "Stellar Protocol Canary inspection, inspectVersion 1",
+  "description": "The `stellar-canary inspect --format json` diagnostics contract (CA-03). Required fields follow CA-03 section 3; consumers must ignore properties they do not know: inspectVersion 1 only grows additively, and this schema therefore sets no `additionalProperties` restrictions.",
+  "type": "object",
+  "required": [
+    "inspectVersion",
+    "toolVersion",
+    "offline",
+    "project",
+    "config",
+    "target",
+    "fixtures",
+    "plan",
+    "fingerprint"
+  ],
+  "properties": {
+    "inspectVersion": {
+      "description": "The inspect format version. This schema validates version 1 only; an unsupported version makes the whole document invalid.",
+      "const": 1
+    },
+    "toolVersion": {
+      "description": "The Canary CLI's own semver, independent of inspectVersion and protocol. Informational; never use it for feature detection.",
+      "type": "string"
+    },
+    "offline": {
+      "description": "Always true. Inspect remains offline in every mode.",
+      "const": true
+    },
+    "project": {
+      "description": "Diagnostics and detected capabilities of the project under test.",
+      "type": "object",
+      "required": ["root", "rootSelectedBy", "type", "typeSource", "detectedType", "capabilities"],
+      "properties": {
+        "root": {
+          "description": "Project root relative to current directory (e.g. \".\"). Never absolute.",
+          "type": "string"
+        },
+        "rootSelectedBy": {
+          "description": "How the project root was selected: current-directory or flag.",
+          "type": "string",
+          "enum": ["current-directory", "flag"]
+        },
+        "type": {
+          "description": "Effective project type.",
+          "type": "string",
+          "enum": ["soroban", "rpc-consumer", "stellar-sdk", "generic-stellar", "unknown"]
+        },
+        "typeSource": {
+          "description": "Source of the effective project type: detected or config.",
+          "type": "string",
+          "enum": ["detected", "config"]
+        },
+        "detectedType": {
+          "description": "What detection alone produced without configuration overrides.",
+          "type": "string",
+          "enum": ["soroban", "rpc-consumer", "stellar-sdk", "generic-stellar", "unknown"]
+        },
+        "capabilities": {
+          "description": "Sorted list of detected capability names (lowercase kebab).",
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "workspace": {
+          "description": "Workspace member structure when detected.",
+          "type": "object",
+          "properties": {
+            "members": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "detection": {
+          "description": "Evidence collected during project detection.",
+          "type": "object",
+          "properties": {
+            "evidenceVersion": { "type": "integer" },
+            "root": { "type": "string" },
+            "inspected": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "capabilities": {
+              "type": "array",
+              "items": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "config": {
+      "description": "Configuration file status and effective settings.",
+      "type": "object",
+      "required": ["found", "path", "version", "protocol", "projectType", "tests", "policy"],
+      "properties": {
+        "found": { "type": "boolean" },
+        "path": { "type": ["string", "null"] },
+        "version": { "type": "integer" },
+        "protocol": { "type": "integer", "minimum": 1 },
+        "projectType": { "type": "string" },
+        "tests": {
+          "type": "object",
+          "required": ["xdr", "rpc", "soroban"],
+          "properties": {
+            "xdr": { "type": "boolean" },
+            "rpc": { "type": "boolean" },
+            "soroban": { "type": "boolean" }
+          }
+        },
+        "policy": {
+          "type": "object",
+          "required": ["warningsAreFailures"],
+          "properties": {
+            "warningsAreFailures": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "target": {
+      "description": "Protocol target and how it was chosen.",
+      "type": "object",
+      "required": ["protocol", "source"],
+      "properties": {
+        "protocol": { "type": "integer", "minimum": 1 },
+        "source": {
+          "type": "string",
+          "enum": ["flag", "config", "default"]
+        }
+      }
+    },
+    "fixtures": {
+      "description": "Discovered fixture inventory overview.",
+      "type": "object",
+      "required": ["directoryFound", "loaded"],
+      "properties": {
+        "directoryFound": { "type": "boolean" },
+        "loaded": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "plan": {
+      "description": "Fixture execution plan and compatibility refusal status.",
+      "type": "object",
+      "required": ["wouldRun", "skipped", "checkWouldRefuse", "refusal"],
+      "properties": {
+        "wouldRun": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "surface"],
+            "properties": {
+              "id": { "type": "string" },
+              "surface": {
+                "type": "string",
+                "enum": ["xdr", "rpc", "soroban"]
+              }
+            }
+          }
+        },
+        "skipped": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "surface", "code", "reason"],
+            "properties": {
+              "id": { "type": "string" },
+              "surface": {
+                "type": "string",
+                "enum": ["xdr", "rpc", "soroban"]
+              },
+              "code": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "checkWouldRefuse": { "type": "boolean" },
+        "refusal": { "type": ["string", "null"] }
+      }
+    },
+    "workspace": {
+      "description": "Workspace member diagnostics.",
+      "type": "object",
+      "properties": {
+        "members": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "fingerprint": {
+      "description": "Project deterministic fingerprint (CA-04).",
+      "type": "object",
+      "required": ["fingerprintVersion", "detector", "digest", "inputs"],
+      "properties": {
+        "fingerprintVersion": { "type": "integer" },
+        "detector": { "type": "integer" },
+        "digest": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        },
+        "inputs": { "type": "integer", "minimum": 0 },
+        "inputList": {
+          "type": "array",
+          "items": { "type": "object" }
+        }
+      }
+    }
+  }
+}

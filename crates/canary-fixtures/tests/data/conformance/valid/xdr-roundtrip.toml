@@ -1,0 +1,10 @@
+id = "conformance-valid-xdr-roundtrip"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "Accepted XDR roundtrip fixture shape."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "roundtrip"
+value_base64 = "AAAAAA=="

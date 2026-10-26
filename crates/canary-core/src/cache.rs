@@ -611,7 +611,9 @@ mod tests {
         store
             .put(&key, Surface::Rpc, &sample_result(Status::Pass))
             .unwrap();
-        let written = SystemTime::now();
+        let entry: CacheEntry =
+            serde_json::from_slice(&std::fs::read(store.entry_path(&key)).unwrap()).unwrap();
+        let written = UNIX_EPOCH + Duration::from_secs(entry.created_at);
 
         let at = |secs: u64| store.get_at(&key, Surface::Rpc, written + Duration::from_secs(secs));
         assert!(at(0).is_some(), "just written");

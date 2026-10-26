@@ -37,7 +37,7 @@ The contracts defined in [`docs/contracts/`](contracts/README.md) establish shar
 - **[CF-02: Fixture Registry & Pack Digest](contracts/cf-02-registry-and-digest.md)**: Canonical registry and SHA-256 pack fingerprinting.
 - **[CF-03: Lockfile Specification](contracts/cf-03-lockfile.md)**: `.stellar-canary.lock` format and pin validation.
 - **[CF-04: Verification Evidence](contracts/cf-04-verification-evidence.md)**: Live network capture records and provenance proofs.
-- **[CF-05: Report Comparison & Diff](contracts/cf-05-report-comparison.md)**: Comparing runs across versions and environments.
+- **[CF-05: Report Comparison & Diff](contracts/cf-05-report-comparison.md)**: Comparing runs across versions and environments. Its golden corpus of report pairs and expected outputs is `crates/canary-report/tests/fixtures/diff/`, pinned by `crates/canary-report/tests/transition_matrix.rs`.
 - **[CF-06: Canonical Fixture Releases](contracts/cf-06-fixture-releases.md)**: Packaging and release distribution.
 - **[CF-07: Project Roots & Detection](contracts/cf-07-project-roots-and-detection.md)**: Workspace detection and project capability scanning.
 - **[CF-08: Viewer & GitHub Action Integration](contracts/cf-08-viewer-and-action.md)**: CI integration and report viewer.
@@ -49,3 +49,15 @@ The contracts defined in [`docs/contracts/`](contracts/README.md) establish shar
 
 - **[JSON Report Contract (`json-report-contract.md`)](json-report-contract.md)**  
   The exact byte-level contract emitted when `stellar-canary check --json` or `stellar-canary report` is invoked.
+
+---
+
+## 5. Published JSON Schemas (`docs/schemas/`)
+
+Each schema is draft 2020-12 and is checked against the Rust implementation by a
+test suite in the crate that owns the format.
+
+- **[`report-v1.schema.json`](schemas/report-v1.schema.json)** — the `check --format json` report (CF-01), pinned by `crates/canary-report/tests/schema.rs`.
+- **[`fixtures-v1.schema.json`](schemas/fixtures-v1.schema.json)** — the `fixtures --format json` inventory (CA-02).
+- **[`inspect-v1.schema.json`](schemas/inspect-v1.schema.json)** — the `inspect --format json` plan (CA-03).
+- **[`config-v1.schema.json`](schemas/config-v1.schema.json)** — `.stellar-canary.toml`, tested by `crates/canary-config/tests/schema.rs` and pinned against the loader by `crates/canary-config/tests/schema_parity.rs`. Unlike the other three it closes every table with `additionalProperties: false`, mirroring the loader's `deny_unknown_fields`, and it constrains the shape of `network`, `rpc_url` and `fixtures_dir` with `pattern` — the one place the schema is stricter than the loader, which stores those three values verbatim so a flag can still outrank a bad stored value.

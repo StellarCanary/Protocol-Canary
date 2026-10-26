@@ -279,3 +279,49 @@ fn inspect_reports_an_empty_plan_that_check_would_refuse() {
         doc["plan"]["refusal"]
     );
 }
+
+#[test]
+fn inspect_shows_when_project_type_overrides_detection() {
+    let dir = TempProject::new("inspect-override");
+    dir.write(
+        ".stellar-canary.toml",
+        "version = 1\nprotocol = 28\n\n[project]\ntype = \"rpc-consumer\"\n",
+    );
+    dir.write(
+        "Cargo.toml",
+        "[package]\nname = \"soroban-proj\"\nversion = \"0.1.0\"\n\n[dependencies]\nsoroban-sdk = \"22\"\n",
+    );
+
+    let output = run_in(&dir.path, &["inspect"]);
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("Project type: rpc-consumer"));
+    assert!(text.contains("(detected as soroban by auto-detection; overridden by configuration)"));
+
+    let json_output = run_in(&dir.path, &["inspect", "--format", "json"]);
+    assert!(json_output.status.success());
+    let doc: Value = serde_json::from_str(&stdout(&json_output)).expect("valid JSON");
+    assert_eq!(doc["project"]["type"], "rpc-consumer");
+    assert_eq!(doc["project"]["typeSource"], "config");
+    assert_eq!(doc["project"]["detectedType"], "soroban");
+    assert_eq!(
+        doc["project"]["detection"]["projectType"]["value"],
+        "rpc-consumer"
+    );
+    assert_eq!(
+        doc["project"]["detection"]["projectType"]["source"],
+        "config"
+    );
+    assert_eq!(
+        doc["project"]["detection"]["projectType"]["detectedValue"],
+        "soroban"
+    );
+    let diagnostics = doc["project"]["detection"]["diagnostics"]
+        .as_array()
+        .unwrap();
+    assert!(diagnostics.iter().any(|d| d["code"] == "override-notice"
+        && d["detail"]
+            .as_str()
+            .unwrap()
+            .contains("overrides detected type 'soroban'")));
+}

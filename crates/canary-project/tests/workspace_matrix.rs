@@ -385,7 +385,7 @@ fn polyglot_members_within_the_global_bound_are_all_scanned() {
 // ---------------------------------------------------------------------------
 
 /// A workspace with exactly `MAX_WORKSPACE_MEMBERS` members scans with no
-/// diagnostics; one member more reports `scan-bound-hit` and still
+/// diagnostics; one member more reports `scan-bound-reached` and still
 /// resolves the first `MAX_WORKSPACE_MEMBERS` members.
 #[test]
 fn the_member_bound_reports_one_over_and_scans_exactly_the_limit() {
@@ -421,11 +421,11 @@ fn the_member_bound_reports_one_over_and_scans_exactly_the_limit() {
         exact.path()
     });
     assert_eq!(scan.members.len(), MAX_WORKSPACE_MEMBERS);
-    assert_eq!(codes(&scan), vec!["scan-bound-hit"]);
+    assert_eq!(codes(&scan), vec!["scan-bound-reached"]);
 }
 
 /// A member pattern deeper than `MAX_WORKSPACE_DEPTH` levels reports
-/// `scan-bound-hit` without disturbing the scan of shallower members:
+/// `scan-bound-reached` without disturbing the scan of shallower members:
 /// cross-tier containment, not early termination.
 #[test]
 fn a_member_deeper_than_the_depth_bound_is_skipped_and_reported() {
@@ -441,7 +441,7 @@ fn a_member_deeper_than_the_depth_bound_is_skipped_and_reported() {
 
     let scan = scan_cargo_workspace(dir.path());
     assert_eq!(member_paths(&scan), vec!["one/two/three/four", "shallow"]);
-    assert_eq!(codes(&scan), vec!["scan-bound-hit"]);
+    assert_eq!(codes(&scan), vec!["scan-bound-reached"]);
     // The skipped member's soroban-sdk is invisible to this scan.
     assert!(!scan.members.iter().any(|m| m
         .manifest
@@ -460,7 +460,7 @@ fn a_member_deeper_than_the_depth_bound_is_skipped_and_reported() {
         details
             .diagnostics
             .iter()
-            .any(|d| d.code == DiagnosticCode::ScanBoundHit),
+            .any(|d| d.code == DiagnosticCode::ScanBoundReached),
         "{details:?}"
     );
 }

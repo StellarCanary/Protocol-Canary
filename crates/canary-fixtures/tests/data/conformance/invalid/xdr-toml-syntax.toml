@@ -1,0 +1,10 @@
+id = "conformance-invalid-xdr-toml-syntax"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "Malformed TOML: unterminated string value."
+source_reference = "CAP-0083"
+
+type = "StellarValue
+kind = "decode-success"
+value_base64 = "AAAAAA=="

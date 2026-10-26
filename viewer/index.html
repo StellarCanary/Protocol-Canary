@@ -22,6 +22,12 @@
       <input id="file" type="file" accept=".json,application/json">
     </div>
 
+    <div id="inventory-drop" class="drop drop-optional">
+      <label for="inventory-file">Fixture inventory, optional: the output of <code>stellar-canary fixtures --format json</code></label>
+      <input id="inventory-file" type="file" accept=".json,application/json">
+      <p id="inventory-status" aria-live="polite"></p>
+    </div>
+
     <section id="result" hidden>
       <div id="protocol-mismatch" class="mismatch-banner" role="alert" hidden></div>
       <h2 id="heading"></h2>
@@ -35,6 +41,7 @@
 
       <div id="findings" hidden>
         <h3 id="findings-heading">Findings</h3>
+        <p class="hint">Select a fixture id to open its detail dialog: verification record, fixture SHA-256, pack digest and protocol.</p>
         <div class="controls">
           <div id="tabs" class="tabs" role="tablist" aria-label="Filter findings by surface">
             <button id="tab-all" type="button" role="tab" aria-selected="true" tabindex="0" aria-controls="panel-findings" data-surface="all">All</button>
@@ -44,12 +51,23 @@
           </div>
           <div class="search">
             <label for="search">Search findings</label>
-            <input id="search" type="search" placeholder="Fixture id or summary" aria-controls="findings-list">
+            <input id="search" type="search" placeholder="Fixture id or summary" aria-controls="panel-findings">
           </div>
         </div>
         <p id="search-status" aria-live="polite"></p>
         <div id="panel-findings" role="tabpanel" aria-labelledby="tab-all">
-          <ul id="findings-list"></ul>
+          <section id="group-ready" class="readiness" hidden>
+            <h4 id="ready-heading" class="readiness-heading">Ready</h4>
+            <ul id="ready-list"></ul>
+          </section>
+          <section id="group-attention" class="readiness" hidden>
+            <h4 id="attention-heading" class="readiness-heading">Attention Required</h4>
+            <ul id="attention-list"></ul>
+          </section>
+          <section id="group-incomplete" class="readiness" hidden>
+            <h4 id="incomplete-heading" class="readiness-heading">Incomplete</h4>
+            <ul id="incomplete-list"></ul>
+          </section>
           <p id="findings-empty" hidden></p>
         </div>
       </div>
@@ -101,7 +119,7 @@
 
     <aside>
       <h2>Before you share a report</h2>
-      <p>A report can contain the project directory name and the Git branch name. Check it before posting it publicly. This page has no upload, copy or print feature.</p>
+      <p>A report can contain the project directory name and the Git branch name. Check it before posting it publicly. This page has no upload feature; the copy control in the fixture detail dialog puts one value on your clipboard and sends nothing.</p>
     </aside>
   </main>
 
@@ -111,6 +129,17 @@
     <pre tabindex="0"><code id="report-source-code"></code></pre>
     <div class="dialog-actions">
       <button id="close-source" type="button">Close</button>
+    </div>
+  </dialog>
+
+  <dialog id="fixture-detail" aria-labelledby="fixture-detail-title">
+    <h2 id="fixture-detail-title">Fixture detail</h2>
+    <p id="fixture-detail-note">Every value here comes from a file you chose in this tab. A report can carry your project directory name and Git branch name: copying puts one value on your clipboard, and nothing is uploaded or fetched.</p>
+    <p id="fixture-verification" class="verification-state"></p>
+    <dl id="fixture-facts"></dl>
+    <p id="copy-status" role="status" aria-live="polite"></p>
+    <div class="dialog-actions">
+      <button id="close-fixture" type="button">Close</button>
     </div>
   </dialog>
 

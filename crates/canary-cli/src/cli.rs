@@ -73,6 +73,9 @@ pub enum Command {
     Completions(CompletionsArgs),
     /// Print the tool version.
     Version,
+    /// Verify a fixture pack against its registry manifest.
+    #[command(subcommand)]
+    FixturePack(FixturePackArgs),
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -742,6 +745,30 @@ pub struct CompletionsArgs {
     /// powershell.
     #[arg(value_enum, value_name = "SHELL")]
     pub shell: CompletionShell,
+}
+
+/// Arguments for the `stellar-canary fixture-pack` subcommand.
+///
+/// `fixture-pack` provides offline operations on fixture packs: verify
+/// checks a pack directory or archive against its registry manifest.
+#[derive(Debug, Subcommand)]
+pub enum FixturePackArgs {
+    /// Verify a fixture pack directory against its registry-v1.json manifest.
+    /// Computes the CF-02 canonical pack digest and verifies file checksums.
+    /// Exits 0 on success, 6 on checksum mismatch or verification failure.
+    Verify(FixturePackVerifyArgs),
+}
+
+/// Arguments for `stellar-canary fixture-pack verify`.
+#[derive(Debug, Parser)]
+pub struct FixturePackVerifyArgs {
+    /// Path to a fixture pack directory or archive to verify.
+    pub path: PathBuf,
+
+    /// Path to the registry-v1.json manifest. If omitted, looks for
+    /// registry.json in the pack root.
+    #[arg(long, value_name = "PATH")]
+    pub registry: Option<PathBuf>,
 }
 
 #[cfg(test)]

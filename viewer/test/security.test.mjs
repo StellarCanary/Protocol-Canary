@@ -103,11 +103,8 @@ test("structural attacks are refused with the CF-01 reason, never thrown", () =>
   const badEnum = maliciousReport();
   badEnum.results[0].surface = "evm";
   const badStatus = maliciousReport({ status: "excellent" });
-  const wrongVersion = { ...maliciousReport(), schemaVersion: 2 };
-
   const cases = [
     ["{unterminated", /not valid JSON/],
-    [JSON.stringify(wrongVersion), /schemaVersion must be 1/],
     [JSON.stringify(dup), /repeats the result identity/],
     [JSON.stringify(badEnum), /surface must be one of/],
     [JSON.stringify(badStatus), /status must be one of/],
@@ -118,6 +115,13 @@ test("structural attacks are refused with the CF-01 reason, never thrown", () =>
     assert.equal(outcome.ok, false, "expected refusal for " + pattern);
     assert.match(outcome.reason, pattern);
   }
+
+  // An unsupported schemaVersion is no longer a structural refusal: the
+  // viewer accepts the report and shows its guidance banner (CF-01), so
+  // parser-level validation must accept it too.
+  const wrongVersion = JSON.stringify({ ...maliciousReport(), schemaVersion: 2 });
+  const accepted = V.parseReport(wrongVersion);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted.reason ?? null));
 });
 
 /* --- rendering layer: the page must not turn payloads into markup --- */

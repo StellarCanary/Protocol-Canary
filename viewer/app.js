@@ -247,7 +247,7 @@
     if (currentQuery !== "") {
       text = matched === 0
         ? "No results match \"" + currentQuery + "\"."
-        : matched + " of " + currentReport.results.length + " results match \"" + currentQuery + "\".";
+        : matched + " of " + currentReport.results.length + " results match \"" + currentQuery + "\"."
     } else if (matched === 0) {
       text = "No results in this view.";
     } else {
@@ -599,8 +599,16 @@
     file.text().then(function (text) {
       setSourcePreview(text);
       var parsed = V.parseReport(text);
-      if (parsed.ok) showReport(parsed.report);
-      else showInvalid(parsed.reason);
+      if (parsed.ok) {
+        // Check schema version before showing the report
+        if (parsed.report.schemaVersion !== 1) {
+          showUnsupportedSchemaWarning(parsed.report);
+          return;
+        }
+        showReport(parsed.report);
+      } else {
+        showInvalid(parsed.reason);
+      }
     }, function () {
       showInvalid("the file could not be read");
     });
@@ -833,6 +841,20 @@
     var next = dark ? "light" : "dark";
     applyTheme(next);
     storeTheme(next);
+  }
+
+  // ---------------------------------------------------------------
+  // Schema version warning (issue #437)
+  // ---------------------------------------------------------------
+
+  function showUnsupportedSchemaWarning(report) {
+    var banner = el("schema-version-warning");
+    var schemaVersion = report.schemaVersion;
+    var displayVersion = (typeof schemaVersion === "number" || typeof schemaVersion === "string") ?
+      String(schemaVersion) : "unknown";
+    banner.textContent = "Unsupported report schema version " + displayVersion + ". This viewer supports schemaVersion 1. See the upgrade documentation for guidance.";
+    banner.hidden = false;
+    el("result").hidden = true;
   }
 
   function init() {

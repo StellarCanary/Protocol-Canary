@@ -18,6 +18,10 @@
   --banner-bg: #b42318;
   --banner-fg: #ffffff;
   --banner-border: #7a1510;
+  /* Shared with the dark media query; the palette test keeps them in
+   * step. White on #b42318 is 6.1:1, above AA. */
+  --schema-warning-bg: #b42318;
+  --schema-warning-fg: #ffffff;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -57,6 +61,8 @@
   --banner-bg: #8c1d18;
   --banner-fg: #ffe9e6;
   --banner-border: #ff7b72;
+  --schema-warning-bg: #b42318;
+  --schema-warning-fg: #ffffff;
 }
 
 body {

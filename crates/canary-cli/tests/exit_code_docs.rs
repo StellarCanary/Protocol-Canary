@@ -37,6 +37,7 @@ fn variant_name(code: ExitCode) -> &'static str {
         ExitCode::ExecutionError => "ExecutionError",
         ExitCode::InvalidFixture => "InvalidFixture",
         ExitCode::InternalError => "InternalError",
+        ExitCode::VerificationFailure => "VerificationFailure",
     }
 }
 

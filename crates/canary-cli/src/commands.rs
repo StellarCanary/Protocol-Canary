@@ -7,6 +7,8 @@ use canary_core::{
     CachePolicy, CacheStore, CanaryError, DefaultPolicyEvaluator, ExecutionContext, ExitCode,
     NetworkContext, Policy, PolicyEvaluator, ProtocolVersion, RunOptions, Surface,
 };
+
+use crate::cli::FixturePackArgs;
 use canary_git::{collect_git_context, CliGitRepository};
 use canary_report::{
     diff, JUnitReporter, JsonReporter, MarkdownReporter, NetworkSummary, ProjectSummary,
@@ -1394,6 +1396,251 @@ fn run_lock_inner(args: LockArgs) -> Result<ExitCode, CanaryError> {
 pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass
+}
+
+/// Verifies a fixture pack directory against its registry-v1.json manifest.
+///
+/// Computes the CF-02 canonical pack digest and verifies that all fixture
+/// files match their SHA-256 hashes recorded in the registry. Exits 0 on
+/// success, 1 on any verification failure.
+///
+/// # Errors
+///
+/// Returns an [`ExitCode`] rather than a `Result`. Any error encountered
+/// during verification is printed to stderr and mapped to an appropriate
+/// exit code:
+/// - [`ExitCode::ConfigurationError`] if the pack path does not exist,
+///   the registry manifest is missing or invalid, or the pack is malformed.
+/// - [`ExitCode::VerificationFailure`] if any file checksum or the pack
+///   digest does not match the registry.
+pub async fn run_fixture_pack(args: FixturePackArgs) -> ExitCode {
+    match run_fixture_pack_inner(args).await {
+        Ok(exit_code) => exit_code,
+        Err(err) => {
+            print_error(&err);
+            ExitCode::from(&err)
+        }
+    }
+}
+
+async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, CanaryError> {
+    use canary_fixtures::digest::{pack_digest, sha256_hex, PackError};
+    use serde::Deserialize;
+
+    let FixturePackArgs::Verify(verify_args) = args;
+    let pack_path = verify_args.path;
+    let registry_path_opt = verify_args.registry;
+
+    // Verify the pack path exists and is a directory
+    let pack_meta = std::fs::metadata(&pack_path).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "failed to read pack path {}: {e}",
+            pack_path.display()
+        ))
+    })?;
+    if !pack_meta.is_dir() {
+        return Err(CanaryError::Configuration(format!(
+            "pack path {} is not a directory",
+            pack_path.display()
+        )));
+    }
+
+    // Load the registry manifest
+    let registry_path = registry_path_opt.unwrap_or_else(|| pack_path.join("registry.json"));
+
+    let registry_bytes = std::fs::read(&registry_path).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "failed to read registry manifest {}: {e}",
+            registry_path.display()
+        ))
+    })?;
+
+    // Parse the registry manifest
+    #[derive(Deserialize)]
+    struct RegistryFixture {
+        #[allow(dead_code)]
+        id: String,
+        path: String,
+        sha256: String,
+        #[serde(default)]
+        payloads: Vec<PayloadEntry>,
+    }
+
+    #[derive(Deserialize)]
+    struct PayloadEntry {
+        path: String,
+        sha256: String,
+    }
+
+    #[derive(Deserialize)]
+    struct RegistryManifest {
+        registry_version: u32,
+        protocol: u32,
+        fixtures: Vec<RegistryFixture>,
+        pack_digest: String,
+    }
+
+    let registry: RegistryManifest = serde_json::from_slice(&registry_bytes).map_err(|e| {
+        CanaryError::Configuration(format!(
+            "failed to parse registry manifest {}: {e}",
+            registry_path.display()
+        ))
+    })?;
+
+    if registry.registry_version != 1 {
+        return Err(CanaryError::Configuration(format!(
+            "unsupported registry version: expected 1, got {}",
+            registry.registry_version
+        )));
+    }
+
+    // Compute the pack digest
+    let pack_digest_result = pack_digest(&pack_path).map_err(|e| match e {
+        PackError::Io { path, source } => CanaryError::Configuration(format!(
+            "failed to read pack file {}: {source}",
+            path.display()
+        )),
+        PackError::SymbolicLink { path } => {
+            CanaryError::Configuration(format!("pack contains a symbolic link: {}", path.display()))
+        }
+        PackError::InvalidPath { path, reason } => {
+            CanaryError::Configuration(format!("invalid pack path {}: {reason}", path))
+        }
+        PackError::CaseCollision { first, second } => CanaryError::Configuration(format!(
+            "pack paths {} and {} differ only by letter case",
+            first, second
+        )),
+        PackError::BadReference {
+            file,
+            field,
+            reference,
+            reason,
+        } => CanaryError::Configuration(format!(
+            "{file}: {field} {reference:?} is not usable: {reason}"
+        )),
+        PackError::InvalidToml { file, message } => {
+            CanaryError::Configuration(format!("{file} is not valid TOML: {message}"))
+        }
+        PackError::Limit(msg) => CanaryError::Configuration(format!("pack limit exceeded: {msg}")),
+    })?;
+
+    // Verify pack digest matches registry
+    if pack_digest_result.digest != registry.pack_digest {
+        eprintln!(
+            "error: pack digest mismatch\n  computed: {}\n  expected: {}",
+            pack_digest_result.digest, registry.pack_digest
+        );
+        return Ok(ExitCode::VerificationFailure);
+    }
+
+    // Build a map of file paths to their expected SHA-256 hashes from the registry
+    let mut expected_hashes: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+
+    for fixture in &registry.fixtures {
+        // Verify fixture file exists and matches its hash
+        let fixture_abs_path = pack_path.join(&fixture.path);
+        let fixture_meta = std::fs::symlink_metadata(&fixture_abs_path).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "failed to read fixture file {}: {e}",
+                fixture_abs_path.display()
+            ))
+        })?;
+
+        if !fixture_meta.is_file() {
+            eprintln!(
+                "error: fixture file not found: {}",
+                fixture_abs_path.display()
+            );
+            return Ok(ExitCode::VerificationFailure);
+        }
+
+        let fixture_bytes = std::fs::read(&fixture_abs_path).map_err(|e| {
+            CanaryError::Configuration(format!(
+                "failed to read fixture file {}: {e}",
+                fixture_abs_path.display()
+            ))
+        })?;
+
+        let actual_hash = sha256_hex(&fixture_bytes);
+        if actual_hash != fixture.sha256 {
+            eprintln!(
+                "error: fixture checksum mismatch for {}\n  computed: {}\n  expected: {}",
+                fixture.path, actual_hash, fixture.sha256
+            );
+            return Ok(ExitCode::VerificationFailure);
+        }
+
+        expected_hashes.insert(fixture.path.clone(), fixture.sha256.clone());
+
+        // Verify payload files
+        for payload in &fixture.payloads {
+            let payload_abs_path = pack_path.join(&payload.path);
+            let payload_meta = std::fs::symlink_metadata(&payload_abs_path).map_err(|e| {
+                CanaryError::Configuration(format!(
+                    "failed to read payload file {}: {e}",
+                    payload_abs_path.display()
+                ))
+            })?;
+
+            if !payload_meta.is_file() {
+                eprintln!(
+                    "error: payload file not found: {}",
+                    payload_abs_path.display()
+                );
+                return Ok(ExitCode::VerificationFailure);
+            }
+
+            let payload_bytes = std::fs::read(&payload_abs_path).map_err(|e| {
+                CanaryError::Configuration(format!(
+                    "failed to read payload file {}: {e}",
+                    payload_abs_path.display()
+                ))
+            })?;
+
+            let payload_hash = sha256_hex(&payload_bytes);
+            if payload_hash != payload.sha256 {
+                eprintln!(
+                    "error: payload checksum mismatch for {}\n  computed: {}\n  expected: {}",
+                    payload.path, payload_hash, payload.sha256
+                );
+                return Ok(ExitCode::VerificationFailure);
+            }
+
+            expected_hashes.insert(payload.path.clone(), payload.sha256.clone());
+        }
+    }
+
+    // Verify that all files in the pack digest are accounted for in the registry
+    for pack_file in &pack_digest_result.files {
+        if !expected_hashes.contains_key(&pack_file.path) {
+            eprintln!(
+                "error: file in pack digest not found in registry: {}",
+                pack_file.path
+            );
+            return Ok(ExitCode::VerificationFailure);
+        }
+        if expected_hashes.get(&pack_file.path).unwrap() != &pack_file.sha256 {
+            eprintln!(
+                "error: file hash mismatch in pack digest for {}\n  computed: {}\n  expected: {}",
+                pack_file.path,
+                pack_file.sha256,
+                expected_hashes.get(&pack_file.path).unwrap()
+            );
+            return Ok(ExitCode::VerificationFailure);
+        }
+    }
+
+    // Success
+    println!("Fixture pack verification passed:");
+    println!("  Protocol: {}", registry.protocol);
+    println!("  Registry version: {}", registry.registry_version);
+    println!("  Pack digest: {}", registry.pack_digest);
+    println!("  Fixtures verified: {}", registry.fixtures.len());
+    println!("  All file checksums match registry.");
+    println!("  Pack digest matches registry.");
+
+    Ok(ExitCode::Pass)
 }
 
 /// Deletes every cached fixture execution result under the cache directory

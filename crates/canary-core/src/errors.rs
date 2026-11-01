@@ -79,6 +79,7 @@ pub enum ExitCode {
     ExecutionError = 3,
     InvalidFixture = 4,
     InternalError = 5,
+    VerificationFailure = 6,
 }
 
 impl ExitCode {
@@ -132,6 +133,7 @@ impl fmt::Display for ExitCode {
             ExitCode::ExecutionError => "execution_error",
             ExitCode::InvalidFixture => "invalid_fixture",
             ExitCode::InternalError => "internal_error",
+            ExitCode::VerificationFailure => "verification_failure",
         };
         f.write_str(name)
     }
@@ -201,7 +203,8 @@ mod tests {
                 | ExitCode::ConfigurationError
                 | ExitCode::ExecutionError
                 | ExitCode::InvalidFixture
-                | ExitCode::InternalError => {}
+                | ExitCode::InternalError
+                | ExitCode::VerificationFailure => {}
             }
         }
     }
@@ -228,6 +231,7 @@ mod tests {
         assert_eq!(ExitCode::ExecutionError.code(), 3);
         assert_eq!(ExitCode::InvalidFixture.code(), 4);
         assert_eq!(ExitCode::InternalError.code(), 5);
+        assert_eq!(ExitCode::VerificationFailure.code(), 6);
     }
 
     #[test]

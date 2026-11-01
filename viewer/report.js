@@ -37,12 +37,15 @@
 
   /* Validates parsed JSON against report schema version 1 (CF-01). Returns
    * `{ ok: true, report }` or `{ ok: false, reason }` with the first problem.
-   * Unknown extra fields are ignored. */
+   * Unknown extra fields are ignored.
+   *
+   * Note: schemaVersion != 1 is not treated as a validation failure here;
+   * the viewer handles it separately to show an upgrade guidance banner.
+   */
   function validate(value) {
     if (!isObject(value)) return fail("the report must be a JSON object");
-    if (value.schemaVersion !== 1) {
-      return fail("schemaVersion must be 1 (found " + describe(value.schemaVersion) + ")");
-    }
+    // schemaVersion is checked by the viewer, not here - we accept any
+    // value so the viewer can show appropriate guidance.
     if (typeof value.toolVersion !== "string") return fail("toolVersion must be a string");
     if (!isInteger(value.targetProtocol) || value.targetProtocol < 0) {
       return fail("targetProtocol must be a non-negative integer");

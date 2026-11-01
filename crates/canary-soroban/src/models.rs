@@ -15,7 +15,7 @@
 
 use serde_json::Value as JsonValue;
 
-use canary_rpc::SimulationResult;
+use canary_rpc::models::SimulationResult;
 
 /// One required authorization entry parsed from a simulation result's
 /// `auth` array.

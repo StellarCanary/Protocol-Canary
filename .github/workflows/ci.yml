@@ -122,4 +122,5 @@ jobs:
           viewer/test/security.test.mjs
           viewer/test/a11y.test.mjs
           viewer/test/publish.test.mjs
+          tests/release-asset.test.mjs
 

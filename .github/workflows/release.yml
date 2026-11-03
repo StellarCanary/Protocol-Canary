@@ -10,16 +10,31 @@ env:
   CARGO_TERM_COLOR: always
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
     name: Verify workspace and tags
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Confirm the release commit is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RELEASE_SHA}...main" --jq .status)
+          if [[ "$status" != "ahead" && "$status" != "identical" ]]; then
+            echo "::error::Release commit $RELEASE_SHA is not on main (comparison: $status)"
+            exit 1
+          fi
 
       - name: Install Rust toolchain
         run: rustup show
@@ -74,6 +89,8 @@ jobs:
             rustflags: --remap-path-prefix=${{ github.workspace }}=/build
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain and target
         run: |
@@ -124,7 +141,7 @@ jobs:
           [System.IO.File]::WriteAllText($shaPath, "$hash  ${{ matrix.archive_name }}.zip`n")
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-artifacts-${{ matrix.target }}
           path: dist/*
@@ -138,7 +155,7 @@ jobs:
       contents: write
     steps:
       - name: Download all build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: dist
           pattern: release-artifacts-*

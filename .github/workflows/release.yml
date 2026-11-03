@@ -24,6 +24,18 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Confirm the release commit is on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          status=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${RELEASE_SHA}...main" --jq .status)
+          if [[ "$status" != "ahead" && "$status" != "identical" ]]; then
+            echo "::error::Release commit $RELEASE_SHA is not on main (comparison: $status)"
+            exit 1
+          fi
+
       - name: Install Rust toolchain
         run: rustup show
 

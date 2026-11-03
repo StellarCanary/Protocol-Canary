@@ -169,7 +169,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "canary-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-config",
  "canary-core",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "canary-config"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "serde",
@@ -203,7 +203,7 @@ dependencies = [
 
 [[package]]
 name = "canary-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -213,7 +213,7 @@ dependencies = [
 
 [[package]]
 name = "canary-fixtures"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "canary-rpc",
@@ -230,7 +230,7 @@ dependencies = [
 
 [[package]]
 name = "canary-git"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "thiserror",
@@ -238,7 +238,7 @@ dependencies = [
 
 [[package]]
 name = "canary-project"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "serde",
@@ -250,7 +250,7 @@ dependencies = [
 
 [[package]]
 name = "canary-report"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "quick-xml",
@@ -261,7 +261,7 @@ dependencies = [
 
 [[package]]
 name = "canary-rpc"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "canary-fixtures",
@@ -276,7 +276,7 @@ dependencies = [
 
 [[package]]
 name = "canary-runner"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "canary-fixtures",
@@ -292,7 +292,7 @@ dependencies = [
 
 [[package]]
 name = "canary-soroban"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "canary-core",
  "canary-fixtures",
@@ -309,7 +309,7 @@ dependencies = [
 
 [[package]]
 name = "canary-xdr"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "base64 0.23.1",
  "canary-core",

@@ -4,7 +4,17 @@ All notable changes to this project are documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-03
+
 ### Added
+
+- RPC fixtures now accept `get-version-info`, including its
+  `protocolVersion` field. This allows the published Protocol 29 fixture pack
+  to execute against a released Engine. The pack still requires a separate
+  pinned Action update.
+- RPC fixture support also includes `get-health`, `get-fee-stats`, ledger and
+  transaction lookups, event queries, and their validated request and
+  assertion forms. Each method remains read-only.
 
 - XDR fixtures can compare a decoded value to expected JSON with
   `kind = "decode-json-equals"` and an `expected_json` JSON string. The value

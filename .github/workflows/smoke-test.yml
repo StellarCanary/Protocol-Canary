@@ -14,6 +14,7 @@ permissions:
 
 jobs:
   smoke-test:
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
     name: smoke-test (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
@@ -36,6 +37,10 @@ jobs:
             binary: stellar-canary.exe
             archive_ext: zip
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
       - name: Resolve the release tag
         id: release
         shell: bash
@@ -48,6 +53,10 @@ jobs:
           tag="${INPUT_TAG:-$EVENT_TAG}"
           if [ -z "$tag" ]; then
             tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must have the form vMAJOR.MINOR.PATCH"
+            exit 1
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -63,6 +72,16 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pattern "${{ matrix.archive }}" \
             --dir dist
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "SHA256SUMS" \
+            --dir dist
+
+      - name: Verify the exact published asset checksum
+        env:
+          ASSET_PATH: dist/${{ matrix.archive }}
+          MANIFEST_PATH: dist/SHA256SUMS
+        run: node scripts/verify-release-asset.mjs "$ASSET_PATH" "$MANIFEST_PATH"
 
       - name: Unpack the archive
         shell: bash

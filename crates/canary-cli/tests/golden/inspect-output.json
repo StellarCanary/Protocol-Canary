@@ -1,6 +1,6 @@
 {
   "inspectVersion": 1,
-  "toolVersion": "0.2.0",
+  "toolVersion": "0.3.0",
   "offline": true,
   "project": {
     "root": ".",

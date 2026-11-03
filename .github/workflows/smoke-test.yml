@@ -78,6 +78,7 @@ jobs:
             --dir dist
 
       - name: Verify the exact published asset checksum
+        shell: bash
         env:
           ASSET_PATH: dist/${{ matrix.archive }}
           MANIFEST_PATH: dist/SHA256SUMS

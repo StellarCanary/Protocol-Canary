@@ -10,7 +10,7 @@ so it should be approved explicitly rather than inherited from a default.
 | ID | Proposed direction | Status | Security-sensitive | Technical review (what was checked and what it found) | Blocker or evidence needed |
 |---|---|---|---|---|---|
 | D-01 | Optional additive report fields stay within `schemaVersion` 1; a breaking change needs version 2. | Approved | No | Consistent with CF-01 and with the one field already added (`results[].source`). One consequence to state in the decision: adding a value to a closed enum (`status`, `surface`) is breaking, because both the engine and the Action reject unknown values on purpose. | None; maintainer approved. |
-| D-03 | Commit the canonical registry in `ProtocolCanary-Fixtures` and verify freshness in CI. | Approved | No | A committed, generated file that every fixture-changing pull request must regenerate is a merge-conflict hot spot during a Wave. Mitigation recorded in CF-02: one registry per protocol pack (so only PRs to the same pack conflict), and the freshness check prints the regenerate command. With 7 fixtures today the cost is small. | None; maintainer approved. |
+| D-03 | Generate the unchanged canonical registry deterministically from each pack in isolated CI output; fixture contributions do not commit or update a shared registry. Validate the complete registry in CI and include it at the existing root path in release archives. | Approved, amended 2026-11-06 | No | The original committed-registry decision made contributors to one protocol pack edit the same file. The amendment removes that source-checkout conflict. CI still fails closed on missing or inconsistent fixture content, and the release builder still emits the canonical registry. Source-checkout Engine verification now requires generating a temporary registry and passing `--registry`; release archive verification is unchanged. | Maintainer approved Choice 2. The source-checkout workflow change is not fully backward-compatible. |
 | D-04 | A stale lockfile fails with exit code 2 and a clear diagnostic. | Approved | Low | Same code as the empty-plan refusal (D-02); the message is the discriminator. A caller that needs to tell the two apart cannot do so by code. | None; maintainer approved. |
 | D-05 | Default freshness window for live verification evidence is 30 days. | Approved | No | Applies to CF-04 evidence only. Unrelated to the result cache, which has no default window. No evidence records or scheduled verification exist yet, so the number has no effect until FX work lands. | None; maintainer approved. |
 | D-06 | Bounded archives, scans and report sizes, with the numbers in CF-05, CF-06, CF-07 and CA-01 / CA-04. | Approved | Yes (resource limits) | Measured today: the Protocol 28 pack is 8 files and 17,102 bytes (largest file 3,450 bytes); a Mainnet `getLatestLedger` response was about 1.28 MB on 2026-10-09. The proposed archive limits (2,000 entries, 16 MiB total, 1 MiB per file) leave roughly 1,000 times the pack's size; the maintainers may prefer tighter archive numbers (for example 1 MiB total, 256 KiB per file) with an explicit way to raise them. The RPC response cap (16 MiB) is about 12 times the largest observed response. | None; maintainer approved the stated numeric limits across extraction, scanning, RPC responses, diff input and manifest size. |
@@ -29,3 +29,20 @@ These are corrections to text, not approvals.
 2. CF-03 and CF-01 now reserve `lock.warnings` so D-12 can be visible to consumers.
 3. CF-08 now records the shared Pages origin next to D-08b.
 4. CF-06 and D-06 now cite the measured pack and response sizes next to the proposed limits.
+
+## D-03 decision history
+
+**Original decision, approved 2026-10-09:** commit the canonical registry in
+`ProtocolCanary-Fixtures` and verify its freshness in CI. The rationale was
+fast consumer verification and offline usability; shared edits were accepted
+as a per-pack merge-conflict cost.
+
+**Amendment, approved 2026-11-06:** retain the registry-v1 schema, canonical
+ordering, hashing, path rules and release archive format, while generating the
+registry in isolated CI output and release builds. Independent fixture
+contributions no longer commit or update a shared registry. A source checkout
+consumer generates the registry into a temporary location and supplies it to
+`stellar-canary fixture-pack verify --registry`. This deliberately changes the
+source-checkout workflow; it is not a fully backward-compatible change. The
+release archive keeps its existing generated root `registry.json` and its
+default Engine verification behavior.

@@ -3,7 +3,7 @@
 # its offline fixtures pass. Used by CI against ProtocolCanary-Fixtures, and
 # runnable by hand:
 #
-#   scripts/check-canonical-pack.sh <path-to-stellar-canary> <pack-dir> <min-xdr-fixtures> [malformed-vector]
+#   scripts/check-canonical-pack.sh <path-to-stellar-canary> <pack-dir> <min-xdr-fixtures> [malformed-vector] [protocol] [expected-xdr-ids] [expected-skipped-id]
 #
 # <pack-dir> is the executable pack (the `protocol-28` directory of
 # ProtocolCanary-Fixtures), not the repository root: the loader walks every
@@ -16,6 +16,10 @@
 # keeping the vectors out of <pack-dir> cannot hide a loader that stopped
 # rejecting them.
 #
+# [protocol] defaults to 28 to preserve existing callers. The optional
+# expected-id arguments make a protocol-specific leg prove that those exact
+# XDR fixtures ran and that a named non-XDR fixture remained skipped.
+#
 # It makes no network call: RPC and Soroban checks are switched off in the
 # throwaway project, so only the offline XDR fixtures execute. It does not say
 # anything about the RPC or Soroban fixtures.
@@ -25,44 +29,43 @@ bin=$(realpath "$1")
 pack=$(realpath "$2")
 min_xdr=${3:-1}
 malformed=${4:-}
+protocol=${5:-28}
+expected_xdr_ids=${6:-}
+expected_skipped_id=${7:-}
 [ -z "$malformed" ] || malformed=$(realpath "$malformed")
+[[ "$protocol" =~ ^[1-9][0-9]*$ ]] || { echo "protocol must be a positive integer" >&2; exit 2; }
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$work"
-printf 'version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n' > .stellar-canary.toml
+printf 'version = 1\nprotocol = %s\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n' "$protocol" > .stellar-canary.toml
 
 echo "== fixtures listing loads"
-"$bin" fixtures --fixtures-dir "$pack" --protocol 28 > listing.txt
+"$bin" fixtures --fixtures-dir "$pack" --protocol "$protocol" > listing.txt
 cat listing.txt
 
 echo "== offline check passes"
-"$bin" check --fixtures-dir "$pack" --protocol 28 --json --no-cache > report.json
-python3 - "$min_xdr" <<'PY'
-import json, sys
-report = json.load(open("report.json"))
-need = int(sys.argv[1])
-counts = report["counts"]
-assert report["status"] == "pass", report["status"]
-assert counts["failed"] == 0 and counts["errors"] == 0, counts
-assert counts["total"] >= need, f"expected at least {need} executed fixtures, got {counts}"
-assert all(r["surface"] == "xdr" for r in report["results"]), "only offline fixtures should run"
-assert all(r.get("source") == "live" for r in report["results"]), "--no-cache results must be live"
-print("ok:", counts)
-PY
+"$bin" check --fixtures-dir "$pack" --protocol "$protocol" --json --no-cache > report.json
+python3 "$script_dir/canonical_pack_report.py" report.json \
+  --protocol "$protocol" \
+  --minimum-xdr "$min_xdr" \
+  --expected-xdr-ids "$expected_xdr_ids" \
+  --expected-skipped-id "$expected_skipped_id"
 
 echo "== a protocol the pack has no fixtures for is refused, not passed"
+empty_protocol=$((protocol + 1))
 set +e
-"$bin" check --fixtures-dir "$pack" --protocol 29 > out29.txt 2> err29.txt
+"$bin" check --fixtures-dir "$pack" --protocol "$empty_protocol" > out-empty.txt 2> err-empty.txt
 code=$?
 set -e
-[ "$code" -eq 2 ] || { echo "expected exit 2, got $code"; cat err29.txt; exit 1; }
-grep -q "no checks ran" err29.txt || { echo "missing diagnostic"; cat err29.txt; exit 1; }
-[ ! -s out29.txt ] || { echo "stdout should be empty"; exit 1; }
+[ "$code" -eq 2 ] || { echo "expected exit 2, got $code"; cat err-empty.txt; exit 1; }
+grep -q "no checks ran" err-empty.txt || { echo "missing diagnostic"; cat err-empty.txt; exit 1; }
+[ ! -s out-empty.txt ] || { echo "stdout should be empty"; exit 1; }
 echo "ok: exit 2 with diagnostic"
 
 echo "== --allow-empty restores the old exit code"
-"$bin" check --fixtures-dir "$pack" --protocol 29 --allow-empty --json > allow.json 2> allow.err
+"$bin" check --fixtures-dir "$pack" --protocol "$empty_protocol" --allow-empty --json > allow.json 2> allow.err
 grep -q '"total": 0' allow.json
 grep -q "not evidence of compatibility" allow.err
 echo "ok"
@@ -72,7 +75,7 @@ if [ -n "$malformed" ]; then
   mkdir vector
   cp "$malformed" vector/
   set +e
-  "$bin" fixtures --fixtures-dir vector --protocol 28 > vec.txt 2> vec.err
+  "$bin" fixtures --fixtures-dir vector --protocol "$protocol" > vec.txt 2> vec.err
   code=$?
   set -e
   [ "$code" -eq 4 ] || { echo "expected exit 4, got $code"; cat vec.err; exit 1; }

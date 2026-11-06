@@ -1457,6 +1457,7 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
 
     // Parse the registry manifest
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct RegistryFixture {
         #[allow(dead_code)]
         id: String,
@@ -1467,12 +1468,14 @@ async fn run_fixture_pack_inner(args: FixturePackArgs) -> Result<ExitCode, Canar
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct PayloadEntry {
         path: String,
         sha256: String,
     }
 
     #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct RegistryManifest {
         registry_version: u32,
         protocol: u32,

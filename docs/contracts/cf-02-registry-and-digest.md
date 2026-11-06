@@ -1,7 +1,6 @@
 # CF-02: Fixture registry and pack digest
 
-Status: frozen for implementation planning, contract version 1.
-Updated with maintainer decision D-03 (canonical registry committed in ProtocolCanary-Fixtures with CI freshness check).
+Status: contract version 1, amended by maintainer decision D-03 on 2026-11-06.
 Authoritative for: registry JSON structure, canonical ordering, hashing inputs
 and the pack digest. Both the Rust engine and the Python tooling in
 `ProtocolCanary-Fixtures` implement it and must agree byte for byte.
@@ -94,10 +93,27 @@ fail when a registry value differs from the TOML value.
 
 JSON encoding: UTF-8, LF line endings, two-space indent, one trailing newline,
 object keys in the order shown above, no duplicate keys. Arrays are sorted as in
-section 4. The registry is committed in ProtocolCanary-Fixtures in a way that makes it
-byte-reproducible (approved under D-03). A committed generated file is a conflict hot spot when many
-fixture pull requests land together, so there is one registry per protocol pack and
-the freshness check prints the regeneration command.
+section 4. The canonical registry is generated deterministically from the pack
+contents. Fixture contributions do not commit or update a shared
+`registry-v1.json`; CI generates it into an isolated temporary location and
+validates its complete contents and schema. The schema, ordering, hashes, paths,
+and digest inputs in this contract are unchanged.
+
+The release archive contains the generated canonical registry at its existing
+root path, `registry.json` (CF-06). A source checkout has no committed registry.
+To verify a checkout with the Engine, generate one outside the pack and pass it
+explicitly:
+
+```bash
+registry_dir="$(mktemp -d)"
+python3 tools/registry/generate.py protocol-29 --output "$registry_dir/registry.json"
+stellar-canary fixture-pack verify protocol-29 --registry "$registry_dir/registry.json"
+```
+
+The generated file is temporary input for verification; contributors must not
+add it to their branch. This source-checkout workflow changes from the earlier
+D-03 decision and is not described as fully backward-compatible. The published
+v1 archive format and its default Engine verification path remain unchanged.
 
 The registry excludes git commits, timestamps, absolute paths and host
 information. A pack's git revision is provenance and is recorded elsewhere
@@ -156,7 +172,11 @@ A registry validator (Python, in `ProtocolCanary-Fixtures`) and a verifier
    extra entry.
 4. Registry metadata equals TOML metadata.
 5. Registry bytes equal the canonical encoding (re-encode and compare).
-6. Freshness: CI regenerates the registry and fails on any difference.
+6. Determinism and freshness: CI generates the registry twice into isolated
+   temporary outputs and requires byte-for-byte equality. It validates the
+   generated registry's full content against the current pack and the v1
+   schema. A missing fixture, payload or inconsistent content is a failure;
+   CI never repairs or writes a registry to the contributor's checkout.
 
 ## 7. Security and trust boundaries
 
@@ -172,7 +192,8 @@ its root or loop.
 
 - Engine: digest verification library and `fixtures --json` output (CF-01
   `fixturePack`).
-- Fixtures: generator, schema for the registry, CI freshness check.
+- Fixtures: generator, unchanged schema for the registry, temporary-output CI
+  validation, and release archive generation.
 - Action: reads `packDigest` from a lockfile or release manifest and compares;
   does not compute it (CLI authoritative).
 - CF-03 and CF-06 depend on this contract. CF-04 attaches verification records

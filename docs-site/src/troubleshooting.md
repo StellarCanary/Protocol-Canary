@@ -15,19 +15,30 @@ invoke the binary by its full path.
 
 ## Wrong version reported
 
-**Symptom.** `stellar-canary version` prints something other than
-`0.1.1`, or behavior doesn't match this documentation.
+**Symptom.** `stellar-canary version` prints an older release (such as
+`0.1.0` or `0.1.1`) instead of the current published release (`0.3.0`), or
+CLI behavior doesn't match the version you intended to run.
 
-**Likely cause.** An older install (e.g. `0.1.0`) is still first on
-`PATH`, or `cargo install` was run without `--tag v0.1.1`.
+**Likely cause.** An earlier binary is still first on `PATH`, or
+`cargo install` was run with an older `--tag` (or without `--force` when
+upgrading an existing installation).
 
 **What to check.** `stellar-canary version` and `which stellar-canary`.
 
-**Fix.** Reinstall with the exact tag:
+**Fix (current release).** Follow the current [Installation](./installation.md)
+guide to install the latest published release (or download the prebuilt
+release binary and verify `SHA256SUMS` as described in
+[Releases](./releases.md)), or reinstall from source with the current
+release tag:
+`cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.3.0 --locked --force`.
+
+**Historical note for `v0.1.1` environments.** If you are intentionally
+matching the default `0.1.1` engine version used by `ProtocolCanary-Action@v1`,
+reinstall with the `v0.1.1` tag:
 `cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked --force`.
-`0.1.0` predates `ContractExecutable` XDR support two current Protocol 28
-fixtures require, and its report predates the `counts` field — see
-[Releases](./releases.md).
+Note that `0.1.0` predates `ContractExecutable` XDR support two current
+Protocol 28 fixtures require, and its report predates the `counts` field —
+see [Releases](./releases.md).
 
 ## Fixture directory not found
 

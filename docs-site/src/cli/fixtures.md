@@ -48,13 +48,21 @@ XDR
   p28-xdr-cap83-empty-tx-set
   p28-xdr-cap85-external-ref-malformed
   p28-xdr-cap85-external-ref-roundtrip
+  ...
 
 RPC
   p28-rpc-network
+  ...
 
 Soroban
   p28-soroban-native-asset-name
+  ...
 ```
+
+(Illustrative excerpt — the full `protocol-28` fixture pack contains
+additional XDR, RPC, and Soroban fixture definitions; a complete command
+run prints every matching fixture in the directory. Pass `--surface` or
+`--category` to narrow the output to a specific subset.)
 
 Fixtures are grouped by surface and listed in sorted-path order, matching
 `check`'s deterministic ordering. Use this to confirm which fixtures a
@@ -136,8 +144,9 @@ stellar-canary fixtures --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --pro
 }
 ```
 
-(Example output trimmed to one fixture per surface for clarity; a real
-directory lists every fixture of the protocol.)
+(Illustrative excerpt trimmed to one fixture per surface — the `counts`
+and `fixtures` array above reflect this 3-fixture sample; running against
+the full `protocol-28` directory outputs all fixtures for the protocol.)
 
 ### Field reference
 

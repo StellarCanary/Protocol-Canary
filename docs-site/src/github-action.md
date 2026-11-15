@@ -87,14 +87,25 @@ check it out as a separate step and point `fixtures-dir` at it:
 
 ## Installation & integrity
 
-`Protocol-Canary` does not yet publish prebuilt release binaries or
-checksums (see [Releases](./releases.md)). This Action installs it with
-`cargo install --git`, pinned to the immutable commit the requested
-version's tag resolved to at run time (falling back to the tag itself,
-with a visible warning, only if that resolution fails). This requires a
-Rust/Cargo toolchain on the runner — GitHub-hosted Ubuntu runners include
-one by default. A successful build is cached (best-effort, via
-`actions/cache`; never required for correctness).
+The `Protocol-Canary` Engine publishes prebuilt release assets and SHA-256
+checksum manifests on GitHub Releases (see [Releases](./releases.md)). Specifically,
+the published Engine `v0.3.0` release includes `SHA256SUMS` alongside downloadable
+assets and per-asset `.sha256` files for four target combinations:
+
+- Linux x86_64: `stellar-canary-linux-x86_64` (`stellar-canary-linux-x86_64.sha256`) and `stellar-canary-x86_64-unknown-linux-gnu.tar.gz` (`stellar-canary-x86_64-unknown-linux-gnu.tar.gz.sha256`)
+- macOS x86_64: `stellar-canary-x86_64-apple-darwin.tar.gz` (`stellar-canary-x86_64-apple-darwin.tar.gz.sha256`)
+- macOS aarch64: `stellar-canary-aarch64-apple-darwin.tar.gz` (`stellar-canary-aarch64-apple-darwin.tar.gz.sha256`)
+- Windows x86_64: `stellar-canary-x86_64-pc-windows-msvc.zip` (`stellar-canary-x86_64-pc-windows-msvc.zip.sha256`)
+
+Separately from those Engine release assets, the documented `ProtocolCanary-Action@v1`
+major tag (currently pointing to commit `42790008fa8ab4580c6de7900af57fba2f8766ed`)
+does not download prebuilt release archives: its installer still builds from source
+using `cargo install --git`, pinned to the immutable commit the requested version's
+tag resolved to at run time (falling back to the tag itself, with a visible warning,
+only if that resolution fails), and its default `version` input remains `0.1.1`.
+Because `v1` builds with `cargo install`, it requires a Rust/Cargo toolchain on the
+runner — GitHub-hosted Ubuntu runners include one by default. A successful build is
+cached (best-effort, via `actions/cache`; never required for correctness).
 
 ## Summary, annotations, and artifact
 

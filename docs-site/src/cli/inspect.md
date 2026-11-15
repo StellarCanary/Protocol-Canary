@@ -158,7 +158,7 @@ stellar-canary inspect --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --prot
   "fingerprint": {
     "fingerprintVersion": 1,
     "detector": 1,
-    "digest": "sha256:859e9ac27cdbe3ee8bbaac66355d2e4ab98879e7c27f5d8a099e5a34ec0144bc",
+    "digest": "sha256:859e9ac27cdbe3ee8bbaac666355d2e4ab98879e7c27f5d8a099e5a34ec0144bc",
     "inputs": 1
   }
 }
@@ -175,7 +175,7 @@ when one is detected.)
 | `inspectVersion` | integer | Document format version; always `1` today. Consumers must reject an unknown version. |
 | `toolVersion` | string | The CLI's own semver. Informational — never use it for feature detection. |
 | `offline` | boolean | Always `true`: `inspect` is offline in every mode. |
-| `project` | object | Project root (`root`, relative), how it was selected (`rootSelectedBy`: `current-directory` or `flag`), the effective `type` and where it came from (`typeSource`: `detected` or `config`), what detection alone produced (`detectedType`), the sorted `capabilities` list, and the `detection` evidence block. |
+| `project` | object | Project root (`root`, relative), how it was selected (`rootSelectedBy`: `current-directory` or `flag`), the effective `type` and where it came from (`typeSource`: `detected` or `config`), what detection alone produced (`detectedType`), the sorted `capabilities` list, `workspace` (`members`), and the `detection` evidence block. |
 | `config` | object | Configuration file status and effective settings: `found`, `path` (`null` when absent), `version`, `protocol`, `projectType`, the per-surface `tests` switches, and `policy.warningsAreFailures`. |
 | `target` | object | The protocol actually targeted and its `source`: `flag`, `config` or `default`. |
 | `fixtures` | object | `directoryFound` and `loaded`: how many fixtures the directory yielded in total (all protocols), before planning. |
@@ -186,6 +186,26 @@ when one is detected.)
 `project.type` and `project.detectedType` are one of `soroban`,
 `rpc-consumer`, `stellar-sdk`, `generic-stellar` or `unknown`. Unknown
 values in a newer document must be treated as `unknown`.
+
+### Project detection (`project.detection`)
+
+`project.detection` records the structured evidence collected by the
+project detector:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `evidenceVersion` | integer | Detection evidence schema version (`1`). |
+| `root` | string | Relative path of the inspected project root (never absolute). |
+| `capabilities` | array of objects | Per-capability evidence entries (`InspectCapabilityEvidence`), each containing `capability` (string) and `evidence` (array of evidence item objects). |
+| `inspected` | array of strings | Relative paths of manifest and artifact files examined during detection. |
+| `diagnostics` | array of objects | Non-fatal detection diagnostics (`InspectDiagnostic`), each containing `code` (string) and `detail` (string). |
+| `projectType` | object | Project-type resolution record (`InspectProjectTypeEvidence`) with required `value` (string) and `source` (string, `detected` or `config`), plus optional `detectedValue` (string, omitted when absent). |
+
+Each item in `project.detection.capabilities[].evidence` (`InspectEvidenceItem`)
+always serializes `manifest` (string) and `ecosystem` (string). Its optional
+properties — `dependency` (string), `section` (string), `sourceFile` (string),
+`matchedText` (string), and `reason` (string) — are omitted when absent rather
+than serialized as `null`.
 
 ### The plan
 

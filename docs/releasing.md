@@ -75,8 +75,22 @@ only the workflow logs. On Linux, for example:
 mkdir -p verify && cd verify
 gh release download vX.Y.Z -R StellarCanary/Protocol-Canary
 sha256sum -c SHA256SUMS
-chmod +x stellar-canary-linux-x86_64  # or stellar-canary-linux-aarch64 on ARM64
-./stellar-canary-linux-x86_64 --version  # Reports stellar-canary X.Y.Z.
+
+case "$(uname -m)" in
+  aarch64|arm64)
+    binary="stellar-canary-linux-aarch64"
+    ;;
+  x86_64|amd64)
+    binary="stellar-canary-linux-x86_64"
+    ;;
+  *)
+    echo "Unsupported architecture: $(uname -m)" >&2
+    exit 1
+    ;;
+esac
+
+chmod +x "$binary"
+"./$binary" --version
 ```
 
 The `Release smoke test` workflow runs on `release.published` and downloads

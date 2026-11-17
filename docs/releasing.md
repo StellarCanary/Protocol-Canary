@@ -3,9 +3,10 @@
 How an engine release is cut and what to verify before and after. It describes
 only what exists today: a versioned git tag and the GitHub Release automatically
 published by `.github/workflows/release.yml`. The workflow produces release
-archives for Linux x86_64, macOS x86_64 and ARM64, and Windows x86_64. It also
-produces a standalone Linux x86_64 binary, individual `.sha256` checksum
-files, and a combined `SHA256SUMS` manifest.
+archives for Linux x86_64 and ARM64, macOS x86_64 and ARM64, and Windows x86_64.
+It also produces standalone Linux x86_64 and ARM64 binaries (`stellar-canary-linux-x86_64`
+and `stellar-canary-linux-aarch64`), individual `.sha256` checksum files, and a
+combined `SHA256SUMS` manifest.
 
 A checksum from the same release page as the binary protects against corruption
 and truncated downloads. It does not prove who published the release. Release
@@ -52,19 +53,21 @@ these targets with `cargo build --workspace --release --locked`:
 | Target | Release archive |
 |---|---|
 | Linux x86_64 | `stellar-canary-x86_64-unknown-linux-gnu.tar.gz` |
+| Linux ARM64 | `stellar-canary-aarch64-unknown-linux-gnu.tar.gz` |
 | macOS x86_64 | `stellar-canary-x86_64-apple-darwin.tar.gz` |
 | macOS ARM64 | `stellar-canary-aarch64-apple-darwin.tar.gz` |
 | Windows x86_64 | `stellar-canary-x86_64-pc-windows-msvc.zip` |
 
-It also publishes the standalone Linux binary `stellar-canary-linux-x86_64`,
-per-asset `.sha256` files, and the combined `SHA256SUMS` file. The publish job
-verifies these checksums before uploading release assets. The release workflow
-does not currently produce release signatures or provenance attestations.
+It also publishes standalone Linux binaries (`stellar-canary-linux-x86_64` and
+`stellar-canary-linux-aarch64`), per-asset `.sha256` files, and the combined
+`SHA256SUMS` file. The publish job verifies these checksums before uploading
+release assets. The release workflow does not currently produce release
+signatures or provenance attestations.
 
 ## After the workflow finishes
 
 Confirm the release workflow passed and the published release contains all
-expected archives, the standalone Linux binary, individual checksums, and
+expected archives, standalone Linux binaries, individual checksums, and
 `SHA256SUMS`. Verify the actual published bytes from a clean directory, not
 only the workflow logs. On Linux, for example:
 
@@ -72,16 +75,17 @@ only the workflow logs. On Linux, for example:
 mkdir -p verify && cd verify
 gh release download vX.Y.Z -R StellarCanary/Protocol-Canary
 sha256sum -c SHA256SUMS
-chmod +x stellar-canary-linux-x86_64
+chmod +x stellar-canary-linux-x86_64  # or stellar-canary-linux-aarch64 on ARM64
 ./stellar-canary-linux-x86_64 --version  # Reports stellar-canary X.Y.Z.
 ```
 
 The `Release smoke test` workflow runs on `release.published` and downloads
-the Linux x86_64, macOS ARM64, and Windows x86_64 archives. It verifies each
+the Linux x86_64, Linux ARM64, macOS ARM64, and Windows x86_64 archives. It verifies each
 archive against `SHA256SUMS`, extracts it, checks the reported version, and
-runs `--help`. Confirm each smoke-test job passed. The macOS x86_64 archive
-is built and checksummed, but is not part of that three-target smoke matrix.
-A checksum protects against a corrupted download, not a malicious publisher.
+runs `--help`. Confirm each smoke-test job passed. Historical releases that predate
+Linux ARM64 assets may skip the ARM64 smoke test when run manually via `workflow_dispatch`.
+The macOS x86_64 archive is built and checksummed, but is not part of that four-target
+smoke matrix. A checksum protects against a corrupted download, not a malicious publisher.
 
 Then confirm the tag still points at the intended commit:
 

@@ -9,7 +9,8 @@
 use std::fmt;
 
 use stellar_xdr::{
-    ContractExecutable, LedgerEntry, Limits, ReadXdr, StellarValue, TransactionEnvelope,
+    ContractExecutable, LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, ReadXdr, StellarValue,
+    TransactionEnvelope,
 };
 
 /// A type name a fixture can name in its `type` field.
@@ -20,6 +21,8 @@ pub enum XdrTypeName {
     ScVal,
     TransactionEnvelope,
     LedgerEntry,
+    LedgerHeader,
+    LedgerCloseMeta,
 }
 
 impl fmt::Display for XdrTypeName {
@@ -30,6 +33,8 @@ impl fmt::Display for XdrTypeName {
             XdrTypeName::ScVal => f.write_str("ScVal"),
             XdrTypeName::TransactionEnvelope => f.write_str("TransactionEnvelope"),
             XdrTypeName::LedgerEntry => f.write_str("LedgerEntry"),
+            XdrTypeName::LedgerHeader => f.write_str("LedgerHeader"),
+            XdrTypeName::LedgerCloseMeta => f.write_str("LedgerCloseMeta"),
         }
     }
 }
@@ -44,9 +49,12 @@ impl std::str::FromStr for XdrTypeName {
             "ScVal" => Ok(XdrTypeName::ScVal),
             "TransactionEnvelope" => Ok(XdrTypeName::TransactionEnvelope),
             "LedgerEntry" => Ok(XdrTypeName::LedgerEntry),
+            "LedgerHeader" => Ok(XdrTypeName::LedgerHeader),
+            "LedgerCloseMeta" => Ok(XdrTypeName::LedgerCloseMeta),
             other => Err(format!(
                 "unsupported XDR type name {other:?}: supported types are: StellarValue, \
-                 ContractExecutable, ScVal, TransactionEnvelope, LedgerEntry"
+                 ContractExecutable, ScVal, TransactionEnvelope, LedgerEntry, \
+                 LedgerHeader, LedgerCloseMeta"
             )),
         }
     }
@@ -65,6 +73,14 @@ pub enum DecodedValue {
     /// an entire WASM module) dwarfs the other variants; the indirection
     /// keeps `DecodedValue` small enough to move.
     LedgerEntry(Box<LedgerEntry>),
+    /// Boxed because a full `LedgerHeader` (carrying hashes, skip list, and
+    /// consensus values) is significantly larger than the smaller variants;
+    /// the indirection keeps `DecodedValue` compact.
+    LedgerHeader(Box<LedgerHeader>),
+    /// Boxed because `LedgerCloseMeta` (which holds an entire ledger's worth
+    /// of transaction results, upgrades, and ledger header history) dwarfs
+    /// the other variants; the indirection keeps `DecodedValue` small enough to move.
+    LedgerCloseMeta(Box<LedgerCloseMeta>),
 }
 
 impl DecodedValue {
@@ -92,6 +108,8 @@ impl DecodedValue {
             DecodedValue::ScVal(_) => XdrTypeName::ScVal,
             DecodedValue::TransactionEnvelope(_) => XdrTypeName::TransactionEnvelope,
             DecodedValue::LedgerEntry(_) => XdrTypeName::LedgerEntry,
+            DecodedValue::LedgerHeader(_) => XdrTypeName::LedgerHeader,
+            DecodedValue::LedgerCloseMeta(_) => XdrTypeName::LedgerCloseMeta,
         }
     }
 
@@ -115,6 +133,8 @@ impl DecodedValue {
             DecodedValue::ScVal(value) => serde_json::to_value(value),
             DecodedValue::TransactionEnvelope(value) => serde_json::to_value(value),
             DecodedValue::LedgerEntry(value) => serde_json::to_value(value),
+            DecodedValue::LedgerHeader(value) => serde_json::to_value(value),
+            DecodedValue::LedgerCloseMeta(value) => serde_json::to_value(value),
         }
     }
 }
@@ -234,6 +254,26 @@ pub fn decode_ledger_entry(base64_text: &str) -> Result<LedgerEntry, XdrDecodeEr
     read_xdr_from_base64(XdrTypeName::LedgerEntry, base64_text)
 }
 
+/// Decodes base64 LedgerHeader XDR.
+///
+/// Fails with [`XdrDecodeError`] when the input is not valid base64, when
+/// the decoded bytes are not a complete `LedgerHeader`, or when bytes remain
+/// after the value. Re-encoding the result with
+/// [`crate::encode_ledger_header`] reproduces the input byte for byte.
+pub fn decode_ledger_header(base64_text: &str) -> Result<LedgerHeader, XdrDecodeError> {
+    read_xdr_from_base64(XdrTypeName::LedgerHeader, base64_text)
+}
+
+/// Decodes base64 LedgerCloseMeta XDR (V0, V1, or V2).
+///
+/// Fails with [`XdrDecodeError`] when the input is not valid base64, when
+/// the decoded bytes are not a complete `LedgerCloseMeta`, or when bytes remain
+/// after the value. Re-encoding the result with
+/// [`crate::encode_ledger_close_meta`] reproduces the input byte for byte.
+pub fn decode_ledger_close_meta(base64_text: &str) -> Result<LedgerCloseMeta, XdrDecodeError> {
+    read_xdr_from_base64(XdrTypeName::LedgerCloseMeta, base64_text)
+}
+
 /// Decodes `base64` as the named XDR type.
 ///
 /// An error here is a real decode failure, not a tool bug: it is the
@@ -258,6 +298,10 @@ pub fn decode(type_name: XdrTypeName, base64: &str) -> Result<DecodedValue, stel
         }
         XdrTypeName::LedgerEntry => LedgerEntry::from_xdr_base64(base64, Limits::none())
             .map(|entry| DecodedValue::LedgerEntry(Box::new(entry))),
+        XdrTypeName::LedgerHeader => LedgerHeader::from_xdr_base64(base64, Limits::none())
+            .map(|header| DecodedValue::LedgerHeader(Box::new(header))),
+        XdrTypeName::LedgerCloseMeta => LedgerCloseMeta::from_xdr_base64(base64, Limits::none())
+            .map(|meta| DecodedValue::LedgerCloseMeta(Box::new(meta))),
     }
 }
 
@@ -271,6 +315,14 @@ mod tests {
             "StellarValue".parse::<XdrTypeName>().unwrap(),
             XdrTypeName::StellarValue
         );
+        assert_eq!(
+            "LedgerHeader".parse::<XdrTypeName>().unwrap(),
+            XdrTypeName::LedgerHeader
+        );
+        assert_eq!(
+            "LedgerCloseMeta".parse::<XdrTypeName>().unwrap(),
+            XdrTypeName::LedgerCloseMeta
+        );
     }
 
     #[test]
@@ -281,6 +333,10 @@ mod tests {
     #[test]
     fn decode_fails_on_garbage_input() {
         let result = decode(XdrTypeName::StellarValue, "not-valid-base64-xdr!!!");
+        assert!(result.is_err());
+        let result = decode(XdrTypeName::LedgerHeader, "not-valid-base64-xdr!!!");
+        assert!(result.is_err());
+        let result = decode(XdrTypeName::LedgerCloseMeta, "not-valid-base64-xdr!!!");
         assert!(result.is_err());
     }
 
@@ -306,6 +362,24 @@ mod tests {
     }
 
     #[test]
+    fn parses_the_ledger_header_type_name() {
+        assert_eq!(
+            "LedgerHeader".parse::<XdrTypeName>().unwrap(),
+            XdrTypeName::LedgerHeader
+        );
+        assert_eq!(XdrTypeName::LedgerHeader.to_string(), "LedgerHeader");
+    }
+
+    #[test]
+    fn parses_the_ledger_close_meta_type_name() {
+        assert_eq!(
+            "LedgerCloseMeta".parse::<XdrTypeName>().unwrap(),
+            XdrTypeName::LedgerCloseMeta
+        );
+        assert_eq!(XdrTypeName::LedgerCloseMeta.to_string(), "LedgerCloseMeta");
+    }
+
+    #[test]
     fn decode_transaction_envelope_decodes_a_valid_envelope() {
         use stellar_xdr::WriteXdr;
 
@@ -327,6 +401,28 @@ mod tests {
         assert_eq!(decoded, LedgerEntry::default());
     }
 
+    #[test]
+    fn decode_ledger_header_decodes_a_valid_header() {
+        use stellar_xdr::WriteXdr;
+
+        let base64 = LedgerHeader::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let decoded = decode_ledger_header(&base64).unwrap();
+        assert_eq!(decoded, LedgerHeader::default());
+    }
+
+    #[test]
+    fn decode_ledger_close_meta_decodes_a_valid_meta() {
+        use stellar_xdr::WriteXdr;
+
+        let base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let decoded = decode_ledger_close_meta(&base64).unwrap();
+        assert_eq!(decoded, LedgerCloseMeta::default());
+    }
+
     /// Input that is not base64 at all has no decoded bytes to point into,
     /// so it is a distinct variant with offset 0 — never a parse error at
     /// some fabricated position.
@@ -337,6 +433,14 @@ mod tests {
         assert_eq!(err.byte_offset(), 0);
 
         let err = decode_ledger_entry("not valid base64!!!").unwrap_err();
+        assert!(matches!(err, XdrDecodeError::InvalidBase64(_)), "{err:?}");
+        assert_eq!(err.byte_offset(), 0);
+
+        let err = decode_ledger_header("not valid base64!!!").unwrap_err();
+        assert!(matches!(err, XdrDecodeError::InvalidBase64(_)), "{err:?}");
+        assert_eq!(err.byte_offset(), 0);
+
+        let err = decode_ledger_close_meta("not valid base64!!!").unwrap_err();
         assert!(matches!(err, XdrDecodeError::InvalidBase64(_)), "{err:?}");
         assert_eq!(err.byte_offset(), 0);
     }
@@ -370,6 +474,51 @@ mod tests {
             }
             other => panic!("expected InvalidXdr, got {other:?}"),
         }
+
+        let header_base64 = LedgerHeader::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let header_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&header_base64)
+            .unwrap();
+        let truncated_header = &header_bytes[..header_bytes.len() - 8];
+        let truncated_header_b64 =
+            base64::engine::general_purpose::STANDARD.encode(truncated_header);
+        let err = decode_ledger_header(&truncated_header_b64).unwrap_err();
+        match &err {
+            XdrDecodeError::InvalidXdr {
+                type_name, offset, ..
+            } => {
+                assert_eq!(*type_name, XdrTypeName::LedgerHeader);
+                assert!(
+                    *offset > 0 && *offset <= truncated_header.len() as u64,
+                    "offset must point into the truncated buffer, got {offset}"
+                );
+            }
+            other => panic!("expected InvalidXdr, got {other:?}"),
+        }
+
+        let meta_base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let meta_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&meta_base64)
+            .unwrap();
+        let truncated_meta = &meta_bytes[..meta_bytes.len() - 8];
+        let truncated_meta_b64 = base64::engine::general_purpose::STANDARD.encode(truncated_meta);
+        let err = decode_ledger_close_meta(&truncated_meta_b64).unwrap_err();
+        match &err {
+            XdrDecodeError::InvalidXdr {
+                type_name, offset, ..
+            } => {
+                assert_eq!(*type_name, XdrTypeName::LedgerCloseMeta);
+                assert!(
+                    *offset > 0 && *offset <= truncated_meta.len() as u64,
+                    "offset must point into the truncated buffer, got {offset}"
+                );
+            }
+            other => panic!("expected InvalidXdr, got {other:?}"),
+        }
     }
 
     /// A complete value followed by extra bytes is rejected (the same
@@ -396,6 +545,48 @@ mod tests {
                 offset, message, ..
             } => {
                 assert_eq!(*offset, value_len, "offset must be the end of the value");
+                assert!(message.contains("trailing"), "message: {message}");
+            }
+            other => panic!("expected InvalidXdr, got {other:?}"),
+        }
+
+        let header_base64 = LedgerHeader::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let mut header_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&header_base64)
+            .unwrap();
+        let header_len = header_bytes.len() as u64;
+        header_bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let header_trailing = base64::engine::general_purpose::STANDARD.encode(header_bytes);
+
+        let err = decode_ledger_header(&header_trailing).unwrap_err();
+        match &err {
+            XdrDecodeError::InvalidXdr {
+                offset, message, ..
+            } => {
+                assert_eq!(*offset, header_len, "offset must be the end of the value");
+                assert!(message.contains("trailing"), "message: {message}");
+            }
+            other => panic!("expected InvalidXdr, got {other:?}"),
+        }
+
+        let meta_base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let mut meta_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&meta_base64)
+            .unwrap();
+        let meta_len = meta_bytes.len() as u64;
+        meta_bytes.extend_from_slice(&[0, 0, 0, 0]);
+        let meta_trailing = base64::engine::general_purpose::STANDARD.encode(meta_bytes);
+
+        let err = decode_ledger_close_meta(&meta_trailing).unwrap_err();
+        match &err {
+            XdrDecodeError::InvalidXdr {
+                offset, message, ..
+            } => {
+                assert_eq!(*offset, meta_len, "offset must be the end of the value");
                 assert!(message.contains("trailing"), "message: {message}");
             }
             other => panic!("expected InvalidXdr, got {other:?}"),

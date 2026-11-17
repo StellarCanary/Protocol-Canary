@@ -1,6 +1,8 @@
 //! Re-encoding a previously decoded XDR value.
 
-use stellar_xdr::{LedgerEntry, Limits, TransactionEnvelope, WriteXdr};
+use stellar_xdr::{
+    LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, TransactionEnvelope, WriteXdr,
+};
 
 use crate::decoder::DecodedValue;
 
@@ -12,6 +14,8 @@ pub fn encode(value: &DecodedValue) -> Result<String, stellar_xdr::Error> {
         DecodedValue::ScVal(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::TransactionEnvelope(v) => v.to_xdr_base64(Limits::none()),
         DecodedValue::LedgerEntry(v) => v.to_xdr_base64(Limits::none()),
+        DecodedValue::LedgerHeader(v) => v.to_xdr_base64(Limits::none()),
+        DecodedValue::LedgerCloseMeta(v) => v.to_xdr_base64(Limits::none()),
     }
 }
 
@@ -39,11 +43,32 @@ pub fn encode_ledger_entry(entry: &LedgerEntry) -> Result<String, stellar_xdr::E
     entry.to_xdr_base64(Limits::none())
 }
 
+/// Encodes `header` as canonical base64 XDR.
+///
+/// `stellar-xdr`'s XDR writer is deterministic, so for any header produced
+/// by [`crate::decode_ledger_header`],
+/// `encode_ledger_header(decode_ledger_header(bytes))` reproduces `bytes`
+/// exactly.
+pub fn encode_ledger_header(header: &LedgerHeader) -> Result<String, stellar_xdr::Error> {
+    header.to_xdr_base64(Limits::none())
+}
+
+/// Encodes `meta` (V0, V1, or V2) as canonical base64 XDR.
+///
+/// `stellar-xdr`'s XDR writer is deterministic, so for any metadata produced
+/// by [`crate::decode_ledger_close_meta`],
+/// `encode_ledger_close_meta(decode_ledger_close_meta(bytes))` reproduces `bytes`
+/// exactly.
+pub fn encode_ledger_close_meta(meta: &LedgerCloseMeta) -> Result<String, stellar_xdr::Error> {
+    meta.to_xdr_base64(Limits::none())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::decoder::{
-        decode, decode_ledger_entry, decode_transaction_envelope, DecodedValue, XdrTypeName,
+        decode, decode_ledger_close_meta, decode_ledger_entry, decode_ledger_header,
+        decode_transaction_envelope, DecodedValue, XdrTypeName,
     };
     use stellar_xdr::{ContractExecutable, StellarValue};
 
@@ -62,6 +87,8 @@ mod tests {
             DecodedValue::ScVal(_) => panic!("expected StellarValue"),
             DecodedValue::TransactionEnvelope(_) => panic!("expected StellarValue"),
             DecodedValue::LedgerEntry(_) => panic!("expected StellarValue"),
+            DecodedValue::LedgerHeader(_) => panic!("expected StellarValue"),
+            DecodedValue::LedgerCloseMeta(_) => panic!("expected StellarValue"),
         }
     }
 
@@ -112,6 +139,52 @@ mod tests {
     }
 
     #[test]
+    fn encoding_a_decoded_ledger_header_reproduces_the_same_bytes() {
+        let original = LedgerHeader::default();
+        let base64 = encode_ledger_header(&original).expect("encodes");
+
+        let decoded = decode_ledger_header(&base64).expect("decodes");
+        let re_encoded = encode_ledger_header(&decoded).expect("re-encodes");
+
+        assert_eq!(base64, re_encoded);
+        assert_eq!(decoded, original);
+    }
+
+    /// The generic [`encode`] path must agree with the typed
+    /// [`encode_ledger_header`] for the same header, so fixtures that go
+    /// through `DecodedValue` are not encoded differently.
+    #[test]
+    fn the_generic_encode_path_agrees_with_the_typed_one_for_ledger_headers() {
+        let header = LedgerHeader::default();
+        let typed = encode_ledger_header(&header).expect("encodes");
+        let generic = encode(&DecodedValue::LedgerHeader(Box::new(header))).expect("encodes");
+        assert_eq!(typed, generic);
+    }
+
+    #[test]
+    fn encoding_a_decoded_ledger_close_meta_reproduces_the_same_bytes() {
+        let original = LedgerCloseMeta::default();
+        let base64 = encode_ledger_close_meta(&original).expect("encodes");
+
+        let decoded = decode_ledger_close_meta(&base64).expect("decodes");
+        let re_encoded = encode_ledger_close_meta(&decoded).expect("re-encodes");
+
+        assert_eq!(base64, re_encoded);
+        assert_eq!(decoded, original);
+    }
+
+    /// The generic [`encode`] path must agree with the typed
+    /// [`encode_ledger_close_meta`] for the same metadata, so fixtures that go
+    /// through `DecodedValue` are not encoded differently.
+    #[test]
+    fn the_generic_encode_path_agrees_with_the_typed_one_for_ledger_close_meta() {
+        let meta = LedgerCloseMeta::default();
+        let typed = encode_ledger_close_meta(&meta).expect("encodes");
+        let generic = encode(&DecodedValue::LedgerCloseMeta(Box::new(meta))).expect("encodes");
+        assert_eq!(typed, generic);
+    }
+
+    #[test]
     fn encoding_a_decoded_contract_executable_reproduces_the_same_value() {
         let value = ContractExecutable::Wasm(stellar_xdr::Hash([7; 32]));
         let base64 = encode(&DecodedValue::ContractExecutable(value.clone())).expect("encodes");
@@ -126,6 +199,8 @@ mod tests {
             DecodedValue::ScVal(_) => panic!("expected ContractExecutable"),
             DecodedValue::TransactionEnvelope(_) => panic!("expected ContractExecutable"),
             DecodedValue::LedgerEntry(_) => panic!("expected ContractExecutable"),
+            DecodedValue::LedgerHeader(_) => panic!("expected ContractExecutable"),
+            DecodedValue::LedgerCloseMeta(_) => panic!("expected ContractExecutable"),
         }
     }
 }

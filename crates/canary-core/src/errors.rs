@@ -98,6 +98,7 @@ impl ExitCode {
         ExitCode::ExecutionError,
         ExitCode::InvalidFixture,
         ExitCode::InternalError,
+        ExitCode::VerificationFailure,
     ];
 
     /// The raw numeric value of this exit code, as passed to the OS.
@@ -196,8 +197,21 @@ mod tests {
         // also listing it in `ExitCode::ALL` fails to compile here,
         // which in turn forces the documentation consistency tests in
         // `canary-cli` to see (and therefore require) the new code.
-        for &code in ExitCode::ALL {
-            match code {
+        let all_variants = [
+            ExitCode::Pass,
+            ExitCode::CompatibilityFailure,
+            ExitCode::ConfigurationError,
+            ExitCode::ExecutionError,
+            ExitCode::InvalidFixture,
+            ExitCode::InternalError,
+            ExitCode::VerificationFailure,
+        ];
+        for &variant in &all_variants {
+            assert!(
+                ExitCode::ALL.contains(&variant),
+                "{variant:?} is missing from ExitCode::ALL"
+            );
+            match variant {
                 ExitCode::Pass
                 | ExitCode::CompatibilityFailure
                 | ExitCode::ConfigurationError
@@ -207,6 +221,11 @@ mod tests {
                 | ExitCode::VerificationFailure => {}
             }
         }
+        assert_eq!(
+            ExitCode::ALL.len(),
+            all_variants.len(),
+            "ExitCode::ALL must list every variant"
+        );
     }
 
     #[test]
@@ -248,5 +267,9 @@ mod tests {
         assert_eq!(ExitCode::ExecutionError.to_string(), "execution_error");
         assert_eq!(ExitCode::InvalidFixture.to_string(), "invalid_fixture");
         assert_eq!(ExitCode::InternalError.to_string(), "internal_error");
+        assert_eq!(
+            ExitCode::VerificationFailure.to_string(),
+            "verification_failure"
+        );
     }
 }

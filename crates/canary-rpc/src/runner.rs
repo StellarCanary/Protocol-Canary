@@ -26,8 +26,54 @@ use canary_fixtures::LoadedFixture;
 use crate::client::{RpcClient, RpcError};
 use crate::models::{GetHealthResponse, LatestLedger, NetworkInfo};
 
+/// A fixture-authoring error raised while interpreting an RPC fixture body.
+///
+/// [`RpcFixture::from_loaded`] returns this when a fixture passed the common
+/// metadata/TOML load but its RPC-specific body is unusable: this is an
+/// invalid input from the fixture author, not a failure of an RPC endpoint.
+/// Transport, JSON-RPC and response-shape failures from a client are
+/// [`RpcError`]s; the runner records those as [`Status::Error`] results
+/// rather than returning this error. No request is sent before a fixture has
+/// been parsed successfully, so this error never describes a call attempt.
+///
+/// Converting with `?` into [`CanaryError`] keeps only the rendered message
+/// (`CanaryError::Rpc`); callers that need the structured fields should
+/// inspect the variant first.
+///
+/// # Examples
+///
+/// ```
+/// use std::path::Path;
+///
+/// use canary_fixtures::parse_fixture_str;
+/// use canary_rpc::{RpcFixture, RpcFixtureError};
+///
+/// let text = "id = \"p28-rpc\"\nprotocol = 28\nsurface = \"rpc\"\n\
+///             category = \"network\"\ndescription = \"bad\"\n\
+///             method = \"get-network\"\n";
+/// let loaded = parse_fixture_str(text, Path::new("rpc/bad.toml")).unwrap();
+/// let error = RpcFixture::from_loaded(&loaded).unwrap_err();
+/// let RpcFixtureError::InvalidFixtureBody { source_path, reason } = error else {
+///     panic!("expected an invalid fixture body");
+/// };
+/// assert_eq!(source_path, Path::new("rpc/bad.toml"));
+/// assert!(reason.contains("[[assert]]"), "{reason}");
+/// ```
 #[derive(Debug, thiserror::Error)]
 pub enum RpcFixtureError {
+    /// The loaded body cannot be represented as an [`RpcFixture`].
+    ///
+    /// [`RpcFixture::from_loaded`] produces this for a body that is not a
+    /// table, an unknown top-level or `[[assert]]` key, a missing or
+    /// unsupported `method`, an invalid `[request]` table, a fixture with no
+    /// `[[assert]]` entries, or a malformed assertion (including invalid
+    /// ranges, lengths, allowed values and event topics).
+    ///
+    /// `source_path` is the fixture file the body was loaded from
+    /// ([`LoadedFixture::source_path`]), and `reason` is the human-readable
+    /// validation failure shown by the `Display` implementation and carried
+    /// into [`CanaryError::Rpc`] on conversion. The error is deterministic:
+    /// fixing the fixture file is the only remedy; retrying cannot help.
     #[error("invalid rpc fixture body in {source_path}: {reason}")]
     InvalidFixtureBody {
         source_path: std::path::PathBuf,
@@ -936,6 +982,31 @@ const SKIP_METHOD_NOT_AVAILABLE: &str =
     "method not available on this endpoint, check skipped (JSON-RPC -32601)";
 
 impl<C: RpcClient> DefaultRpcRunner<C> {
+    /// Builds a runner whose only RPC access goes through `client`.
+    ///
+    /// `client` is the injected client boundary: production code passes an
+    /// [`crate::HttpRpcClient`] bound to an endpoint, while tests pass a
+    /// client aimed at a mock server or any other [`RpcClient`]
+    /// implementation. The constructor only stores the client — it makes no
+    /// request, resolves no endpoint, and performs no validation or network
+    /// I/O. Endpoint URL, timeouts and retries are configured on the client
+    /// itself (see [`crate::HttpRpcClient::new`], `with_timeout` and
+    /// [`crate::RetryPolicy`]) before it is passed in.
+    ///
+    /// Requests happen only in [`RpcRunner::run`]. That method reports
+    /// transport and JSON-RPC failures as [`Status::Error`] results rather
+    /// than returning them here, so construction itself cannot fail or
+    /// produce an error status.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_rpc::{DefaultRpcRunner, HttpRpcClient};
+    ///
+    /// let runner = DefaultRpcRunner::new(
+    ///     HttpRpcClient::new("https://soroban-testnet.stellar.org"),
+    /// );
+    /// ```
     pub fn new(client: C) -> Self {
         DefaultRpcRunner { client }
     }

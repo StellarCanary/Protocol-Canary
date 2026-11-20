@@ -15,19 +15,36 @@ invoke the binary by its full path.
 
 ## Wrong version reported
 
-**Symptom.** `stellar-canary version` prints something other than
-`0.1.1`, or behavior doesn't match this documentation.
+**Symptom.** `stellar-canary version` prints a version other than the current
+Engine release (`0.3.0`), or behavior doesn't match this documentation.
 
-**Likely cause.** An older install (e.g. `0.1.0`) is still first on
-`PATH`, or `cargo install` was run without `--tag v0.1.1`.
+**Likely cause.** An older install is still first on `PATH`, or `cargo install`
+was run without the current release's pinned `--tag`. A correct current
+install is not expected to print `0.1.1`; the `0.1.1` guidance is historical
+and kept below only for readers maintaining that old release.
 
-**What to check.** `stellar-canary version` and `which stellar-canary`.
+**What to check.** `stellar-canary version`, `which stellar-canary`, and the
+version installed by the [current installation instructions](./installation.md).
 
-**Fix.** Reinstall with the exact tag:
+**Fix.** Follow [Installation](./installation.md) to install the pinned
+current release with `--force`, and confirm that `~/.cargo/bin` (or
+`$CARGO_HOME/bin`) precedes any older binary directory on `PATH`. Readers
+with a current install should use that guide, not the historical command
+below.
+
+### Historical: `v0.1.1` version-mismatch behavior
+
+The old `0.1.1` release is the one that expected `stellar-canary version` to
+print `0.1.1`. If you deliberately need that release, its reinstall command
+was:
 `cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked --force`.
-`0.1.0` predates `ContractExecutable` XDR support two current Protocol 28
-fixtures require, and its report predates the `counts` field — see
-[Releases](./releases.md).
+
+Do not run that command to fix a current install: it replaces the binary with
+an old release.
+
+**Historical note for `0.1.0`:** `0.1.0` predates `ContractExecutable` XDR
+support two current Protocol 28 fixtures require, and its report predates the
+`counts` field — see [Releases](./releases.md).
 
 ## Fixture directory not found
 

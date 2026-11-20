@@ -247,6 +247,37 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
+    /// Whether this project declares `capability` in its capability list.
+    ///
+    /// The check is an exact match on [`Capability`] against the stored
+    /// [`ProjectContext::capabilities`] (the same equality used by
+    /// `Vec::contains`); it does not infer capabilities from the project type,
+    /// name or dependencies, and aliases such as
+    /// [`Capability::PythonSdk`] compare equal to the variant they alias.
+    /// Nothing is detected, mutated or loaded here, so the method cannot
+    /// fail or panic: an empty list, or a capability that was not detected,
+    /// simply yields `false`.
+    ///
+    /// Fixture planning uses this to apply a fixture's `required_capabilities`
+    /// (see `canary_runner::build_plan`): a fixture requiring an undeclared
+    /// capability is skipped rather than run. Callers reporting why a fixture
+    /// was skipped can use it for the same purpose.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{Capability, ProjectContext, ProjectType};
+    ///
+    /// let project = ProjectContext {
+    ///     root: ".".into(),
+    ///     name: "example".into(),
+    ///     project_type: ProjectType::Soroban,
+    ///     capabilities: vec![Capability::SorobanContract],
+    /// };
+    ///
+    /// assert!(project.has_capability(&Capability::SorobanContract));
+    /// assert!(!project.has_capability(&Capability::RpcClient));
+    /// ```
     pub fn has_capability(&self, capability: &Capability) -> bool {
         self.capabilities.contains(capability)
     }

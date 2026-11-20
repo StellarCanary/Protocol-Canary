@@ -36,12 +36,30 @@ test("verifies only the exact requested asset entry", async (t) => {
   );
 });
 
-test("rejects Linux-only manifests when macOS or Windows assets are requested", async (t) => {
+test("verifies only the exact requested asset entry for Linux ARM64", async (t) => {
+  const assetName = "stellar-canary-aarch64-unknown-linux-gnu.tar.gz";
+  const assetContents = "verified linux arm64 release archive";
+  const manifest = [
+    `${"0".repeat(64)}  stellar-canary-x86_64-unknown-linux-gnu.tar.gz`,
+    `${sha256(assetContents)}  ${assetName}`,
+    `${"0".repeat(64)}  stellar-canary-aarch64-apple-darwin.tar.gz`,
+    `${"0".repeat(64)}  stellar-canary-linux-aarch64`,
+  ].join("\n");
+  const fixture = await createFixture(t, { assetName, assetContents, manifest });
+
+  assert.deepEqual(
+    await verifyReleaseAsset(fixture.archivePath, fixture.manifestPath),
+    { assetName, sha256: sha256(assetContents) },
+  );
+});
+
+test("rejects Linux x86_64-only manifests when Linux ARM64, macOS, or Windows assets are requested", async (t) => {
   const linuxAsset = "stellar-canary-x86_64-unknown-linux-gnu.tar.gz";
   const linuxContents = "linux release archive";
   const manifest = `${sha256(linuxContents)}  ${linuxAsset}\n`;
 
   for (const requestedAsset of [
+    "stellar-canary-aarch64-unknown-linux-gnu.tar.gz",
     "stellar-canary-aarch64-apple-darwin.tar.gz",
     "stellar-canary-x86_64-pc-windows-msvc.zip",
   ]) {
@@ -58,6 +76,35 @@ test("rejects Linux-only manifests when macOS or Windows assets are requested", 
       );
     });
   }
+});
+
+test("selects exact Linux ARM64 entry from a combined manifest", async (t) => {
+  const arm64Archive = "stellar-canary-aarch64-unknown-linux-gnu.tar.gz";
+  const arm64ArchiveContents = "linux arm64 archive";
+  const arm64Binary = "stellar-canary-linux-aarch64";
+  const arm64BinaryContents = "linux arm64 binary";
+  const x86Archive = "stellar-canary-x86_64-unknown-linux-gnu.tar.gz";
+  const x86ArchiveContents = "linux x86_64 archive";
+  const x86Binary = "stellar-canary-linux-x86_64";
+  const x86BinaryContents = "linux x86_64 binary";
+
+  const manifest = [
+    `${sha256(x86ArchiveContents)}  ${x86Archive}`,
+    `${sha256(x86BinaryContents)}  ${x86Binary}`,
+    `${sha256(arm64ArchiveContents)}  ${arm64Archive}`,
+    `${sha256(arm64BinaryContents)}  ${arm64Binary}`,
+  ].join("\n");
+
+  const fixture = await createFixture(t, {
+    assetName: arm64Archive,
+    assetContents: arm64ArchiveContents,
+    manifest,
+  });
+
+  assert.deepEqual(
+    await verifyReleaseAsset(fixture.archivePath, fixture.manifestPath),
+    { assetName: arm64Archive, sha256: sha256(arm64ArchiveContents) },
+  );
 });
 
 test("rejects an archive whose bytes do not match the exact manifest entry", async (t) => {

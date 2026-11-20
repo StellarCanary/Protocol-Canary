@@ -72,6 +72,11 @@ jobs:
             archive_name: stellar-canary-x86_64-unknown-linux-gnu
             archive_ext: tar.gz
             rustflags: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive_name: stellar-canary-aarch64-unknown-linux-gnu
+            archive_ext: tar.gz
+            rustflags: --remap-path-prefix=${{ github.workspace }}=/build --remap-path-prefix=/home/runner/.cargo=/cargo --remap-path-prefix=/home/runner/.rustup=/rustup
           - os: macos-latest
             target: x86_64-apple-darwin
             archive_name: stellar-canary-x86_64-apple-darwin
@@ -114,6 +119,8 @@ jobs:
           rm -rf dist/package
           if [ "${{ matrix.target }}" = "x86_64-unknown-linux-gnu" ]; then
             cp "$BIN_SRC" "dist/stellar-canary-linux-x86_64"
+          elif [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
+            cp "$BIN_SRC" "dist/stellar-canary-linux-aarch64"
           fi
           cd dist
           for file in *; do
@@ -187,7 +194,7 @@ jobs:
           sha256sum -c SHA256SUMS
 
       - name: Upload release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           files: |
             dist/*

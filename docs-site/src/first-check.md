@@ -1,7 +1,9 @@
 # Your First Check
 
-This walks through a real run against the real Protocol 28 fixture pack,
-with real output — nothing here is illustrative text.
+This walks through a real, historical run of Canary `v0.1.1` against the
+Protocol 28 fixture pack, with real output from the pinned fixture
+revision `e9d098df7931a9b94b183c6af807a58336b7b322` — nothing here is
+illustrative text.
 
 ## 1. Install Canary
 
@@ -15,9 +17,18 @@ stellar-canary version
 
 ## 2. Clone the fixture pack
 
+Clone the repository and check out the exact historical fixture commit
+`e9d098df7931a9b94b183c6af807a58336b7b322` used for this run:
+
 ```bash
 git clone https://github.com/StellarCanary/ProtocolCanary-Fixtures
+git -C ProtocolCanary-Fixtures checkout e9d098df7931a9b94b183c6af807a58336b7b322
 ```
+
+Pinning the fixture pack commit ensures the commands below reproduce the
+exact five-result output shown in this guide. The `main` branch of
+`ProtocolCanary-Fixtures` continues to add new fixtures over time, so an
+unpinned checkout will produce different counts and checks.
 
 ## 3. Run the Protocol 28 check
 
@@ -53,11 +64,16 @@ Status: PASS
 
 ## 4. Understand the PASS result
 
-- `3/3`, `1/1`, `1/1` — every fixture that applies to Protocol 28 in this
-  pack ran and passed, grouped by surface (XDR, RPC, Soroban).
-- `Network: testnet (observed protocol 28)` — the RPC and Soroban surfaces
-  made a live call to the default `testnet` endpoint, and the network
-  actually reported protocol 28, matching the run's target.
+- `3/3` XDR checks — these ran entirely offline, verifying that CAP-0083
+  and CAP-0085 XDR structures decode and round-trip byte-for-byte against
+  the project's local dependencies. Offline XDR checks are strictly
+  deterministic and require no network access.
+- `1/1` RPC and `1/1` Soroban checks — these were live network observations
+  recorded against `testnet` (`soroban-testnet.stellar.org`). The RPC and
+  Soroban surfaces made live calls to the endpoint, which observed Protocol
+  28, matching the target protocol. Unlike offline XDR checks, live network
+  observations depend on remote endpoint availability and state at execution
+  time.
 - `Status: PASS` and exit code `0` — see [Exit Codes](./exit-codes.md) for
   the full contract.
 
@@ -94,8 +110,12 @@ stellar-canary check \
 }
 ```
 
-This is a real, unedited run captured against `soroban-testnet.stellar.org`.
-Field-by-field meaning is in [JSON Report](./json-report.md).
+This is a real, unedited historical run captured with Canary `0.1.1` and
+fixture revision `e9d098df7931a9b94b183c6af807a58336b7b322` against
+`soroban-testnet.stellar.org`. The XDR results were evaluated completely
+offline, while the RPC and Soroban entries record live network responses
+observed during that historical run. Field-by-field meaning is in
+[JSON Report](./json-report.md).
 
 ## 6. Understand the exit code
 

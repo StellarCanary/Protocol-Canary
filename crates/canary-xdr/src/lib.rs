@@ -10,9 +10,12 @@ pub mod json;
 pub mod runner;
 
 pub use decoder::{
-    decode, decode_ledger_entry, decode_transaction_envelope, DecodedValue, XdrDecodeError,
-    XdrTypeName,
+    decode, decode_ledger_close_meta, decode_ledger_entry, decode_ledger_header,
+    decode_transaction_envelope, DecodedValue, XdrDecodeError, XdrTypeName,
 };
-pub use encoder::{encode, encode_ledger_entry, encode_transaction_envelope};
+pub use encoder::{
+    encode, encode_ledger_close_meta, encode_ledger_entry, encode_ledger_header,
+    encode_transaction_envelope,
+};
 pub use json::{compare_json, format_differences, JsonDifference, JsonDifferenceKind};
 pub use runner::{DefaultXdrRunner, XdrAssertion, XdrError, XdrFixture, XdrRunner};

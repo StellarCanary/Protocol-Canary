@@ -20,6 +20,7 @@
   - [config](./cli/config.md)
   - [completions](./cli/completions.md)
   - [version](./cli/version.md)
+  - [fixture-pack](./cli/fixture-pack.md)
 - [Exit Codes](./exit-codes.md)
 - [Protocol 28](./protocol-28.md)
 - [Fixtures](./fixtures-guide.md)

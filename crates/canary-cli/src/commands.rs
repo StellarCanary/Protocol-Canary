@@ -173,6 +173,36 @@ fn resolve_cache_dir(
     Ok(dir)
 }
 
+/// Runs `stellar-canary check`, the only command that executes fixtures.
+///
+/// `args` holds the parsed `check` flags. [`CheckArgs::protocol`],
+/// [`CheckArgs::config`], [`CheckArgs::project_root`],
+/// [`CheckArgs::fixtures_dir`], [`CheckArgs::network`] and
+/// [`CheckArgs::rpc_url`] select the target, project, pack and endpoint
+/// (flags override the matching configuration setting);
+/// [`CheckArgs::fixture`] and [`CheckArgs::surface`] narrow the plan.
+/// [`CheckArgs::offline`], [`CheckArgs::locked`], [`CheckArgs::allow_empty`],
+/// the cache flags and the policy flags qualify how the run proceeds, and
+/// [`CheckArgs::format`], [`CheckArgs::json`], [`CheckArgs::quiet`] and
+/// [`CheckArgs::output`] choose what is rendered.
+///
+/// The rendered report goes to stdout (terminal by default, or JSON,
+/// Markdown and JUnit on request); [`CheckArgs::output`] also writes those
+/// bytes to a file. A live run probes the RPC endpoint and may execute
+/// RPC/Soroban fixtures, while `--offline` opens no socket; no run submits
+/// a transaction. The cache directory is created unless `--no-cache` is
+/// given. Errors, the empty-plan and mismatch warnings, and a final
+/// connection hint go to stderr.
+///
+/// The returned [`ExitCode`] is the outcome of the run: [`ExitCode::Pass`]
+/// for a pass or an unpromoted warning, [`ExitCode::CompatibilityFailure`]
+/// for a failing policy decision, [`ExitCode::ExecutionError`] if any
+/// fixture could not execute (even when others passed),
+/// [`ExitCode::ConfigurationError`] for a bad invocation, configuration,
+/// empty plan without `--allow-empty` or stale `--locked` pin, and
+/// [`ExitCode::InvalidFixture`] for an unreadable or invalid fixture.
+/// Internal failures return [`ExitCode::InternalError`]. This is the code
+/// the binary passes to the operating system.
 pub async fn run_check(args: CheckArgs) -> ExitCode {
     match run_check_inner(args).await {
         Ok(exit_code) => exit_code,
@@ -1331,6 +1361,28 @@ fn run_diff_inner(args: DiffArgs) -> Result<ExitCode, DiffCommandError> {
     })
 }
 
+/// Writes the `.stellar-canary.lock` fixture-pack pin for `stellar-canary lock`.
+///
+/// `args` holds the parsed `lock` flags. [`LockArgs::command`] must be
+/// `None`: `lock verify` is dispatched to [`run_lock_verify`] instead.
+/// [`LockArgs::protocol`] overrides the protocol in [`LockArgs::config`]
+/// (or `.stellar-canary.toml` in the current directory), and
+/// [`LockArgs::fixtures_dir`] is the fixture pack whose canonical digest is
+/// pinned.
+///
+/// The command is local: it loads and validates the fixture pack, computes
+/// its `canary-pack-v1` digest, and writes a lockfile in the current
+/// directory recording that digest, the protocol and the tool version. It
+/// prints the path, lock version, protocol and digest to stdout, but runs no
+/// fixture, writes no report and opens no network socket.
+///
+/// The returned [`ExitCode`] is [`ExitCode::Pass`] once the pin is written.
+/// A missing fixture directory, unreadable configuration, invalid protocol,
+/// failed digest or unwritable lockfile returns
+/// [`ExitCode::ConfigurationError`], an invalid fixture returns
+/// [`ExitCode::InvalidFixture`], and an internal failure returns
+/// [`ExitCode::InternalError`]; the diagnostic is printed to stderr with an
+/// `error:` prefix.
 pub fn run_lock(args: LockArgs) -> ExitCode {
     match run_lock_inner(args) {
         Ok(exit_code) => exit_code,
@@ -1393,6 +1445,12 @@ fn run_lock_inner(args: LockArgs) -> Result<ExitCode, CanaryError> {
     Ok(ExitCode::Pass)
 }
 
+/// Prints the CLI's own version for `stellar-canary version`.
+///
+/// This entry point takes no arguments and reads the compile-time package
+/// version. It writes a single `stellar-canary <version>` line to stdout,
+/// touches no file and opens no socket, so it is safe to call offline. The
+/// returned [`ExitCode`] is always [`ExitCode::Pass`].
 pub fn run_version() -> ExitCode {
     println!("stellar-canary {}", env!("CARGO_PKG_VERSION"));
     ExitCode::Pass

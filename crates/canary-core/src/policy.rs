@@ -2,7 +2,7 @@
 //!
 //! [`Policy`] and [`PolicyDecision`] are defined here as part of the core
 //! domain model; the evaluation rules that turn a set of
-//! [`CompatibilityResult`](crate::model::CompatibilityResult)s into a
+//! [`CompatibilityResult`]s into a
 //! [`PolicyDecision`] are implemented by [`PolicyEvaluator`] and its
 //! default implementation.
 

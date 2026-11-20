@@ -20,14 +20,30 @@ pub const INVENTORY_VERSION: u32 = 1;
 /// The fixture file format the engine reads today.
 pub const FIXTURE_FORMAT: u32 = 1;
 
+/// The complete inventory document printed by `stellar-canary fixtures --format json`.
+///
+/// This is the top level of the CA-02 JSON contract; [`InventoryCounts`] and
+/// [`InventoryFixture`] describe its nested values. Every field is always
+/// present: an empty run still reports zero counts, an empty `otherProtocols`
+/// object and an empty `fixtures` array. Field names are serialized in lower
+/// camelCase (`inventoryVersion`, `toolVersion`, `fixtureFormat`,
+/// `directoryFound`, `otherProtocols`) in declaration order; [`render`] adds
+/// the two-space indent, LF line endings and final newline.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FixtureInventory {
+    /// The document shape version, [`INVENTORY_VERSION`].
     pub inventory_version: u32,
+    /// The CLI's own version, independent of the inventory version.
     pub tool_version: String,
+    /// The fixture file format the engine reads, [`FIXTURE_FORMAT`].
     pub fixture_format: u32,
+    /// The protocol being listed; every entry in `fixtures` has this protocol.
     pub protocol: u32,
+    /// Whether the fixture directory exists. `false` is a valid answer, not
+    /// an error.
     pub directory_found: bool,
+    /// Counts for `protocol` only, broken down by surface.
     pub counts: InventoryCounts,
     /// Count of fixtures for every *other* protocol, keyed by the
     /// protocol number as a string (JSON object keys are strings).
@@ -36,22 +52,48 @@ pub struct FixtureInventory {
     pub fixtures: Vec<InventoryFixture>,
 }
 
+/// The per-surface tallies in [`FixtureInventory::counts`], for the listed
+/// protocol only.
+///
+/// Serialized as the `counts` object with all four keys always present.
+/// `total` counts every fixture of that protocol and equals `xdr + rpc +
+/// soroban`; fixtures for other protocols are counted in
+/// [`FixtureInventory::other_protocols`] instead.
 #[derive(Debug, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InventoryCounts {
+    /// Number of loaded fixtures targeting the listed protocol.
     pub total: usize,
+    /// Number of those fixtures on the XDR surface.
     pub xdr: usize,
+    /// Number of those fixtures on the RPC surface.
     pub rpc: usize,
+    /// Number of those fixtures on the Soroban surface.
     pub soroban: usize,
 }
 
+/// One loaded fixture of the listed protocol, as serialized in
+/// [`FixtureInventory::fixtures`].
+///
+/// Entries are sorted by `id` (UTF-8 bytes). Fields use lower camelCase in
+/// JSON, except `type_name`, which is serialized as `type`. The optional
+/// fields are omitted rather than emitted as `null` when they do not apply:
+/// `sourceReference` when the fixture declares none, `method` outside `rpc`,
+/// `type` and `kind` outside `xdr`, `function` outside `soroban`, and
+/// `verification` when the fixture has no verification record. All other
+/// fields are always present.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InventoryFixture {
+    /// The fixture's unique id from its metadata.
     pub id: String,
+    /// The fixture's target protocol; equal to [`FixtureInventory::protocol`].
     pub protocol: u32,
+    /// The fixture's surface: `xdr`, `rpc` or `soroban` (lowercase).
     pub surface: String,
+    /// The fixture's category, copied from its metadata.
     pub category: String,
+    /// The human-readable description, copied from its metadata.
     pub description: String,
     /// Path of the fixture file relative to `--fixtures-dir`, with `/`
     /// separators on every platform.
@@ -61,16 +103,16 @@ pub struct InventoryFixture {
     /// Omitted, not `null`, when the file has none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_reference: Option<String>,
-    /// `rpc` fixtures.
+    /// The RPC method (`get-network`, ...); `rpc` fixtures only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub method: Option<String>,
-    /// `xdr` fixtures.
+    /// The XDR type name, serialized as `type`; `xdr` fixtures only.
     #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
     pub type_name: Option<String>,
-    /// `xdr` fixtures.
+    /// The XDR assertion kind (`decode-success`, ...); `xdr` fixtures only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
-    /// `soroban` fixtures.
+    /// The contract function name; `soroban` fixtures only.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub function: Option<String>,
     /// The CF-04 verification record, copied as stored. Absent when the

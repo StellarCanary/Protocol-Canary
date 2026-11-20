@@ -1,6 +1,6 @@
 # CLI Reference
 
-`stellar-canary` ships ten subcommands. This reference matches the
+`stellar-canary` ships eleven subcommands. This reference matches the
 shipped CLI, verified directly against the binary's help output.
 
 ```text
@@ -9,17 +9,18 @@ Rehearse Stellar protocol upgrades before they reach your production stack.
 Usage: stellar-canary <COMMAND>
 
 Commands:
-  check        Run compatibility checks against the current project
-  inspect      Print offline project diagnostics
-  fixtures     List fixtures available for a protocol
-  report       Render a previously generated JSON report
-  diff         Compare two stored JSON reports and render the diff (CF-05)
-  cache        Manage the local result cache
-  config       Validate the project configuration without running any check
-  lock         Manage the fixture-pack lockfile: bare `lock` writes the pin (CF-03-B), `lock verify` re-checks it (CF-03-D)
-  completions  Print a shell completion script
-  version      Print the tool version
-  help         Print this message or the help of the given subcommand(s)
+  check         Run compatibility checks against the current project
+  inspect       Print offline project diagnostics
+  fixtures      List fixtures available for a protocol
+  report        Render a previously generated JSON report
+  diff          Compare two stored JSON reports and render the diff (CF-05)
+  cache         Manage the local result cache
+  config        Validate the project configuration without running any check
+  lock          Manage the fixture-pack lockfile: bare `lock` writes the pin (CF-03-B), `lock verify` re-checks it (CF-03-D)
+  completions   Print a shell completion script
+  version       Print the tool version
+  fixture-pack  Verify a fixture pack against its registry manifest
+  help          Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help (see more with '--help')
@@ -38,6 +39,7 @@ Options:
 | [`lock`](./lock.md) | Pin the fixture pack (`lock`) and re-check the pin (`lock verify`). |
 | [`completions`](./completions.md) | Print a shell completion script for bash, zsh, fish or powershell. |
 | `version` | Print the tool's own version. See [version](./version.md). |
+| [`fixture-pack`](./fixture-pack.md) | Verify a fixture pack directory against its registry manifest (`fixture-pack verify`). |
 
 ## Project root
 

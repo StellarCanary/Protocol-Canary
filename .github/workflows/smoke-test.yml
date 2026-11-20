@@ -26,6 +26,11 @@ jobs:
             archive: stellar-canary-x86_64-unknown-linux-gnu.tar.gz
             binary: stellar-canary
             archive_ext: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: stellar-canary-aarch64-unknown-linux-gnu.tar.gz
+            binary: stellar-canary
+            archive_ext: tar.gz
           - os: macos-latest
             target: aarch64-apple-darwin
             archive: stellar-canary-aarch64-apple-darwin.tar.gz
@@ -60,7 +65,43 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+      - name: Check release asset availability
+        id: check-asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+          IS_RELEASE_EVENT: ${{ github.event_name == 'release' }}
+        run: |
+          set -euo pipefail
+          asset_found=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq ".assets[] | select(.name == \"$ARCHIVE\") | .name" || true)
+
+          if [ -z "$asset_found" ]; then
+            if [ "$IS_RELEASE_EVENT" = "true" ]; then
+              echo "::error::Newly published release $TAG is missing required asset $ARCHIVE"
+              exit 1
+            fi
+            if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+              echo "Skipping ARM64 smoke test: historical release $TAG does not provide $ARCHIVE"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "### Release smoke test (${TARGET})"
+                echo "Skipped: historical release \`${TAG}\` does not provide \`${ARCHIVE}\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Release $TAG is missing required asset $ARCHIVE"
+            exit 1
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
       - name: Download the published archive
+        if: steps.check-asset.outputs.skip != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -78,6 +119,7 @@ jobs:
             --dir dist
 
       - name: Verify the exact published asset checksum
+        if: steps.check-asset.outputs.skip != 'true'
         shell: bash
         env:
           ASSET_PATH: dist/${{ matrix.archive }}
@@ -85,6 +127,7 @@ jobs:
         run: node scripts/verify-release-asset.mjs "$ASSET_PATH" "$MANIFEST_PATH"
 
       - name: Unpack the archive
+        if: steps.check-asset.outputs.skip != 'true'
         shell: bash
         env:
           TAG: ${{ steps.release.outputs.tag }}
@@ -100,6 +143,7 @@ jobs:
           test -x "${{ matrix.binary }}"
 
       - name: --version prints the released semver and exits 0
+        if: steps.check-asset.outputs.skip != 'true'
         shell: bash
         env:
           TAG: ${{ steps.release.outputs.tag }}
@@ -119,6 +163,7 @@ jobs:
           fi
 
       - name: --help exits 0
+        if: steps.check-asset.outputs.skip != 'true'
         shell: bash
         run: |
           set -euo pipefail

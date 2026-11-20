@@ -365,8 +365,8 @@ mod tests {
         ProtocolVersion, RunOptions,
     };
     use stellar_xdr::{
-        ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, TransactionEnvelope,
-        WriteXdr,
+        ContractExecutable, Hash, LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, ScVal,
+        StellarValue, TransactionEnvelope, WriteXdr,
     };
 
     fn valid_stellar_value_base64() -> String {
@@ -576,7 +576,15 @@ mod tests {
         match err {
             XdrError::InvalidFixtureBody { reason, .. } => {
                 assert!(reason.contains("LiquidityPoolEntry"), "reason: {reason}");
-                for supported in ["StellarValue", "ContractExecutable", "ScVal", "LedgerEntry"] {
+                for supported in [
+                    "StellarValue",
+                    "ContractExecutable",
+                    "ScVal",
+                    "TransactionEnvelope",
+                    "LedgerEntry",
+                    "LedgerHeader",
+                    "LedgerCloseMeta",
+                ] {
                     assert!(
                         reason.contains(supported),
                         "reason must list supported type {supported:?}: {reason}"
@@ -646,6 +654,95 @@ mod tests {
         let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
         assert_eq!(result.status, canary_core::Status::Pass);
         assert_eq!(result.summary, "decoded LedgerEntry successfully");
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_ledger_header() {
+        let base64 = LedgerHeader::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body =
+            format!("type = \"LedgerHeader\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n");
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p30-xdr-header-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::LedgerHeader);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "LedgerHeader round-tripped byte-for-byte");
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_ledger_header() {
+        let base64 = LedgerHeader::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerHeader\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p30-xdr-header-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded LedgerHeader successfully");
+    }
+
+    #[test]
+    fn roundtrip_fixture_passes_for_a_ledger_close_meta() {
+        let base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerCloseMeta\"\nkind = \"roundtrip\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p30-xdr-meta-1", &body)).unwrap();
+        assert_eq!(fixture.type_name, XdrTypeName::LedgerCloseMeta);
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(
+            result.summary,
+            "LedgerCloseMeta round-tripped byte-for-byte"
+        );
+    }
+
+    #[test]
+    fn decode_success_fixture_passes_for_a_ledger_close_meta() {
+        let base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerCloseMeta\"\nkind = \"decode-success\"\nvalue_base64 = \"{base64}\"\n"
+        );
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p30-xdr-meta-2", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "decoded LedgerCloseMeta successfully");
+    }
+
+    #[test]
+    fn decode_failure_fixture_passes_for_a_ledger_close_meta() {
+        // "AAAA" is valid base64 that represents malformed/truncated XDR for a LedgerCloseMeta.
+        let body =
+            "type = \"LedgerCloseMeta\"\nkind = \"decode-failure\"\nvalue_base64 = \"AAAA\"\n";
+        let fixture = XdrFixture::from_loaded(&loaded_fixture("p30-xdr-meta-fail", body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(result.summary, "LedgerCloseMeta was correctly rejected");
+    }
+
+    #[test]
+    fn encode_equals_fixture_passes_for_a_ledger_close_meta() {
+        let base64 = LedgerCloseMeta::default()
+            .to_xdr_base64(Limits::none())
+            .unwrap();
+        let body = format!(
+            "type = \"LedgerCloseMeta\"\nkind = \"encode-equals\"\nvalue_base64 = \"{base64}\"\nexpected_base64 = \"{base64}\"\n"
+        );
+        let fixture =
+            XdrFixture::from_loaded(&loaded_fixture("p30-xdr-meta-encode-eq", &body)).unwrap();
+        let result = DefaultXdrRunner.run(&fixture, &context()).unwrap();
+        assert_eq!(result.status, canary_core::Status::Pass);
+        assert_eq!(
+            result.summary,
+            "LedgerCloseMeta encoded to the expected bytes"
+        );
     }
 
     #[test]

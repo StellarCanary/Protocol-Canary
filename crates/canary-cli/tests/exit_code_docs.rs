@@ -75,6 +75,39 @@ fn documented_table(doc: &str) -> Vec<(i32, String)> {
 
 #[test]
 fn the_documented_table_matches_the_exit_code_enum() {
+    let all_variants = [
+        ExitCode::Pass,
+        ExitCode::CompatibilityFailure,
+        ExitCode::ConfigurationError,
+        ExitCode::ExecutionError,
+        ExitCode::InvalidFixture,
+        ExitCode::InternalError,
+        ExitCode::VerificationFailure,
+    ];
+
+    for &variant in &all_variants {
+        match variant {
+            ExitCode::Pass
+            | ExitCode::CompatibilityFailure
+            | ExitCode::ConfigurationError
+            | ExitCode::ExecutionError
+            | ExitCode::InvalidFixture
+            | ExitCode::InternalError
+            | ExitCode::VerificationFailure => {
+                assert!(
+                    ExitCode::ALL.contains(&variant),
+                    "ExitCode::ALL is missing variant {:?}",
+                    variant
+                );
+            }
+        }
+    }
+    assert_eq!(
+        ExitCode::ALL.len(),
+        all_variants.len(),
+        "ExitCode::ALL must list every variant"
+    );
+
     let expected: Vec<(i32, String)> = ExitCode::ALL
         .iter()
         .map(|&code| (code.code(), variant_name(code).to_string()))
@@ -86,6 +119,18 @@ fn the_documented_table_matches_the_exit_code_enum() {
         "the exit-code table in docs-site/src/exit-codes.md must list exactly \
          the ExitCode variants from canary-core, in ascending order, with \
          their values and names"
+    );
+}
+
+#[test]
+fn branching_example_handles_verification_failure_explicitly() {
+    assert!(
+        DOC.contains("6) echo \"verification failure:"),
+        "the branching example in docs-site/src/exit-codes.md must explicitly handle code 6"
+    );
+    assert!(
+        !DOC.contains("*) echo \"internal error\""),
+        "the branching example fallback must not label unknown/other codes as internal error"
     );
 }
 

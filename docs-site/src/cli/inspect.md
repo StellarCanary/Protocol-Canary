@@ -187,6 +187,67 @@ when one is detected.)
 `rpc-consumer`, `stellar-sdk`, `generic-stellar` or `unknown`. Unknown
 values in a newer document must be treated as `unknown`.
 
+#### `project.detection` fields
+
+`project.detection` is the evidence block collected by project detection.
+It is always present, and its `capabilities` entries are the detailed
+evidence behind the sorted name list in `project.capabilities`. All six keys
+are always serialized:
+
+| Field | JSON type | Meaning |
+|---|---|---|
+| `evidenceVersion` | integer | Evidence format version (`1` today). Treat an unknown value as unsupported rather than guessing at its contents. |
+| `root` | string | The root that was inspected, relative to the directory the command was started in (normally `"."`). |
+| `capabilities` | array of objects | One [capability evidence](#capability-evidence) entry per capability detection produced; `[]` when none were found. |
+| `inspected` | array of strings | Root-relative paths the detector read, such as `Cargo.toml`, sorted and deduplicated. |
+| `diagnostics` | array of objects | One [detection diagnostic](#detection-diagnostic) per non-fatal detection problem; `[]` when detection was clean. These do not fail `inspect`. |
+| `projectType` | object | The resolved [project-type evidence](#project-type-evidence). |
+
+##### Capability evidence
+
+Each object in `capabilities` names one capability and lists the matches
+that produced it:
+
+| Field | JSON type | Optional? | Meaning |
+|---|---|---|---|
+| `capability` | string | no | Lowercase kebab-case name from `project.capabilities`, e.g. `soroban-contract`. |
+| `evidence` | array of [evidence items](#evidence-item) | no | The individual matches supporting the capability; may be empty. |
+
+##### Evidence item
+
+Each object in a capability's `evidence` has the keys below. Required keys
+are always serialized; optional keys are **omitted when absent** (not
+emitted as `null`), matching the serializer:
+
+| Field | JSON type | Optional? | Meaning |
+|---|---|---|---|
+| `manifest` | string | no | Root-relative manifest or artifact path the detector read. |
+| `ecosystem` | string | no | Source ecosystem, e.g. `cargo`, `npm`, `go`, `python` or `wasm`. |
+| `dependency` | string | yes | Dependency name for manifest evidence; omitted for artifact evidence. |
+| `section` | string | yes | Manifest section such as `dependencies`; omitted when not applicable. |
+| `sourceFile` | string | yes | Normalized root-relative path to the file that yielded the match. |
+| `matchedText` | string | yes | The matched dependency, string or artifact identifier. |
+| `reason` | string | yes | Human-readable reason the match assigns the capability. |
+
+##### Detection diagnostic
+
+Each object in `diagnostics` has two keys, both always serialized:
+
+| Field | JSON type | Optional? | Meaning |
+|---|---|---|---|
+| `code` | string | no | Machine-readable CF-07 diagnostic code, e.g. `manifest-unparseable`. |
+| `detail` | string | no | Human-readable context, including a root-relative path when one is involved. |
+
+##### Project-type evidence
+
+`projectType` records the effective type and where it came from:
+
+| Field | JSON type | Optional? | Meaning |
+|---|---|---|---|
+| `value` | string | no | Effective type, one of the five values listed for `project.type` above. |
+| `source` | string | no | `detected` when auto-detection chose the type, `config` when configuration overrode it. |
+| `detectedValue` | string | yes | The auto-detected type when `source` is `config` and it differs from `value`; omitted otherwise. |
+
 ### The plan
 
 `plan` mirrors what `check` would do with the same project, fixtures

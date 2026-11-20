@@ -18,12 +18,13 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
 
 use canary_xdr::{
-    decode, decode_ledger_entry, decode_transaction_envelope, encode, encode_ledger_entry,
-    encode_transaction_envelope, DecodedValue, XdrDecodeError, XdrTypeName,
+    decode, decode_ledger_close_meta, decode_ledger_entry, decode_ledger_header,
+    decode_transaction_envelope, encode, encode_ledger_close_meta, encode_ledger_entry,
+    encode_ledger_header, encode_transaction_envelope, DecodedValue, XdrDecodeError, XdrTypeName,
 };
 use stellar_xdr::{
-    ContractExecutable, Hash, LedgerEntry, Limits, ScVal, StellarValue, TransactionEnvelope,
-    WriteXdr,
+    ContractExecutable, Hash, LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, ScVal,
+    StellarValue, TransactionEnvelope, WriteXdr,
 };
 
 fn to_base64(bytes: &[u8]) -> String {
@@ -44,6 +45,18 @@ fn ledger_entry_xdr() -> String {
     LedgerEntry::default()
         .to_xdr_base64(Limits::none())
         .expect("the default ledger entry encodes")
+}
+
+fn ledger_header_xdr() -> String {
+    LedgerHeader::default()
+        .to_xdr_base64(Limits::none())
+        .expect("the default ledger header encodes")
+}
+
+fn ledger_close_meta_xdr() -> String {
+    LedgerCloseMeta::default()
+        .to_xdr_base64(Limits::none())
+        .expect("the default ledger close meta encodes")
 }
 
 /// A default `StellarValue`: a small XDR value whose bytes are easy to
@@ -84,6 +97,8 @@ fn every_supported_type_name_displays_and_parses_back() {
         XdrTypeName::ScVal,
         XdrTypeName::TransactionEnvelope,
         XdrTypeName::LedgerEntry,
+        XdrTypeName::LedgerHeader,
+        XdrTypeName::LedgerCloseMeta,
     ] {
         let rendered = type_name.to_string();
         assert!(!rendered.is_empty());
@@ -101,6 +116,8 @@ fn an_unknown_type_name_is_rejected_with_the_supported_list() {
         "ScVal",
         "TransactionEnvelope",
         "LedgerEntry",
+        "LedgerHeader",
+        "LedgerCloseMeta",
     ] {
         assert!(err.contains(supported), "{err} should list {supported}");
     }
@@ -119,6 +136,8 @@ fn non_base64_input_is_a_typed_error_with_no_byte_offset() {
         for err in [
             decode_transaction_envelope(input).unwrap_err(),
             decode_ledger_entry(input).unwrap_err(),
+            decode_ledger_header(input).unwrap_err(),
+            decode_ledger_close_meta(input).unwrap_err(),
         ] {
             assert!(
                 matches!(err, XdrDecodeError::InvalidBase64(_)),
@@ -146,6 +165,16 @@ fn invalid_base64_padding_is_a_typed_error() {
             matches!(err, XdrDecodeError::InvalidBase64(_)),
             "{input:?} must be InvalidBase64, got {err:?}"
         );
+        let err = decode_ledger_header(input).unwrap_err();
+        assert!(
+            matches!(err, XdrDecodeError::InvalidBase64(_)),
+            "{input:?} must be InvalidBase64, got {err:?}"
+        );
+        let err = decode_ledger_close_meta(input).unwrap_err();
+        assert!(
+            matches!(err, XdrDecodeError::InvalidBase64(_)),
+            "{input:?} must be InvalidBase64, got {err:?}"
+        );
     }
 }
 
@@ -159,6 +188,12 @@ fn a_zero_byte_payload_is_a_typed_error_not_a_panic() {
 
         let err = decode_ledger_entry(input).unwrap_err();
         assert_eq!(assert_invalid_xdr(err, XdrTypeName::LedgerEntry), 0);
+
+        let err = decode_ledger_header(input).unwrap_err();
+        assert_eq!(assert_invalid_xdr(err, XdrTypeName::LedgerHeader), 0);
+
+        let err = decode_ledger_close_meta(input).unwrap_err();
+        assert_eq!(assert_invalid_xdr(err, XdrTypeName::LedgerCloseMeta), 0);
     }
 }
 
@@ -198,6 +233,26 @@ fn a_truncated_payload_is_rejected_and_reports_where_the_reader_stopped() {
         "offset {offset} must be inside the {} byte buffer",
         truncated.len()
     );
+
+    let header_bytes = from_base64(&ledger_header_xdr());
+    let truncated = &header_bytes[..header_bytes.len() / 2];
+    let err = decode_ledger_header(&to_base64(truncated)).unwrap_err();
+    let offset = assert_invalid_xdr(err, XdrTypeName::LedgerHeader);
+    assert!(
+        offset <= truncated.len() as u64,
+        "offset {offset} must be inside the {} byte buffer",
+        truncated.len()
+    );
+
+    let meta_bytes = from_base64(&ledger_close_meta_xdr());
+    let truncated = &meta_bytes[..meta_bytes.len() / 2];
+    let err = decode_ledger_close_meta(&to_base64(truncated)).unwrap_err();
+    let offset = assert_invalid_xdr(err, XdrTypeName::LedgerCloseMeta);
+    assert!(
+        offset <= truncated.len() as u64,
+        "offset {offset} must be inside the {} byte buffer",
+        truncated.len()
+    );
 }
 
 #[test]
@@ -228,6 +283,34 @@ fn trailing_bytes_after_a_complete_value_are_rejected() {
         assert_invalid_xdr(err, XdrTypeName::LedgerEntry),
         entry_bytes.len() as u64
     );
+
+    let header_bytes = from_base64(&ledger_header_xdr());
+    let mut oversized = header_bytes.clone();
+    oversized.extend(std::iter::repeat_n(0u8, 4));
+    let err = decode_ledger_header(&to_base64(&oversized)).unwrap_err();
+    assert_eq!(
+        assert_invalid_xdr(err, XdrTypeName::LedgerHeader),
+        header_bytes.len() as u64
+    );
+    let generic_header_err = decode(XdrTypeName::LedgerHeader, &to_base64(&oversized));
+    assert!(
+        generic_header_err.is_err(),
+        "generic decode of LedgerHeader with trailing bytes must fail"
+    );
+
+    let meta_bytes = from_base64(&ledger_close_meta_xdr());
+    let mut oversized = meta_bytes.clone();
+    oversized.extend(std::iter::repeat_n(0u8, 4));
+    let err = decode_ledger_close_meta(&to_base64(&oversized)).unwrap_err();
+    assert_eq!(
+        assert_invalid_xdr(err, XdrTypeName::LedgerCloseMeta),
+        meta_bytes.len() as u64
+    );
+    let generic_meta_err = decode(XdrTypeName::LedgerCloseMeta, &to_base64(&oversized));
+    assert!(
+        generic_meta_err.is_err(),
+        "generic decode of LedgerCloseMeta with trailing bytes must fail"
+    );
 }
 
 fn err_message(err: &XdrDecodeError) -> String {
@@ -252,6 +335,8 @@ fn corrupted_bytes_are_rejected() {
     for err in [
         decode_transaction_envelope(&to_base64(&ones)).unwrap_err(),
         decode_ledger_entry(&to_base64(&ones)).unwrap_err(),
+        decode_ledger_header(&to_base64(&ones)).unwrap_err(),
+        decode_ledger_close_meta(&to_base64(&ones)).unwrap_err(),
     ] {
         assert!(matches!(err, XdrDecodeError::InvalidXdr { .. }), "{err:?}");
     }
@@ -267,6 +352,8 @@ fn an_oversized_payload_is_rejected_without_panicking() {
     for err in [
         decode_transaction_envelope(&oversized).unwrap_err(),
         decode_ledger_entry(&oversized).unwrap_err(),
+        decode_ledger_header(&oversized).unwrap_err(),
+        decode_ledger_close_meta(&oversized).unwrap_err(),
     ] {
         assert!(matches!(err, XdrDecodeError::InvalidXdr { .. }), "{err:?}");
         assert!(err.byte_offset() > 0);
@@ -276,6 +363,16 @@ fn an_oversized_payload_is_rejected_without_panicking() {
     let mut nearly_valid = from_base64(&ledger_entry_xdr());
     nearly_valid.extend(std::iter::repeat_n(0xaa_u8, 64 * 1024));
     let err = decode_ledger_entry(&to_base64(&nearly_valid)).unwrap_err();
+    assert!(matches!(err, XdrDecodeError::InvalidXdr { .. }), "{err:?}");
+
+    let mut nearly_valid_header = from_base64(&ledger_header_xdr());
+    nearly_valid_header.extend(std::iter::repeat_n(0xaa_u8, 64 * 1024));
+    let err = decode_ledger_header(&to_base64(&nearly_valid_header)).unwrap_err();
+    assert!(matches!(err, XdrDecodeError::InvalidXdr { .. }), "{err:?}");
+
+    let mut nearly_valid_meta = from_base64(&ledger_close_meta_xdr());
+    nearly_valid_meta.extend(std::iter::repeat_n(0xaa_u8, 64 * 1024));
+    let err = decode_ledger_close_meta(&to_base64(&nearly_valid_meta)).unwrap_err();
     assert!(matches!(err, XdrDecodeError::InvalidXdr { .. }), "{err:?}");
 }
 
@@ -290,6 +387,10 @@ fn the_generic_decoder_also_fails_cleanly_on_invalid_input() {
     }
     let err = decode(XdrTypeName::ContractExecutable, &to_base64(&[0xff; 16])).unwrap_err();
     assert!(!err.to_string().is_empty());
+    let err = decode(XdrTypeName::LedgerHeader, &to_base64(&[0xff; 16])).unwrap_err();
+    assert!(!err.to_string().is_empty());
+    let err = decode(XdrTypeName::LedgerCloseMeta, &to_base64(&[0xff; 16])).unwrap_err();
+    assert!(!err.to_string().is_empty());
 }
 
 #[test]
@@ -300,6 +401,8 @@ fn encoding_every_decoded_variant_is_total() {
         DecodedValue::ScVal(ScVal::Bool(true)),
         DecodedValue::TransactionEnvelope(Box::default()),
         DecodedValue::LedgerEntry(Box::default()),
+        DecodedValue::LedgerHeader(Box::default()),
+        DecodedValue::LedgerCloseMeta(Box::default()),
     ];
 
     for value in &variants {
@@ -309,6 +412,8 @@ fn encoding_every_decoded_variant_is_total() {
             DecodedValue::ScVal(_) => XdrTypeName::ScVal,
             DecodedValue::TransactionEnvelope(_) => XdrTypeName::TransactionEnvelope,
             DecodedValue::LedgerEntry(_) => XdrTypeName::LedgerEntry,
+            DecodedValue::LedgerHeader(_) => XdrTypeName::LedgerHeader,
+            DecodedValue::LedgerCloseMeta(_) => XdrTypeName::LedgerCloseMeta,
         };
 
         let encoded = encode(value).expect("encoding a decoded value cannot fail");
@@ -335,6 +440,16 @@ fn the_typed_encoders_are_total_and_deterministic() {
     let second = encode_ledger_entry(&entry).expect("ledger entries always encode");
     assert_eq!(first, second);
 
+    let header = LedgerHeader::default();
+    let first = encode_ledger_header(&header).expect("ledger headers always encode");
+    let second = encode_ledger_header(&header).expect("ledger headers always encode");
+    assert_eq!(first, second);
+
+    let meta = LedgerCloseMeta::default();
+    let first = encode_ledger_close_meta(&meta).expect("ledger close meta always encodes");
+    let second = encode_ledger_close_meta(&meta).expect("ledger close meta always encodes");
+    assert_eq!(first, second);
+
     // The generic and typed paths agree, so a caller cannot get different
     // bytes depending on which API it used.
     assert_eq!(
@@ -347,5 +462,13 @@ fn the_typed_encoders_are_total_and_deterministic() {
     assert_eq!(
         encode(&DecodedValue::LedgerEntry(Box::new(entry.clone()))).unwrap(),
         encode_ledger_entry(&entry).unwrap()
+    );
+    assert_eq!(
+        encode(&DecodedValue::LedgerHeader(Box::new(header.clone()))).unwrap(),
+        encode_ledger_header(&header).unwrap()
+    );
+    assert_eq!(
+        encode(&DecodedValue::LedgerCloseMeta(Box::new(meta.clone()))).unwrap(),
+        encode_ledger_close_meta(&meta).unwrap()
     );
 }

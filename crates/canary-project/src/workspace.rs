@@ -185,6 +185,27 @@ pub fn scan_pnpm_workspace(root: &Path) -> WorkspaceScan {
     scan_pnpm_workspace_with_limit(root, MAX_WORKSPACE_MEMBERS)
 }
 
+/// Scans `pnpm-workspace.yaml` at `root`, reading at most `member_limit`
+/// member manifests.
+///
+/// This is the limit-aware form used by detection to split the shared
+/// [`MAX_WORKSPACE_MEMBERS`] budget across Cargo, pnpm and npm scans.
+/// `member_limit` caps only how many of the discovered member directories get
+/// their `package.json` read and appended to [`WorkspaceScan::members`]:
+/// patterns are still expanded, and the other CF-07 scan bounds still apply.
+/// Passing `0` therefore reads no member manifests (but can still report
+/// diagnostics about the root manifest and patterns).
+///
+/// Candidate members are the union of the non-negated `packages` patterns
+/// minus the negated (`!`-prefixed) ones, deduplicated and ordered by their
+/// root-relative path. When there are more than `member_limit` candidates,
+/// the first `member_limit` are read and one
+/// [`DiagnosticCode::ScanBoundReached`] is appended to
+/// [`WorkspaceScan::diagnostics`] saying how many were found and that the
+/// rest were not scanned. Truncation is reported only through that
+/// diagnostic; there is no separate truncated flag. Other diagnostics (for
+/// example symlinks, unreadable or oversized manifests, unsupported syntax
+/// and exhausted scan budgets) are returned in the same [`WorkspaceScan`].
 pub(crate) fn scan_pnpm_workspace_with_limit(root: &Path, member_limit: usize) -> WorkspaceScan {
     let mut scan = WorkspaceScan::default();
     let manifest_path = root.join("pnpm-workspace.yaml");
@@ -302,6 +323,27 @@ pub fn scan_npm_workspace(root: &Path) -> WorkspaceScan {
     scan_npm_workspace_with_limit(root, MAX_WORKSPACE_MEMBERS)
 }
 
+/// Scans the root `package.json` `workspaces` field at `root`, reading at
+/// most `member_limit` member manifests.
+///
+/// This is the npm counterpart of [`scan_pnpm_workspace_with_limit`] and uses
+/// the same limit semantics: detection passes it the remainder of the shared
+/// [`MAX_WORKSPACE_MEMBERS`] budget after the Cargo and pnpm scans. Patterns
+/// are expanded first; `member_limit` caps only how many discovered member
+/// directories have their `package.json` read into
+/// [`WorkspaceScan::members`], in root-relative path order. A limit of `0`
+/// reads no member manifests, while diagnostics about the root manifest and
+/// patterns are still collected.
+///
+/// If more than `member_limit` members are discovered, the first
+/// `member_limit` are read and a single
+/// [`DiagnosticCode::ScanBoundReached`] is added to
+/// [`WorkspaceScan::diagnostics`] with the limit and total found; the
+/// unread members are not otherwise represented in the returned
+/// [`WorkspaceScan`]. Other diagnostics (symlinks, unreadable or oversized
+/// manifests, unsupported `workspaces` shapes, exhausted scan budgets) are
+/// returned alongside it. npm has no exclusion syntax, so every pattern
+/// contributes candidates.
 pub(crate) fn scan_npm_workspace_with_limit(root: &Path, member_limit: usize) -> WorkspaceScan {
     let mut scan = WorkspaceScan::default();
     let manifest_path = root.join("package.json");

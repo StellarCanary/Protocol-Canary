@@ -19,6 +19,7 @@ updated (each value is also asserted by that source file's own
 | `3` | `ExecutionError` | At least one check could not complete — it was executed but hit an XDR, RPC, or Soroban execution problem. |
 | `4` | `InvalidFixture` | A fixture file failed to load or validate, so the run never started. |
 | `5` | `InternalError` | An internal error unrelated to configuration, fixtures, or the three compatibility surfaces. |
+| `6` | `VerificationFailure` | Fixture pack verification failed — a file checksum or pack digest did not match the registry. |
 
 ## Branching on the exit status
 
@@ -30,13 +31,15 @@ case $? in
   2) echo "configuration error: no checks ran (see stderr)" >&2; exit 1 ;;
   3) echo "execution error: checks could not complete (RPC down?)" >&2; exit 1 ;;
   4) echo "invalid fixture: fix the fixture files first" >&2; exit 1 ;;
-  *) echo "internal error" >&2; exit 1 ;;
+  5) echo "internal error" >&2; exit 1 ;;
+  6) echo "verification failure: fixture pack does not match registry" >&2; exit 1 ;;
+  *) echo "unexpected exit code" >&2; exit 1 ;;
 esac
 ```
 
 The distinction CI usually cares about is `1` versus everything else:
 exit `1` is *compatibility evidence* (a check ran and the surfaces
-disagreed), while exits `2`–`5` mean the run itself needs attention and
+disagreed), while exits `2`–`6` mean the run itself needs attention and
 prove nothing about compatibility either way.
 
 ## `0` — `Pass`
@@ -143,6 +146,24 @@ CLI invocation. Its meaning is taken directly from the source's
 abort before executing checks; `check` exits `5`, and the fix is to
 delete the cache directory (it is safe to remove) and re-run.
 
+## `6` — `VerificationFailure`
+
+**When it happens.** A fixture pack failed verification against its
+registry manifest during `fixture-pack verify`: at least one fixture or
+payload file has a checksum mismatch, a required file is missing from
+the pack directory, an unrecorded file is present in the pack digest, or
+the overall computed pack digest does not match the `packDigest` recorded
+in the registry.
+
+Like exit `1`, this is evidence rather than an outage: the verification
+command ran to completion and answered whether the fixture pack is intact
+and matches its manifest.
+
+**Example.** A fixture file was modified locally without updating the
+registry manifest, or a file was corrupted in transit. Running
+`stellar-canary fixture-pack verify ./fixtures` detects the mismatch,
+prints the computed and expected checksums to stderr, and exits `6`.
+
 ## How the mapping works
 
 Every error in the CLI is a `CanaryError` variant, which is classified
@@ -214,3 +235,12 @@ missing field `description`
 
 **Exit `5`** is reserved for internal errors (Git metadata or local-cache
 failures) — see [when it happens](#5--internalerror) above.
+
+**Exit `6`** — `fixture-pack verify` against a pack whose computed digest
+does not match the registry:
+
+```text
+error: pack digest mismatch
+  computed: 0123456789abcdef...
+  expected: fedcba9876543210...
+```

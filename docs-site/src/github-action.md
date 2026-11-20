@@ -87,14 +87,27 @@ check it out as a separate step and point `fixtures-dir` at it:
 
 ## Installation & integrity
 
-`Protocol-Canary` does not yet publish prebuilt release binaries or
-checksums (see [Releases](./releases.md)). This Action installs it with
-`cargo install --git`, pinned to the immutable commit the requested
-version's tag resolved to at run time (falling back to the tag itself,
-with a visible warning, only if that resolution fails). This requires a
-Rust/Cargo toolchain on the runner — GitHub-hosted Ubuntu runners include
-one by default. A successful build is cached (best-effort, via
-`actions/cache`; never required for correctness).
+The Engine (`Protocol-Canary`) does publish prebuilt release assets. The
+[`v0.3.0` release](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.3.0)
+carries `SHA256SUMS` and downloadable archives for four target triples:
+`stellar-canary-x86_64-unknown-linux-gnu.tar.gz`,
+`stellar-canary-x86_64-apple-darwin.tar.gz`,
+`stellar-canary-aarch64-apple-darwin.tar.gz`, and
+`stellar-canary-x86_64-pc-windows-msvc.zip`. That describes what the Engine
+publishes; it does not describe how the Action documented on this page
+obtains it.
+
+The `v1` tag documented here is pinned to
+[source commit `42790008fa8ab4580c6de7900af57fba2f8766ed`](https://github.com/StellarCanary/ProtocolCanary-Action/tree/42790008fa8ab4580c6de7900af57fba2f8766ed).
+That commit's installer still builds the requested Engine version from
+source with `cargo install --git --locked`, pinned to the immutable commit
+the version's tag resolved to at run time (falling back to the tag itself,
+with a visible warning, only if that resolution fails). It does not
+download release assets, and its `version` input defaults to `0.1.1`. A
+Rust/Cargo toolchain is therefore required on the runner — GitHub-hosted
+Ubuntu runners include one by default. A successful build is cached
+(best-effort, via `actions/cache`; never required for correctness). See
+[Releases](./releases.md) for the Engine/Action release split.
 
 ## Summary, annotations, and artifact
 

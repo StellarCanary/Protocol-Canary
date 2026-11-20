@@ -367,10 +367,67 @@ pub struct FixtureStore {
 }
 
 impl FixtureStore {
+    /// Builds a store from metadata that has already been loaded and
+    /// validated.
+    ///
+    /// Entries are kept in the given order and are not validated,
+    /// deduplicated, or sorted here. Callers loading fixtures from disk
+    /// should run `canary_fixtures::validate` first, so duplicate ids and
+    /// unsafe file references are rejected before a plan is built. An empty
+    /// vector is accepted and produces an empty store (see
+    /// [`FixtureStore::is_empty`]); construction neither fails nor panics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = FixtureMetadata {
+    ///     id: "p28-xdr-cap83-001".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "StellarValue roundtrip".into(),
+    ///     source_reference: Some("CAP-0083".into()),
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture]);
+    /// assert_eq!(store.len(), 1);
+    /// ```
     pub fn new(fixtures: Vec<FixtureMetadata>) -> Self {
         FixtureStore { fixtures }
     }
 
+    /// Borrows every [`FixtureMetadata`] entry in insertion order, with no
+    /// filtering.
+    ///
+    /// Unlike [`FixtureStore::for_protocol`] and
+    /// [`FixtureStore::for_surface`], this returns all entries regardless of
+    /// their protocol or compatibility surface. The returned slice borrows
+    /// from the store, so it stays valid only while the store does; entries
+    /// are not copied. An empty store yields an empty slice, never `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = FixtureMetadata {
+    ///     id: "p28-xdr-cap83-001".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "StellarValue roundtrip".into(),
+    ///     source_reference: None,
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture]);
+    /// assert_eq!(store.all().len(), 1);
+    /// assert_eq!(store.all()[0].id, "p28-xdr-cap83-001");
+    /// assert!(FixtureStore::default().all().is_empty());
+    /// ```
     pub fn all(&self) -> &[FixtureMetadata] {
         &self.fixtures
     }

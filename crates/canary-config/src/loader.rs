@@ -241,15 +241,27 @@ impl From<LockError> for CanaryError {
     }
 }
 
-/// An error returned when a report's digest or target protocol does not match
-/// the pinned values in a project's `.stellar-canary.lock` file.
+/// A report's evidence does not match a value pinned in `.stellar-canary.lock`.
+///
+/// [`validate_report_against_lock`] produces this error when the report's
+/// `packDigest` differs from the lockfile's `fixtures.packDigest`, or when its
+/// target protocol differs from `fixtures.protocol`. The digest is compared
+/// first, so a report that disagrees on both is reported as a `packDigest`
+/// mismatch. A lock that cannot be read or parsed fails earlier with a
+/// [`LockError`] instead; this error is only about a successfully loaded lock
+/// whose pinned values disagree with the report.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error(
     "lockfile mismatch for field '{field}': lockfile expected '{expected}', report found '{found}'"
 )]
 pub struct LockMismatchError {
+    /// The pinned field that disagreed: `"packDigest"` or `"protocol"`.
     pub field: String,
+    /// The value stored in the lockfile for `field`, which the report was
+    /// expected to carry. A protocol is rendered as a decimal string.
     pub expected: String,
+    /// The value observed in the report for `field`, rendered as a string in
+    /// the same way as `expected`.
     pub found: String,
 }
 

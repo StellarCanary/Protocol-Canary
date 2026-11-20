@@ -40,7 +40,6 @@ impl EnabledSurfaces {
     }
 }
 
-/// A fixture that was not scheduled to run, and why.
 /// Why a loaded fixture was left out of the plan.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SkipCause {
@@ -70,11 +69,30 @@ impl SkipCause {
     }
 }
 
+/// A loaded fixture that the planner did not schedule for this run.
+///
+/// [`build_plan`] and [`build_plan_with`] add one of these to
+/// [`CompatibilityPlan::skipped`] for each fixture rejected by the protocol,
+/// surface, capability or offline checks, in that order. The same data is
+/// carried into reports: `reason` becomes the human-readable
+/// `skipped[].reason`, while [`SkipCause::code`] maps `cause` to the stable
+/// `skipped[].code` (CF-01).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkippedFixture {
+    /// The `id` of the loaded fixture that was left out.
     pub fixture_id: String,
+    /// The surface (`xdr`, `rpc` or `soroban`) the fixture targets, even
+    /// though it was not scheduled there.
     pub surface: Surface,
+    /// Human-readable explanation of the skip, describing the check that
+    /// rejected it: the two protocols, the disabled surface, the missing
+    /// capability or the `--offline` flag. This is prose for people, not a
+    /// machine-readable value; consumers should key off `cause` and
+    /// [`SkipCause::code`] instead.
     pub reason: String,
+    /// The structured reason for the skip. Each cause maps to a stable
+    /// [`SkipCode`] via [`SkipCause::code`], which is what `check` records as
+    /// `skipped[].code` in its report.
     pub cause: SkipCause,
 }
 

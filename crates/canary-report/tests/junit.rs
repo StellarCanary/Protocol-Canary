@@ -379,3 +379,52 @@ fn an_empty_report_still_renders_a_closed_root_element() {
         "a surface with nothing to report must not get an empty suite"
     );
 }
+
+#[test]
+fn ansi_escape_sequences_and_cdata_closing_tokens_are_handled() {
+    let mut failing = result("p28-xdr-ansi", Surface::Xdr, Status::Fail);
+    failing.summary = "\x1b[31mError:\x1b[0m payload failed with ]]> in message".into();
+    failing.details = Some(
+        "Traceback:\n  \x1b[1;33mwarning\x1b[0m: nested CDATA <![CDATA[nested]]> token".into(),
+    );
+
+    let mut errored = result("p28-rpc-ansi", Surface::Rpc, Status::Error);
+    errored.summary = "crash in <eval> with \x1b[32mcolor\x1b[0m and ]]>".into();
+    errored.details = Some("details with \x1b[0m and ]]> end token".into());
+
+    let xml = JUnitReporter::render(&report(vec![failing, errored], Vec::new()));
+
+    // Document must be strictly well-formed XML and parseable by standard XML parsers
+    let elements = parse(&xml);
+
+    let failure = elements
+        .iter()
+        .find(|element| element.name == "failure")
+        .expect("<failure> element");
+    assert!(
+        attr(failure, "message").contains("]]>"),
+        "attribute value must preserve ]]> unescaped"
+    );
+    assert!(
+        failure
+            .text
+            .contains("nested CDATA <![CDATA[nested]]> token"),
+        "element text must preserve content"
+    );
+
+    let error = elements
+        .iter()
+        .find(|element| element.name == "error")
+        .expect("<error> element");
+    assert!(error.text.contains("]]> end token"));
+
+    // Raw XML must escape '>' so ']]>' never appears unescaped as raw ']]>' inside element text
+    assert!(
+        !xml.contains("]]>"),
+        "raw ]]> must never leak into rendered XML text: {xml}"
+    );
+    assert!(
+        xml.contains("]]&gt;"),
+        "nested CDATA close tokens must be escaped as ]]&gt;: {xml}"
+    );
+}

@@ -37,6 +37,10 @@ Protocol 28 fixtures
 
 ## Example
 
+An unfiltered command prints every fixture for the target protocol. Because
+the pack grows over time, the terminal listing below is an **excerpt** of
+what a current checkout prints, not the complete result.
+
 ```bash
 stellar-canary fixtures --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --protocol 28
 ```
@@ -54,6 +58,23 @@ RPC
 
 Soroban
   p28-soroban-native-asset-name
+```
+
+(Excerpt: these five entries come from the immutable `protocol-28` tag; a
+checkout of the pack's `main` branch lists more.)
+
+For a reproducible subset, filter the listing. For example, `--surface rpc`
+prints only the RPC group, with the other surfaces omitted:
+
+```bash
+stellar-canary fixtures --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --protocol 28 --surface rpc
+```
+
+```text
+Protocol 28 fixtures
+
+RPC
+  p28-rpc-network
 ```
 
 Fixtures are grouped by surface and listed in sorted-path order, matching
@@ -85,8 +106,8 @@ stellar-canary fixtures --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --pro
   "protocol": 28,
   "directoryFound": true,
   "counts": {
-    "total": 3,
-    "xdr": 1,
+    "total": 5,
+    "xdr": 3,
     "rpc": 1,
     "soroban": 1
   },
@@ -136,8 +157,9 @@ stellar-canary fixtures --fixtures-dir ProtocolCanary-Fixtures/protocol-28 --pro
 }
 ```
 
-(Example output trimmed to one fixture per surface for clarity; a real
-directory lists every fixture of the protocol.)
+(Excerpt: `counts` describes the full directory in this illustrative example,
+while the `fixtures` array is trimmed to one entry per surface for clarity.
+A real directory lists every fixture of the protocol.)
 
 ### Field reference
 

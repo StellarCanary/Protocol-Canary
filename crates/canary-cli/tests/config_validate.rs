@@ -266,14 +266,8 @@ fn an_empty_configuration_file_fails_validation_naming_the_missing_version() {
     // A failure is not a verdict: nothing is printed on stdout.
     assert_eq!(stdout(&output), "");
     let text = stderr(&output);
-    assert!(
-        text.contains("missing field `version`"),
-        "the missing required key is named: {text}"
-    );
-    assert!(
-        text.contains(".stellar-canary.toml"),
-        "the file being validated is named: {text}"
-    );
+    assert!(text.contains("missing field `version`"), "the missing required key is named: {text}");
+    assert!(text.contains(".stellar-canary.toml"), "the file being validated is named: {text}");
 }
 
 /// A file that is present but cannot be read never reaches the loader, so

@@ -382,6 +382,194 @@ async fn a_server_error_status_is_an_engine_error_naming_the_status() {
     assert!(details.contains("500"), "{details}");
 }
 
+// --- structurally malformed response bodies (issue #727) ----------------
+
+#[tokio::test]
+async fn a_response_without_a_result_field_is_a_descriptive_engine_error() {
+    // A valid JSON-RPC 2.0 envelope with neither `result` nor `error`: the
+    // call produced no simulation to evaluate at all. This must never be
+    // read as "no error, so it succeeded".
+    let server = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1
+    }))
+    .await;
+
+    for assertion in [
+        "kind = \"simulation-success\"\n",
+        "kind = \"simulation-error\"\n",
+    ] {
+        let result = run(&server, &fixture("p28-sim-no-result", assertion)).await;
+        let details = assert_engine_error(&result, "p28-sim-no-result");
+
+        assert!(
+            details.contains("unexpected response shape from simulateTransaction"),
+            "{details}"
+        );
+        assert!(
+            details.contains("neither \"result\" nor \"error\""),
+            "{details}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_result_missing_latest_ledger_is_a_descriptive_engine_error() {
+    // `latestLedger` is required by the `simulateTransaction` schema. A
+    // result without it is structurally malformed, not an empty success.
+    let server = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "transactionData": "AAAA", "minResourceFee": "100", "results": [] }
+    }))
+    .await;
+
+    for assertion in [
+        "kind = \"simulation-success\"\n",
+        "kind = \"simulation-error\"\n",
+    ] {
+        let result = run(&server, &fixture("p28-sim-no-ledger", assertion)).await;
+        let details = assert_engine_error(&result, "p28-sim-no-ledger");
+
+        assert!(
+            details.contains("unexpected response shape from simulateTransaction"),
+            "{details}"
+        );
+        assert!(details.contains("latestLedger"), "{details}");
+    }
+}
+
+#[tokio::test]
+async fn a_results_field_of_the_wrong_type_is_a_descriptive_engine_error() {
+    // `results` is documented as an array; a string there is a malformed
+    // body rather than "no results were reported".
+    let server = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "latestLedger": 1000, "transactionData": "AAAA", "results": "not-an-array" }
+    }))
+    .await;
+
+    let result = run(
+        &server,
+        &fixture("p28-sim-bad-results", "kind = \"simulation-success\"\n"),
+    )
+    .await;
+    let details = assert_engine_error(&result, "p28-sim-bad-results");
+
+    assert!(
+        details.contains("unexpected response shape from simulateTransaction"),
+        "{details}"
+    );
+    assert!(details.contains("invalid type"), "{details}");
+    assert!(details.contains("expected a sequence"), "{details}");
+}
+
+#[tokio::test]
+async fn a_malformed_results_entry_is_a_descriptive_engine_error() {
+    // Each `results` entry models its `auth` array; an entry whose `auth`
+    // is not an array makes the whole response unreadable.
+    let server = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "latestLedger": 1000,
+            "transactionData": "AAAA",
+            "results": [{ "xdr": "AAAA", "auth": "not-an-array" }]
+        }
+    }))
+    .await;
+
+    let result = run(
+        &server,
+        &fixture("p28-sim-bad-auth", "kind = \"simulation-success\"\n"),
+    )
+    .await;
+    let details = assert_engine_error(&result, "p28-sim-bad-auth");
+
+    assert!(details.contains("invalid type"), "{details}");
+    assert!(details.contains("expected a sequence"), "{details}");
+}
+
+#[tokio::test]
+async fn a_non_numeric_min_resource_fee_is_a_descriptive_engine_error() {
+    // `minResourceFee` is a decimal string in the Soroban RPC schema. A
+    // JSON number, object or float is a malformed body; quietly reading it
+    // as absent would turn a broken endpoint into a pass.
+    for fee in [json!(100), json!({ "stroops": 100 }), json!(1.5)] {
+        let server = server_answering(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "latestLedger": 1000,
+                "transactionData": "AAAA",
+                "minResourceFee": fee,
+                "results": []
+            }
+        }))
+        .await;
+
+        let result = run(
+            &server,
+            &fixture("p28-sim-bad-fee", "kind = \"simulation-success\"\n"),
+        )
+        .await;
+        let details = assert_engine_error(&result, "p28-sim-bad-fee");
+
+        assert!(
+            details.contains("unexpected response shape from simulateTransaction"),
+            "{details}"
+        );
+        assert!(details.contains("invalid type"), "{details}");
+        assert!(details.contains("expected a string"), "{details}");
+    }
+}
+
+#[tokio::test]
+async fn an_absent_results_array_is_read_as_no_results_not_an_engine_error() {
+    // `results` is optional in the Soroban RPC schema: it is omitted when
+    // the simulation reports an error (and may be omitted for an
+    // invocation with nothing to report). Its absence is a readable body,
+    // so the assertion — not an engine error — decides the outcome.
+    let server = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "latestLedger": 1000, "transactionData": "AAAA", "minResourceFee": "100" }
+    }))
+    .await;
+
+    let result = run(
+        &server,
+        &fixture("p28-sim-absent-results", "kind = \"simulation-success\"\n"),
+    )
+    .await;
+
+    assert_identity(&result, "p28-sim-absent-results");
+    assert_eq!(result.status, Status::Pass);
+    assert_eq!(result.summary, "simulation succeeded as expected");
+    assert_eq!(result.details, None);
+
+    let failed = server_answering(json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": { "latestLedger": 1000, "error": BUDGET_ERROR }
+    }))
+    .await;
+
+    let result = run(
+        &failed,
+        &fixture(
+            "p28-sim-absent-results-error",
+            "kind = \"simulation-error\"\nmessage_contains = \"Error(Budget, ExceededLimit)\"\n",
+        ),
+    )
+    .await;
+
+    assert_identity(&result, "p28-sim-absent-results-error");
+    assert_eq!(result.status, Status::Pass);
+    assert_eq!(result.details.as_deref(), Some(BUDGET_ERROR));
+}
+
 #[tokio::test]
 async fn an_unbuildable_invocation_is_an_engine_error_before_any_request() {
     // A function name longer than the 32 characters a Soroban symbol allows

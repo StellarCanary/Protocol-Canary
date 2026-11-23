@@ -132,10 +132,25 @@ pub enum ScValInput {
 /// Everything needed to build an unsigned `InvokeHostFunction` transaction.
 #[derive(Debug, Clone, PartialEq)]
 pub struct InvocationSpec {
+    /// The `G...` account strkey used as the envelope's source account. Only
+    /// its public key is used; the transaction is never signed. A malformed
+    /// strkey is rejected with [`BuilderError::InvalidSourceAccount`].
     pub source_account: String,
+    /// The `C...` contract strkey of the contract being invoked. A malformed
+    /// strkey is rejected with [`BuilderError::InvalidContractId`].
     pub contract_id: String,
+    /// The name of the contract function to invoke. It is encoded as an XDR
+    /// `ScSymbol`, so it is limited to 32 bytes; a name that cannot be
+    /// encoded is rejected with [`BuilderError::InvalidFunctionName`].
     pub function_name: String,
+    /// The positional arguments passed to the function, in call order. An
+    /// empty vector means the function takes no arguments. Each entry is
+    /// converted to its corresponding XDR `ScVal`; an unsupported or
+    /// unencodable argument is rejected with [`BuilderError::InvalidArgument`].
     pub args: Vec<ScValInput>,
+    /// The `source_account` sequence number written into the envelope. It is
+    /// not validated against the network, since the transaction is only
+    /// simulated and never submitted.
     pub sequence_number: i64,
 }
 

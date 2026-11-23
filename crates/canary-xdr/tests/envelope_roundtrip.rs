@@ -10,8 +10,9 @@ use base64::Engine as _;
 
 use canary_xdr::{decode, decode_transaction_envelope, encode_transaction_envelope, XdrTypeName};
 use stellar_xdr::{
-    Asset, BytesM, DecoratedSignature, FeeBumpTransaction, FeeBumpTransactionEnvelope,
-    FeeBumpTransactionExt, Memo, MuxedAccount, Operation, OperationBody, PaymentOp, Preconditions,
+    Asset, BytesM, ContractId, DecoratedSignature, FeeBumpTransaction, FeeBumpTransactionEnvelope,
+    FeeBumpTransactionExt, Hash, HostFunction, InvokeContractArgs, InvokeHostFunctionOp, Memo,
+    MuxedAccount, Operation, OperationBody, PaymentOp, Preconditions, ScAddress, ScSymbol, ScVal,
     SequenceNumber, Signature, SignatureHint, StringM, TimeBounds, TimePoint, Transaction,
     TransactionEnvelope, TransactionExt, TransactionV0, TransactionV0Envelope, TransactionV0Ext,
     TransactionV1Envelope, Uint256, VecM,
@@ -103,6 +104,53 @@ fn fee_bump_envelope() -> TransactionEnvelope {
     })
 }
 
+/// A Protocol 20+ fee-bump envelope around a Soroban `InvokeHostFunction`.
+/// Unlike the payment-based helpers above, this exercises the operation type
+/// Soroban fee-bump transactions actually carry, together with the contract
+/// address, function name and argument values that must survive the codec.
+fn soroban_fee_bump_envelope() -> TransactionEnvelope {
+    TransactionEnvelope::TxFeeBump(FeeBumpTransactionEnvelope {
+        tx: FeeBumpTransaction {
+            fee_source: account(7),
+            fee: 20_000_000,
+            inner_tx: stellar_xdr::FeeBumpTransactionInnerTx::Tx(TransactionV1Envelope {
+                tx: Transaction {
+                    source_account: account(8),
+                    fee: 500,
+                    seq_num: SequenceNumber(2_000),
+                    cond: Preconditions::None,
+                    memo: Memo::None,
+                    operations: VecM::try_from(vec![Operation {
+                        source_account: None,
+                        body: OperationBody::InvokeHostFunction(InvokeHostFunctionOp {
+                            host_function: HostFunction::InvokeContract(InvokeContractArgs {
+                                contract_address: ScAddress::Contract(ContractId(Hash([9; 32]))),
+                                function_name: ScSymbol(
+                                    StringM::try_from("hello".to_string()).expect("fits 32"),
+                                ),
+                                args: VecM::try_from(vec![ScVal::U32(7)]).expect("fits 100"),
+                            }),
+                            auth: VecM::default(),
+                        }),
+                    }])
+                    .expect("fits 100"),
+                    ext: TransactionExt::default(),
+                },
+                signatures: VecM::try_from(vec![signature(9)]).expect("fits 20"),
+            }),
+            ext: FeeBumpTransactionExt::default(),
+        },
+        signatures: VecM::try_from(vec![signature(10), signature(11)]).expect("fits 20"),
+    })
+}
+
+/// The canonical base64 XDR for [`soroban_fee_bump_envelope`], produced once
+/// and pinned: it is the reference vector the encoder and decoder must agree
+/// with byte for byte. Changing any field, signature, or length prefix in the
+/// envelope changes this string, so the test fails instead of silently
+/// accepting a different wire format.
+const SOROBAN_FEE_BUMP_REFERENCE_XDR: &str = "AAAABQAAAAAHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwAAAAABMS0AAAAAAgAAAAAICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAAAAfQAAAAAAAAH0AAAAAAAAAAAAAAAAQAAAAAAAAAYAAAAAAAAAAEJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQAAAAVoZWxsbwAAAAAAAAEAAAADAAAABwAAAAAAAAAAAAAAAQkJCQkAAABACQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQAAAAAAAAACCgoKCgAAAEAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCwsLCwAAAEALCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsL";
+
 /// The central property of this module: decode then encode reproduces the
 /// input bytes exactly, for each of the three envelope variants.
 fn assert_lossless_roundtrip(envelope: TransactionEnvelope) {
@@ -189,9 +237,102 @@ fn fee_bump_roundtrip_preserves_the_inner_envelope() {
 
 /// The fixture pipeline goes through `decode`/`encode` with a type name;
 /// the typed entry points must agree with it so both paths roundtrip.
+/// Issue #759: the encoded bytes must match a reference XDR vector, not just
+/// roundtrip against themselves. A codec bug that consistently mis-encodes a
+/// field would pass an encode/decode/encode comparison but fail here.
+#[test]
+fn fee_bump_encoding_matches_the_reference_xdr_vector() {
+    let envelope = soroban_fee_bump_envelope();
+    let encoded = encode_transaction_envelope(&envelope).expect("encodes");
+    assert_eq!(
+        encoded, SOROBAN_FEE_BUMP_REFERENCE_XDR,
+        "the encoder must produce the reference vector exactly"
+    );
+
+    let decoded = decode_transaction_envelope(SOROBAN_FEE_BUMP_REFERENCE_XDR)
+        .expect("the reference vector decodes");
+    assert_eq!(
+        decoded, envelope,
+        "the reference vector decodes to the original structure"
+    );
+    assert_eq!(
+        encode_transaction_envelope(&decoded).expect("re-encodes"),
+        SOROBAN_FEE_BUMP_REFERENCE_XDR
+    );
+}
+
+/// Every fee-bump signature and the whole inner transaction must survive
+/// decoding the reference vector. Checking each field explicitly catches a
+/// codec that drops or truncates one of them while still re-encoding to the
+/// same bytes by accident.
+#[test]
+fn fee_bump_reference_vector_preserves_signatures_and_inner_transaction() {
+    let decoded = decode_transaction_envelope(SOROBAN_FEE_BUMP_REFERENCE_XDR)
+        .expect("the reference vector decodes");
+
+    let TransactionEnvelope::TxFeeBump(envelope) = decoded else {
+        panic!("expected a FeeBump envelope");
+    };
+
+    // The outer fee-bump wrapper.
+    assert_eq!(envelope.tx.fee_source, account(7));
+    assert_eq!(envelope.tx.fee, 20_000_000);
+    assert!(envelope.tx.ext == FeeBumpTransactionExt::default());
+
+    // Both outer signatures, hints and bytes, in order.
+    assert_eq!(envelope.signatures.len(), 2);
+    for (index, seed) in [(0, 10u8), (1, 11u8)] {
+        assert_eq!(envelope.signatures[index].hint, SignatureHint([seed; 4]));
+        assert_eq!(
+            envelope.signatures[index].signature,
+            Signature(BytesM::try_from(vec![seed; 64]).expect("fits 64"))
+        );
+    }
+
+    // The inner V1 transaction and its own signature.
+    let stellar_xdr::FeeBumpTransactionInnerTx::Tx(inner) = &envelope.tx.inner_tx;
+    assert_eq!(inner.tx.source_account, account(8));
+    assert_eq!(inner.tx.fee, 500);
+    assert_eq!(inner.tx.seq_num, SequenceNumber(2_000));
+    assert_eq!(inner.tx.cond, Preconditions::None);
+    assert_eq!(inner.tx.memo, Memo::None);
+    assert_eq!(inner.signatures.len(), 1);
+    assert_eq!(inner.signatures[0].hint, SignatureHint([9; 4]));
+    assert_eq!(
+        inner.signatures[0].signature,
+        Signature(BytesM::try_from(vec![9; 64]).expect("fits 64"))
+    );
+
+    // The Soroban invocation, including its contract, function and argument.
+    assert_eq!(inner.tx.operations.len(), 1);
+    match &inner.tx.operations[0].body {
+        OperationBody::InvokeHostFunction(operation) => {
+            assert!(operation.auth.is_empty());
+            match &operation.host_function {
+                HostFunction::InvokeContract(call) => {
+                    assert_eq!(
+                        call.contract_address,
+                        ScAddress::Contract(ContractId(Hash([9; 32])))
+                    );
+                    assert_eq!(call.function_name.0.as_slice(), b"hello");
+                    assert_eq!(call.args.len(), 1);
+                    assert_eq!(call.args[0], ScVal::U32(7));
+                }
+                other => panic!("expected an InvokeContract host function, got {other:?}"),
+            }
+        }
+        other => panic!("expected an InvokeHostFunction operation, got {other:?}"),
+    }
+}
+
 #[test]
 fn the_typed_api_and_the_fixture_pipeline_agree() {
-    for envelope in [v0_envelope(), v1_envelope(), fee_bump_envelope()] {
+    for envelope in [
+        v0_envelope(),
+        v1_envelope(),
+        fee_bump_envelope(),
+        soroban_fee_bump_envelope(),
+    ] {
         let encoded = encode_transaction_envelope(&envelope).expect("encodes");
 
         let via_fixture_path = decode(XdrTypeName::TransactionEnvelope, &encoded)

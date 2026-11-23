@@ -140,8 +140,12 @@ pub struct CheckArgs {
     pub protocol: Option<u32>,
 
     /// Network to run live checks against (overrides `network` in
-    /// .stellar-canary.toml; default: testnet).
-    #[arg(long)]
+    /// .stellar-canary.toml; default: testnet). The value must match the
+    /// documented network-name shape: it is validated during argument
+    /// parsing, so an empty or malformed value is a usage error before a
+    /// run starts. The known names still match case-insensitively
+    /// downstream; see `canary_cli::network::parse_network_name`.
+    #[arg(long, value_parser = parse_network)]
     pub network: Option<String>,
 
     /// RPC endpoint to use for live checks.
@@ -421,6 +425,44 @@ fn parse_network_passphrase(value: &str) -> Result<String, String> {
     } else {
         Ok(value.to_string())
     }
+}
+
+/// Rejects `--network` values that are not valid network names.
+///
+/// A network name is one token: it starts with a letter or digit and
+/// continues with letters, digits, `.`, `_` or `-` — the shape
+/// `docs/schemas/config-v1.schema.json` documents for `network`
+/// (`^[A-Za-z0-9][A-Za-z0-9._-]*$`). The three known names
+/// (`testnet`, `mainnet`, `futurenet`) match this shape as well, in any
+/// case; `canary_cli::network::parse_network_name` still maps any
+/// unrecognized value to `NetworkName::Custom`.
+///
+/// Failing the argument makes the mistake loud: clap reports an argument
+/// validation error (exit code 2) before anything runs.
+fn parse_network(value: &str) -> Result<String, String> {
+    if is_valid_network_name(value) {
+        Ok(value.to_string())
+    } else {
+        Err(
+            "a network name must start with a letter or digit and continue with letters, digits, '.', '_' or '-'"
+                .to_string(),
+        )
+    }
+}
+
+/// Whether `value` matches the network-name shape published in
+/// `docs/schemas/config-v1.schema.json`: one token that starts with a
+/// letter or digit and continues with letters, digits, `.`, `_` or `-`
+/// (`^[A-Za-z0-9][A-Za-z0-9._-]*$`).
+fn is_valid_network_name(value: &str) -> bool {
+    let mut chars = value.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !first.is_ascii_alphanumeric() {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
 }
 
 #[derive(Debug, Parser)]
@@ -972,6 +1014,93 @@ mod tests {
         let text = err.to_string();
         assert!(text.contains("--network-passphrase"), "{text}");
         assert!(text.contains("the passphrase cannot be empty"), "{text}");
+    }
+
+    /// The documented network-name shape, as pinned by
+    /// `docs/schemas/config-v1.schema.json`: `^[A-Za-z0-9][A-Za-z0-9._-]*$`.
+    #[test]
+    fn is_valid_network_name_matches_the_published_shape() {
+        for value in [
+            "a",
+            "9",
+            "testnet",
+            "Testnet",
+            "MAINNET",
+            "futurenet",
+            "FutureNet",
+            "My_Network-2.0",
+            "a1.b2_c3-d4",
+        ] {
+            assert!(is_valid_network_name(value), "{value:?} should be valid");
+        }
+        for value in [
+            "",
+            " ",
+            " my-net",
+            "my-net ",
+            "my net",
+            "my\tnet",
+            ".my-net",
+            "_my-net",
+            "-my-net",
+            "my-net!",
+            "my-net/slash",
+            "réseau",
+        ] {
+            assert!(!is_valid_network_name(value), "{value:?} should be invalid");
+        }
+    }
+
+    /// The three known names — any case, since their matching is
+    /// case-insensitive — and valid custom names parse successfully.
+    #[test]
+    fn network_flag_accepts_known_names_and_valid_custom_names() {
+        for value in [
+            "testnet",
+            "Testnet",
+            "MAINNET",
+            "mainnet",
+            "FutureNet",
+            "futurenet",
+            "My-Local_Network.2",
+        ] {
+            let cli = Cli::parse_from(["stellar-canary", "check", "--network", value]);
+            match cli.command {
+                Command::Check(args) => assert_eq!(args.network.as_deref(), Some(value)),
+                other => panic!("Expected Check command, got {other:?}"),
+            }
+        }
+    }
+
+    /// An empty or malformed `--network` value is an argument validation
+    /// error (exit code 2) before a run starts, rather than a label that
+    /// `canary_cli::network::parse_network_name` would turn into a custom
+    /// network name.
+    #[test]
+    fn network_flag_rejects_empty_and_malformed_values() {
+        for value in [
+            "",
+            " ",
+            "my net",
+            "my-net!",
+            "net/slash",
+            ".leading",
+            "_leading",
+        ] {
+            let err = Cli::try_parse_from(["stellar-canary", "check", "--network", value])
+                .expect_err("--network with a malformed value must fail argument validation");
+            assert_eq!(
+                err.kind(),
+                clap::error::ErrorKind::ValueValidation,
+                "{value:?}"
+            );
+            let text = err.to_string();
+            assert!(text.contains("--network"), "{text}");
+            assert!(
+                text.contains("a network name must start with a letter or digit"),
+                "{text}"
+            );
+        }
     }
 
     #[test]

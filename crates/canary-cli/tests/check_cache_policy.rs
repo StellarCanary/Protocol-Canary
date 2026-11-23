@@ -215,6 +215,69 @@ fn a_corrupted_cache_entry_is_ignored_and_the_fixture_runs_fresh() {
     assert_eq!(source_of(&report, "p28-xdr-1"), "live");
 }
 
+/// The cache directory is created before any fixture executes, so a cache
+/// directory that cannot exist must be reported as a configuration error,
+/// not as a panic and not as a failed run: here `--cache-dir` names a
+/// directory inside a parent whose mode is 0555, so only the parent exists
+/// and it denies the write.
+///
+/// Skipped implicitly when the test runs as root, where the mode bits do not
+/// deny the write and `create_dir_all` would succeed.
+#[cfg(unix)]
+#[test]
+fn a_cache_directory_inside_a_read_only_parent_is_a_configuration_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let (_rt, server) = start_mock();
+    let dir = project();
+
+    let readonly = dir.path.join("readonly");
+    std::fs::create_dir(&readonly).unwrap();
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    // Running as root bypasses the mode bits, so there is nothing to assert.
+    if std::fs::create_dir(readonly.join("probe")).is_ok() {
+        std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
+
+    let uri = server.uri();
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--json",
+            "--rpc-url",
+            &uri,
+            "--cache-dir",
+            "readonly/cache",
+        ],
+    );
+    let err = stderr(&output);
+
+    // Restore the mode before asserting so a failure cannot leave an
+    // unwritable directory behind for `TempProject::drop`.
+    std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(!readonly.join("cache").exists(), "the cache directory was not created");
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an uncreatable cache directory is a configuration error\nstdout:\n{}\nstderr:\n{err}",
+        stdout(&output)
+    );
+    assert!(!err.contains("panicked"), "the engine panicked: {err}");
+    assert!(err.contains("--cache-dir"), "the flag is named: {err}");
+    assert!(
+        err.to_lowercase().contains("permission"),
+        "the error names the permission problem: {err}"
+    );
+    assert!(
+        err.contains("could not be created"),
+        "the cache error is described, not just the OS error: {err}"
+    );
+}
+
 #[test]
 fn the_terminal_report_says_when_results_were_replayed() {
     let (_rt, server) = start_mock();

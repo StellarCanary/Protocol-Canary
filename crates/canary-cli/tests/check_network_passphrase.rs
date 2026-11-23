@@ -159,6 +159,112 @@ fn the_passphrase_flag_replaces_the_well_known_default_passphrase() {
     );
 }
 
+/// The mismatch diagnostic is a user-facing contract, not just "nonzero".
+/// One `error:` line, naming the *expected* passphrase (the flag value)
+/// first and the endpoint-reported one second, each rendered with
+/// `RpcError::NetworkMismatch`'s debug quoting so a passphrase with
+/// surrounding whitespace or punctuation is unambiguous. No hint (there is
+/// nothing to fix beyond the `--network`/`--rpc-url` pair), no partial
+/// report on stdout, and exit code 2.
+#[test]
+fn a_passphrase_mismatch_prints_the_exact_configuration_error_line() {
+    let (_rt, server) = mock_get_network(OTHER_PASSPHRASE, 28);
+    let dir = project("network-passphrase-exact-message");
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--allow-empty",
+            "--rpc-url",
+            &server.uri(),
+            "--network",
+            "my-standalone-network",
+            "--network-passphrase",
+            CUSTOM_PASSPHRASE,
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a passphrase mismatch is a configuration/network error; stderr: {}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "nothing may be rendered for a run that aborted before executing checks"
+    );
+
+    let expected = format!(
+        "error: configuration error: the RPC endpoint's network passphrase ({OTHER_PASSPHRASE:?}) does not match the expected passphrase ({CUSTOM_PASSPHRASE:?})"
+    );
+    let err = stderr(&output);
+    assert_eq!(
+        err.trim_end(),
+        expected,
+        "the mismatch line is a fixed, quoted format; stderr: {err}"
+    );
+    assert_eq!(
+        err.lines()
+            .filter(|line| line.starts_with("error:"))
+            .count(),
+        1,
+        "exactly one error line, with no warning or rendered report around it; stderr: {err}"
+    );
+    assert!(
+        !err.contains("panicked at") && !err.contains("stack backtrace"),
+        "a mismatch must be reported, never unwrapped into a panic; stderr: {err}"
+    );
+}
+
+/// Basic-auth credentials embedded in `--rpc-url` are secret material. A
+/// mismatch diagnostic must never echo them (the client scrubs userinfo
+/// before any URL reaches a message), while it still identifies the
+/// endpoint by host and port.
+#[test]
+fn a_passphrase_mismatch_does_not_echo_rpc_url_credentials() {
+    let (_rt, server) = mock_get_network(OTHER_PASSPHRASE, 28);
+    let dir = project("network-passphrase-url-redaction");
+    let rpc_url = server
+        .uri()
+        .replacen("http://", "http://canary-user:canary-secret@", 1);
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--allow-empty",
+            "--rpc-url",
+            &rpc_url,
+            "--network",
+            "my-standalone-network",
+            "--network-passphrase",
+            CUSTOM_PASSPHRASE,
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "the mismatch still aborts as a configuration error; stderr: {}",
+        stderr(&output)
+    );
+    let err = stderr(&output);
+    assert!(
+        err.contains(OTHER_PASSPHRASE) && err.contains(CUSTOM_PASSPHRASE),
+        "redaction must not remove the diagnostic passphrases; stderr: {err}"
+    );
+    assert!(
+        !err.contains("canary-secret"),
+        "the URL password must never reach stderr; stderr: {err}"
+    );
+    assert!(
+        !err.contains("canary-user"),
+        "the URL username must never reach stderr either; stderr: {err}"
+    );
+}
+
 /// An empty `--network-passphrase ""` is an argument validation error:
 /// clap rejects it before anything runs, with exit code 2.
 #[test]

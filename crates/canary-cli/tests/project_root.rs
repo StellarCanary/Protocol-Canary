@@ -228,3 +228,100 @@ fn an_absolute_input_path_is_left_alone_when_a_project_root_is_given() {
     assert!(output.status.success(), "{}", stderr(&output));
     assert!(stdout(&output).contains("p28-xdr-absolute"));
 }
+
+#[test]
+fn project_root_discovery_from_deeply_nested_subdirectories() {
+    let root = TempProject::new("root-deep-discovery");
+    root.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    root.write("Cargo.toml", SOROBAN_MANIFEST);
+    root.write("fixtures/p28-xdr-1.toml", &xdr_fixture("p28-xdr-deep"));
+
+    // Intermediate marker in level1 to verify upward boundary termination
+    root.write(
+        "level1/.stellar-canary.toml",
+        "version = 1\nprotocol = 27\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n",
+    );
+    // Deep directory hierarchy 3 levels deep
+    root.write(
+        "level1/level2/level3/marker.txt",
+        "invoked from three levels deep",
+    );
+
+    let deep_dir = root.path.join("level1").join("level2").join("level3");
+    assert!(deep_dir.is_dir());
+
+    // 1. Invoked from 3 levels deep with upward relative path `../../..`
+    let rel_inspect = run_in(&deep_dir, &["inspect", "--project-root", "../../../"]);
+    assert!(rel_inspect.status.success(), "{}", stderr(&rel_inspect));
+    let rel_text = stdout(&rel_inspect);
+    assert!(rel_text.contains("Project type: soroban"), "{rel_text}");
+    assert!(
+        rel_text.contains("Detected Soroban contract usage: true"),
+        "{rel_text}"
+    );
+    assert!(rel_text.contains("Configured protocol: 28"), "{rel_text}");
+    let shown_rel = rel_text
+        .lines()
+        .find(|line| line.starts_with("Project root: "))
+        .expect("inspect prints the project root");
+    assert!(shown_rel.ends_with(&dir_name(&root)), "{shown_rel}");
+
+    // Fixtures command also resolves accurately via relative upward navigation
+    let rel_fixtures = run_in(
+        &deep_dir,
+        &[
+            "fixtures",
+            "--project-root",
+            "../../../",
+            "--protocol",
+            "28",
+        ],
+    );
+    assert!(rel_fixtures.status.success(), "{}", stderr(&rel_fixtures));
+    assert!(stdout(&rel_fixtures).contains("p28-xdr-deep"));
+
+    // 2. Invoked with canonical absolute path from 3 levels deep
+    let abs_inspect = run_in(&deep_dir, &["inspect", "--project-root", path_arg(&root)]);
+    assert!(abs_inspect.status.success(), "{}", stderr(&abs_inspect));
+    let abs_text = stdout(&abs_inspect);
+    assert!(abs_text.contains("Project type: soroban"), "{abs_text}");
+    assert!(
+        abs_text.contains("Detected Soroban contract usage: true"),
+        "{abs_text}"
+    );
+    assert!(abs_text.contains("Configured protocol: 28"), "{abs_text}");
+
+    // 3. Root marker termination: intermediate directory level1 has its own config marker.
+    // Navigating 2 levels up (`../..`) terminates at level1 and does not walk through to root.
+    let intermediate_inspect = run_in(&deep_dir, &["inspect", "--project-root", "../.."]);
+    assert!(
+        intermediate_inspect.status.success(),
+        "{}",
+        stderr(&intermediate_inspect)
+    );
+    let inter_text = stdout(&intermediate_inspect);
+    assert!(
+        inter_text.contains("Configured protocol: 27"),
+        "{inter_text}"
+    );
+    assert!(inter_text.contains("Project type: unknown"), "{inter_text}");
+    assert!(
+        inter_text.contains("Detected Soroban contract usage: false"),
+        "{inter_text}"
+    );
+    let shown_inter = inter_text
+        .lines()
+        .find(|line| line.starts_with("Project root: "))
+        .expect("inspect prints the project root");
+    assert!(shown_inter.ends_with("level1"), "{shown_inter}");
+
+    // 4. Without --project-root, no upward traversal occurs; current directory level3 is used (CF-07 / D-08).
+    let local_inspect = run_in(&deep_dir, &["inspect"]);
+    assert!(local_inspect.status.success(), "{}", stderr(&local_inspect));
+    let local_text = stdout(&local_inspect);
+    assert!(local_text.contains("Project type: unknown"), "{local_text}");
+    assert!(
+        local_text.contains("Detected Soroban contract usage: false"),
+        "{local_text}"
+    );
+}

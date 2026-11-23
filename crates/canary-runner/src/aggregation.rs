@@ -11,10 +11,17 @@
 
 use canary_core::{CompatibilityResult, Status};
 
-/// Counts of results by status, over the fixtures that actually ran.
+/// Counts of results by status, over the slice handed to [`summarize`].
 ///
-/// Skipped fixtures are never included here: they are neither pass nor
-/// fail and are tracked separately by the planner.
+/// A supplied [`Status::Skipped`] result is counted in the total but in
+/// none of the status counters: `summarize` sets `total` to
+/// `results.len()`, and a skipped result increments none of `passed`,
+/// `failed`, `warnings` or `errors`. The scheduler normally tracks
+/// planned-and-not-run fixtures separately
+/// (`canary_runner::scheduler::CompatibilityPlan::skipped`), but execution
+/// can still produce `Skipped` results — for example when an RPC endpoint
+/// does not implement a method — so the total counts every input, with a
+/// skipped input moving that total and no status counter.
 ///
 /// # Examples
 ///
@@ -57,11 +64,15 @@ impl ResultSummary {
 /// recording the counts of [`Pass`](Status::Pass), [`Fail`](Status::Fail),
 /// [`Warning`](Status::Warning), and [`Error`](Status::Error) outcomes.
 ///
-/// The returned [`ResultSummary::total`] is initialized to `results.len()`.
-/// If the slice contains any [`Status::Skipped`] results, they are included
-/// in `total` but do not increment any of the four status-specific counters,
-/// as skipped fixtures are normally filtered and tracked during planning
-/// rather than execution.
+/// The returned [`ResultSummary::total`] is initialized to `results.len()`,
+/// so every result in the slice counts. A supplied [`Status::Skipped`]
+/// result therefore moves `total` but increments none of the four
+/// status-specific counters (`passed`, `failed`, `warnings`, `errors`): it
+/// is a total, not evidence of a pass, failure, warning or error. Skipped
+/// fixtures are normally filtered during planning and tracked by the
+/// scheduler separately, so a well-formed execution slice contains no
+/// skipped results — but `summarize` does not filter, and a caller that
+/// supplies one still gets it counted in the total.
 ///
 /// If `results` is empty, this returns a default [`ResultSummary`] where all
 /// counts are zero.
@@ -161,6 +172,23 @@ mod tests {
         assert_eq!(summary.warnings, 1);
         assert_eq!(summary.errors, 1);
         assert!(summary.has_warnings());
+    }
+
+    /// The one case the type and function docs pin: a supplied skipped
+    /// result increments `total` and none of the status counters.
+    #[test]
+    fn a_supplied_skipped_result_counts_toward_total_but_no_status_counter() {
+        let results = vec![
+            result(Status::Pass),
+            result(Status::Skipped),
+            result(Status::Fail),
+        ];
+        let summary = summarize(&results);
+        assert_eq!(summary.total, 3);
+        assert_eq!(summary.passed, 1);
+        assert_eq!(summary.failed, 1);
+        assert_eq!(summary.warnings, 0);
+        assert_eq!(summary.errors, 0);
     }
 
     #[test]

@@ -47,8 +47,8 @@
     // schemaVersion is checked by the viewer, not here - we accept any
     // value so the viewer can show appropriate guidance.
     if (typeof value.toolVersion !== "string") return fail("toolVersion must be a string");
-    if (!isInteger(value.targetProtocol) || value.targetProtocol < 0) {
-      return fail("targetProtocol must be a non-negative integer");
+    if (!isInteger(value.targetProtocol) || value.targetProtocol < 1) {
+      return fail("targetProtocol must be a positive integer");
     }
     if (!isObject(value.project)) return fail("project must be an object");
     if (typeof value.project.name !== "string") return fail("project.name must be a string");
@@ -64,8 +64,8 @@
       var where = "results[" + i + "]";
       if (!isObject(result)) return fail(where + " must be an object");
       if (typeof result.testId !== "string") return fail(where + ".testId must be a string");
-      if (!isInteger(result.protocol) || result.protocol < 0) {
-        return fail(where + ".protocol must be a non-negative integer");
+      if (!isInteger(result.protocol) || result.protocol < 1) {
+        return fail(where + ".protocol must be a positive integer");
       }
       if (SURFACES.indexOf(result.surface) === -1) {
         return fail(where + ".surface must be one of " + SURFACES.join(", "));
@@ -74,16 +74,20 @@
         return fail(where + ".status must be one of " + STATUSES.join(", "));
       }
       if (typeof result.summary !== "string") return fail(where + ".summary must be a string");
-      if (typeof result.durationMs !== "number" || !isFinite(result.durationMs) || result.durationMs < 0) {
-        return fail(where + ".durationMs must be a non-negative number");
+      if (!isInteger(result.durationMs) || result.durationMs < 0) {
+        return fail(where + ".durationMs must be a non-negative integer");
       }
-      if (result.fixtureId !== undefined && typeof result.fixtureId !== "string") {
-        return fail(where + ".fixtureId must be a string when present");
+      if (
+        result.fixtureId !== undefined &&
+        result.fixtureId !== null &&
+        typeof result.fixtureId !== "string"
+      ) {
+        return fail(where + ".fixtureId must be a string or null when present");
       }
       if (result.details !== undefined && result.details !== null && typeof result.details !== "string") {
         return fail(where + ".details must be a string when present");
       }
-      var id = result.fixtureId !== undefined ? result.fixtureId : result.testId;
+      var id = result.fixtureId !== undefined && result.fixtureId !== null ? result.fixtureId : result.testId;
       var key = identity(result.surface, id);
       if (seen[key]) return fail(where + " repeats the result identity " + result.surface + "/" + id);
       seen[key] = true;
@@ -112,8 +116,8 @@
     if (value.network !== undefined && value.network !== null) {
       if (!isObject(value.network)) return fail("network must be an object when present");
       var observed = value.network.observedProtocol;
-      if (observed !== undefined && observed !== null && (!isInteger(observed) || observed < 0)) {
-        return fail("network.observedProtocol must be a non-negative integer when present");
+      if (observed !== undefined && (!isInteger(observed) || observed < 1)) {
+        return fail("network.observedProtocol must be a positive integer when present");
       }
     }
     return { ok: true, report: value };

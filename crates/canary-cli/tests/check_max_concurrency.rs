@@ -209,6 +209,66 @@ fn max_concurrency_one_serializes_rpc_fixture_requests() {
     );
 }
 
+/// A value beyond `u32`'s range is a usage error, not a wrapped number. The
+/// parser must reject it (exit code 2) instead of truncating: `4294967296`
+/// wrapping to `0` would silently reintroduce the deadlock value, and any
+/// other wrap would silently change what the user asked for.
+#[test]
+fn max_concurrency_beyond_the_u32_range_is_a_usage_error() {
+    let dir = TempProject::new("check-max-concurrency-overflow");
+
+    for value in ["4294967296", "18446744073709551616"] {
+        let output = run_in(&dir.path, &["check", "--max-concurrency", value]);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "value {value} must be rejected as a usage error; stderr: {}",
+            stderr(&output)
+        );
+        assert_eq!(stdout(&output), "", "no run may start for value {value}");
+        let text = stderr(&output);
+        assert!(text.contains("--max-concurrency"), "{text}");
+        assert!(
+            text.contains("invalid value") && text.contains(value),
+            "the rejected value is named: {text}"
+        );
+    }
+}
+
+/// A large but representable value is an upper bound, not a promise of that
+/// many threads: the executor only ever starts one request per fixture, so
+/// `10000` must run the whole suite normally. This is the "handled without
+/// thread exhaustion" half of the boundary: no panic, no thread-spawn
+/// failure, and no fixture dropped.
+#[test]
+fn max_concurrency_ten_thousand_runs_every_fixture_without_thread_exhaustion() {
+    let (_rt, server) = start_delayed_mock();
+    let dir = setup("check-max-concurrency-10000");
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--rpc-url",
+            &server.uri(),
+            "--max-concurrency",
+            "10000",
+        ],
+    );
+
+    assert_eq!(output.status.code(), Some(0), "stderr: {}", stderr(&output));
+    assert!(
+        stdout(&output).contains("8/8 applicable checks passed."),
+        "every fixture must still run and pass; stdout: {}",
+        stdout(&output)
+    );
+    assert!(
+        !stderr(&output).contains("panicked"),
+        "a large upper bound must not crash the run: {}",
+        stderr(&output)
+    );
+}
+
 /// Control: the same suite at a higher concurrency still runs every fixture
 /// and passes — the flag changes scheduling, not outcomes.
 #[test]

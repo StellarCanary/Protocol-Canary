@@ -137,7 +137,7 @@
   }
 
   function idOfResult(result) {
-    return result.fixtureId !== undefined ? result.fixtureId : result.testId;
+    return result.fixtureId !== undefined && result.fixtureId !== null ? result.fixtureId : result.testId;
   }
 
   /* Search covers "by fixture ID or description": the identity string

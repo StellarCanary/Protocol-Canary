@@ -182,6 +182,27 @@ mod tests {
     }
 
     #[test]
+    fn an_empty_result_set_yields_a_pass_decision_under_the_default_policy() {
+        let decision = DefaultPolicyEvaluator.evaluate(&[], &Policy::default());
+        assert_eq!(decision, PolicyDecision::Pass);
+    }
+
+    #[test]
+    fn an_empty_result_set_still_passes_when_warnings_are_failures() {
+        let policy = Policy {
+            warnings_are_failures: true,
+        };
+        let decision = DefaultPolicyEvaluator.evaluate(&[], &policy);
+        assert_eq!(decision, PolicyDecision::Pass);
+    }
+
+    #[test]
+    fn an_empty_result_set_with_a_pass_decision_exits_zero() {
+        let exit_code = exit_code_for_run(&[], PolicyDecision::Pass);
+        assert_eq!(exit_code, ExitCode::Pass);
+    }
+
+    #[test]
     fn a_fail_decision_exits_with_compatibility_failure() {
         let results = vec![result(Status::Fail)];
         let exit_code = exit_code_for_run(&results, PolicyDecision::Fail);

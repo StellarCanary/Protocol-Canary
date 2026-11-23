@@ -10,8 +10,100 @@ use support::{run_in, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
 
 use serde_json::Value;
 
+/// The published CA-02 inventory schema, so the unverified-state assertions
+/// below are checked against the contract rather than a hand-written shape.
+const SCHEMA_TEXT: &str = include_str!("../../../docs/schemas/fixtures-v1.schema.json");
+
 const OFFLINE_CONFIG: &str =
     "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n";
+
+fn schema_type_matches(value: &Value, expected: &str) -> bool {
+    match expected {
+        "object" => value.is_object(),
+        "array" => value.is_array(),
+        "string" => value.is_string(),
+        "boolean" => value.is_boolean(),
+        "integer" => value.is_u64() || value.is_i64(),
+        "number" => value.is_number(),
+        _ => false,
+    }
+}
+
+/// Validates the parts of the fixtures-v1 schema that can reject an
+/// inventory: required members, the declared primitive type of every
+/// present member, and the fixture `surface` enum. `additionalProperties`
+/// is deliberately open in the schema, so unknown members are allowed.
+fn assert_conforms_to_fixtures_schema(document: &Value) {
+    let schema: Value =
+        serde_json::from_str(SCHEMA_TEXT).expect("fixtures-v1 schema is valid JSON");
+    let required = schema["required"]
+        .as_array()
+        .expect("top-level required list");
+    for field in required.iter().filter_map(Value::as_str) {
+        assert!(
+            document.get(field).is_some(),
+            "inventory is missing required `{field}`: {document}"
+        );
+    }
+
+    let top_properties = schema["properties"]
+        .as_object()
+        .expect("top-level properties");
+    for (name, sub_schema) in top_properties {
+        if let Some(value) = document.get(name) {
+            if let Some(expected) = sub_schema["type"].as_str() {
+                assert!(
+                    schema_type_matches(value, expected),
+                    "`{name}` must be {expected}, found {value}"
+                );
+            }
+            if let Some(constant) = sub_schema.get("const") {
+                assert_eq!(value, constant, "`{name}` must be {constant}");
+            }
+        }
+    }
+
+    let item_schema = &schema["properties"]["fixtures"]["items"];
+    let item_required = item_schema["required"]
+        .as_array()
+        .expect("fixture required list");
+    let item_properties = item_schema["properties"]
+        .as_object()
+        .expect("fixture properties");
+    let surfaces = item_properties["surface"]["enum"]
+        .as_array()
+        .expect("surface enum");
+
+    for fixture in document["fixtures"].as_array().expect("fixtures array") {
+        for field in item_required.iter().filter_map(Value::as_str) {
+            assert!(
+                fixture.get(field).is_some(),
+                "fixture is missing required `{field}`: {fixture}"
+            );
+        }
+        for (name, sub_schema) in item_properties {
+            let Some(value) = fixture.get(name) else {
+                continue;
+            };
+            if let Some(expected) = sub_schema["type"].as_str() {
+                assert!(
+                    schema_type_matches(value, expected),
+                    "fixture `{name}` must be {expected}, found {value}"
+                );
+            }
+            if let Some(allowed) = sub_schema["enum"].as_array() {
+                assert!(
+                    allowed.contains(value),
+                    "fixture `{name}` value {value} is not one of {allowed:?}"
+                );
+            }
+        }
+        assert!(
+            surfaces.contains(&fixture["surface"]),
+            "fixture surface must be one of {surfaces:?}: {fixture}"
+        );
+    }
+}
 
 fn xdr_fixture(id: &str) -> String {
     format!(
@@ -175,6 +267,87 @@ fn a_fixture_without_verification_still_lists_normally() {
     let document: Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
     assert_eq!(document["fixtures"][0].get("verification"), None);
     assert_eq!(document["fixtures"].as_array().unwrap().len(), 1);
+}
+
+/// CF-04 section 4 makes "no record" the `unverified` state, and CA-02's
+/// fixtures-v1 schema encodes it by omitting the `verification` member
+/// ("Absent when unverified"). An unverified fixture must therefore be
+/// listed with every metadata field and no `verification` member — not a
+/// `null` value and not an invented placeholder status — and the document
+/// must still validate against the published schema (issue #749).
+#[test]
+fn unverified_fixtures_omit_the_record_and_pass_schema_validation() {
+    let dir = TempProject::new("fixtures-json-unverified-schema");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write("fixtures/xdr/plain.toml", &xdr_fixture("p28-xdr-plain"));
+    dir.write("fixtures/xdr/second.toml", &xdr_fixture("p28-xdr-second"));
+
+    let output = run_in(&dir.path, &["fixtures", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        support::stderr(&output)
+    );
+    let document: Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
+
+    let fixtures = document["fixtures"].as_array().expect("fixtures array");
+    assert_eq!(fixtures.len(), 2);
+    for fixture in fixtures {
+        assert!(
+            fixture.get("verification").is_none(),
+            "no record is the unverified state; the member must be absent: {fixture}"
+        );
+        assert!(
+            fixture.get("verificationStatus").is_none(),
+            "the state is carried by the record's absence, never a separate status field: {fixture}"
+        );
+        // The rest of the record is a normal fixture entry, not a stub.
+        assert_eq!(fixture["protocol"], 28);
+        assert_eq!(fixture["surface"], "xdr");
+        assert_eq!(fixture["type"], "StellarValue");
+        assert_eq!(fixture["kind"], "decode-success");
+        assert!(fixture["path"].as_str().is_some_and(|p| !p.is_empty()));
+        assert!(fixture["description"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()));
+    }
+
+    assert_eq!(document["counts"]["total"], 2);
+    assert_conforms_to_fixtures_schema(&document);
+}
+
+/// A pack that mixes an attested fixture with unattested ones must keep the
+/// two states distinguishable: the verified entry carries its record, the
+/// unverified entries carry none, and the whole document still validates.
+#[test]
+fn mixed_packs_keep_unverified_entries_distinct_and_schema_valid() {
+    let dir = project_with_verification("fixtures-json-mixed-verification-schema");
+    let output = run_in(&dir.path, &["fixtures", "--format", "json"]);
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        support::stderr(&output)
+    );
+    let document: Value = serde_json::from_str(&stdout(&output)).expect("valid JSON");
+
+    let fixtures = document["fixtures"].as_array().expect("fixtures array");
+    let plain = fixtures
+        .iter()
+        .find(|fixture| fixture["id"] == "p28-xdr-plain")
+        .expect("the unverified fixture is listed");
+    assert!(
+        plain.get("verification").is_none(),
+        "an unattested fixture must not borrow another fixture's record: {plain}"
+    );
+
+    let verified = fixtures
+        .iter()
+        .find(|fixture| fixture["id"] == "p28-xdr-verified")
+        .expect("the verified fixture is listed");
+    assert_eq!(verified["verification"]["outcome"], "matched");
+    assert_eq!(verified["verification"]["fixtureId"], "p28-xdr-verified");
+
+    assert_conforms_to_fixtures_schema(&document);
 }
 
 #[test]

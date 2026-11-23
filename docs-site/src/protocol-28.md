@@ -17,9 +17,18 @@ Protocol 28
     └── CAP-0086  (sparse-map host functions for storage migration)
 ```
 
-## Currently implemented Protocol 28 checks
+## What the current pack contains
 
-Five fixtures, verified against `https://soroban-testnet.stellar.org`:
+At fixture-pack revision [`e9d098d`](https://github.com/StellarCanary/ProtocolCanary-Fixtures/tree/e9d098df7931a9b94b183c6af807a58336b7b322/protocol-28),
+the `protocol-28` pack holds **93 fixture definitions: 86 XDR, 2 RPC, and 5
+Soroban**. That is the pack's inventory, not the number of checks any one
+project runs: a run loads the fixtures for its target protocol, then applies
+its own configuration (enabled surfaces, RPC endpoint, project capabilities,
+`--fixture`/`--surface`), so a report covers only the applicable subset.
+
+The five fixtures below are the historical first-run subset, verified
+against `https://soroban-testnet.stellar.org`. They illustrate each surface;
+they are not the pack:
 
 | Fixture | Surface | What it proves |
 |---|---|---|
@@ -29,9 +38,12 @@ Five fixtures, verified against `https://soroban-testnet.stellar.org`:
 | `p28-rpc-network` | RPC | The configured RPC endpoint's `getNetwork` response reports `protocolVersion = 28` and includes a string `passphrase` field. |
 | `p28-soroban-native-asset-name` | Soroban | A real, unsigned `InvokeHostFunction` transaction can be built and simulated end-to-end, by calling the standard SEP-41 `name()` function on the network's reserved native-asset Stellar Asset Contract. |
 
-Running this pack currently produces **5/5 PASS**. This is a factual
-result about these five specific fixtures — it does not mean full
-Protocol 28 compatibility.
+The "**5/5 PASS**" transcript quoted in early documentation is this
+five-fixture subset's result, not a statement about the current pack and
+not a claim of full Protocol 28 compatibility. Fixture counts are not
+checks run, and neither is a network observation: only the RPC and Soroban
+fixtures contact a live network, and any claim about live behavior rests on
+the dated verification recorded in the pack's evidence files.
 
 ## What this pack does not check
 
@@ -52,8 +64,8 @@ Protocol 28 compatibility.
   gap closes once the SDK exposes them or a verified deployed contract
   using them can be pointed to — see [Roadmap](./roadmap.md).
 - **Anything about a specific downstream application** beyond whether
-  these five fixtures pass against its own configured dependencies and
-  RPC endpoint.
+  the fixtures applicable to it pass against its own configured
+  dependencies and RPC endpoint.
 - **Mainnet.** Every fixture in this pack was verified against Testnet
   only. Running against mainnet requires `--network mainnet --rpc-url <endpoint>`
   explicitly and has not itself been separately verified.

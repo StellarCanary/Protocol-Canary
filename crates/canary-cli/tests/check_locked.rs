@@ -162,6 +162,52 @@ fn an_unparseable_lockfile_exits_two() {
     assert!(err.contains("stellar-canary lock"), "{err}");
 }
 
+/// A lockfile that exists but is not valid TOML at all (issue #725) is
+/// not a pin the gate can trust: `check --locked` exits 2 before any
+/// fixture runs, names the lockfile, repeats the parser's diagnosis, and
+/// points at the command that rewrites the pin.
+#[test]
+fn a_lockfile_with_invalid_toml_syntax_exits_two_and_reports_the_parse_error() {
+    let dir = TempProject::new("check-locked-bad-toml");
+    make_project(&dir);
+    // Syntactically broken TOML: the `[fixtures]` table header is never
+    // closed, so the parser fails before any key is validated. This is a
+    // different failure from `an_unparseable_lockfile_exits_two`, whose
+    // `lockVersion = 99` is well-formed TOML but an unsupported version.
+    dir.write(
+        ".stellar-canary.lock",
+        "lockVersion = 1\n\n[fixtures\npackDigest = \"sha256:abc\"\nregistryVersion = 1\n",
+    );
+
+    let output = run_in(&dir.path, &["check", "--locked", "--offline"]);
+    assert_eq!(output.status.code(), Some(2), "{}", stdout(&output));
+
+    let err = stderr(&output);
+    assert!(
+        err.contains(".stellar-canary.lock"),
+        "the corrupted lockfile must be identified: {err}"
+    );
+    assert!(
+        err.contains("failed to parse lockfile"),
+        "the failure must be reported as a parse error: {err}"
+    );
+    // The underlying TOML diagnostic, not just "the file is bad": the
+    // parser names the line and describes the expected syntax.
+    assert!(
+        err.contains("TOML parse error") && err.contains("line 3"),
+        "the parser's diagnosis must be included: {err}"
+    );
+    assert!(
+        err.contains("stellar-canary lock"),
+        "the diagnostic must instruct the user to run 'stellar-canary lock': {err}"
+    );
+    // The refusal happens before any fixture executes.
+    assert!(
+        !stdout(&output).contains("PASS"),
+        "no fixture may run under a corrupt pin"
+    );
+}
+
 /// Without the flag the lockfile is not consulted: the same stale pin
 /// that fails `--locked` leaves a plain run untouched. This pins that
 /// the gate is opt-in.

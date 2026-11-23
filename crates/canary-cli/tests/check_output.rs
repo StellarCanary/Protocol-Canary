@@ -151,3 +151,89 @@ fn an_unwritable_output_path_is_a_configuration_error() {
     assert!(err.contains("failed to write report to"), "stderr: {err}");
     assert!(err.contains("result.txt"), "stderr: {err}");
 }
+
+/// On Unix, a destination directory whose mode forbids writing (`0555`)
+/// rejects both the report and the sibling `.tmp` file the atomic write
+/// stages it in. That is an I/O permission error, and it must surface as
+/// the same clean configuration error as any other unusable `--output`
+/// path: exit code 2, a message naming the path and the OS cause, and no
+/// unhandled panic (a stack trace is not a diagnostic).
+#[cfg(unix)]
+#[test]
+fn a_read_only_output_directory_is_a_clean_configuration_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = passing_offline_project("check-output-readonly-dir");
+    let read_only = dir.path.join("read-only");
+    std::fs::create_dir(&read_only).expect("create the destination directory");
+    std::fs::set_permissions(&read_only, std::fs::Permissions::from_mode(0o555))
+        .expect("make the destination directory read-only");
+
+    /// Restores owner write permission on drop so `TempProject`'s cleanup
+    /// can remove the tree; a directory left at `0555` would leak one
+    /// scratch directory per run.
+    struct RestoreWritable<'a>(&'a std::path::Path);
+
+    impl Drop for RestoreWritable<'_> {
+        fn drop(&mut self) {
+            let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+        }
+    }
+    let _restore = RestoreWritable(&read_only);
+
+    // Root (some containers and CI shells run as uid 0) bypasses file mode
+    // bits, so `0555` would not actually be unwritable. Probe the mode
+    // before asserting anything: on such hosts the permission this test is
+    // about cannot be simulated, and there is no failure to observe.
+    let probe = read_only.join("probe");
+    if std::fs::write(&probe, "probe").is_ok() {
+        let _ = std::fs::remove_file(&probe);
+        return;
+    }
+
+    let report = read_only.join("result.txt");
+    let output = run_in(&dir.path, &["check", "--output", report.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "a destination directory that denies writes is a configuration error, not a compatibility result; stderr: {}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "nothing can be printed for a run whose report was not written"
+    );
+    assert!(!report.exists(), "no report may appear in a directory that denies writes");
+
+    let leftovers: Vec<_> = std::fs::read_dir(&read_only)
+        .expect("read the destination directory")
+        .map(|entry| entry.expect("read a directory entry").file_name())
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "a failed atomic write must not leave its .tmp sibling behind: {leftovers:?}"
+    );
+
+    let err = stderr(&output);
+    assert!(
+        err.contains("failed to write report to"),
+        "the error must name the failed write; stderr: {err}"
+    );
+    assert!(
+        err.contains("result.txt"),
+        "the error must name the path the user asked for; stderr: {err}"
+    );
+    assert!(
+        err.contains("Permission denied"),
+        "the OS cause must survive into the message; stderr: {err}"
+    );
+    assert!(
+        err.contains("Hint:") && err.contains("file mode"),
+        "a permission failure must carry the actionable file-mode hint; stderr: {err}"
+    );
+    assert!(
+        !err.contains("panicked at") && !err.contains("stack backtrace"),
+        "a permission error must be reported, never unwrapped into a panic; stderr: {err}"
+    );
+}

@@ -18,6 +18,8 @@
 //!   permissions are normalized (e.g. 0644 for files, 0755 for directories).
 //! - Files are created with `create_new` semantics so existing files or links are
 //!   never overwritten or traversed.
+//! - A pre-existing symbolic link anywhere beneath the destination is rejected
+//!   instead of being followed when a later path component is created.
 //! - On any limit violation or format error, the extractor halts immediately,
 //!   leaves nothing outside destination, and returns a detailed [`ArchiveSafetyError`].
 
@@ -129,6 +131,11 @@ pub enum ArchiveSafetyError {
     #[error("destination path {path:?} is not a directory: {reason}")]
     DestinationError { path: PathBuf, reason: String },
 
+    #[error(
+        "destination path {path:?} is a pre-existing symbolic link; refusing to extract through it"
+    )]
+    DestinationSymlink { path: PathBuf },
+
     #[error("I/O error during extraction at {path}: {source}")]
     Io {
         path: PathBuf,
@@ -230,6 +237,29 @@ pub fn extract_archive_with_limits<R: Read>(
         }
     }
     result
+}
+
+/// Rejects extraction when any component of `relative` beneath `dest` already
+/// exists as a symbolic link.
+///
+/// A symlinked directory inside the destination would otherwise be followed
+/// when a later component is created, letting the archive write outside
+/// `dest`. Every component is inspected with `symlink_metadata`, which does
+/// not follow links, before any directory or file is created.
+fn reject_destination_symlinks(dest: &Path, relative: &str) -> Result<(), ArchiveSafetyError> {
+    let mut path = dest.to_path_buf();
+    for segment in relative.split('/') {
+        path.push(segment);
+        match std::fs::symlink_metadata(&path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(ArchiveSafetyError::DestinationSymlink { path });
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(ArchiveSafetyError::Io { path, source: e }),
+        }
+    }
+    Ok(())
 }
 
 fn perform_extraction<R: Read>(
@@ -398,6 +428,8 @@ fn perform_extraction<R: Read>(
         }
         seen_paths.insert(path_key.clone());
         case_folded_paths.insert(folded, path_str.to_string());
+
+        reject_destination_symlinks(dest, normalized)?;
 
         if is_dir {
             let dir_path = dest.join(normalized);

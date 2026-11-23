@@ -7,10 +7,14 @@ use support::{
 const OFFLINE_CONFIG: &str =
     "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = false\nsoroban = false\n";
 
-fn xdr_fixture(value_base64: &str) -> String {
+fn xdr_fixture_with_id(id: &str, value_base64: &str) -> String {
     format!(
-        "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{value_base64}\"\n"
+        "id = \"{id}\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{value_base64}\"\n"
     )
+}
+
+fn xdr_fixture(value_base64: &str) -> String {
+    xdr_fixture_with_id("p28-xdr-1", value_base64)
 }
 
 /// The reproduced defect: a fixture was edited after a passing run and the
@@ -214,4 +218,105 @@ fn entries_in(path: &std::path::Path) -> Vec<String> {
         .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
         .filter(|name| name.starts_with('v') && name.ends_with(".json"))
         .collect()
+}
+
+fn results(report: &serde_json::Value) -> &Vec<serde_json::Value> {
+    report["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("`results` is an array: {report}"))
+}
+
+fn source_of(report: &serde_json::Value, id: &str) -> String {
+    results(report)
+        .iter()
+        .find(|result| result["testId"] == id)
+        .unwrap_or_else(|| panic!("no result {id}: {report}"))["source"]
+        .as_str()
+        .unwrap_or("<absent>")
+        .to_string()
+}
+
+fn durations_by_id(
+    report: &serde_json::Value,
+) -> std::collections::BTreeMap<String, serde_json::Value> {
+    results(report)
+        .iter()
+        .map(|result| {
+            (
+                result["testId"]
+                    .as_str()
+                    .expect("testId is a string")
+                    .to_string(),
+                result["durationMs"].clone(),
+            )
+        })
+        .collect()
+}
+
+/// Issue #731: a replay must be visible in the terminal, not just in the
+/// cache-hit count. The terminal reporter marks a replayed run with the
+/// aggregate badge line
+/// `N of M results were replayed from the local result cache ...`; the JSON
+/// report carries the per-result `source` and keeps each replayed result's
+/// recorded `durationMs`, so both the replayed count and the elapsed time a
+/// reader sees describe the run that actually happened.
+#[test]
+fn replayed_fixtures_are_marked_in_the_terminal_output() {
+    let dir = TempProject::new("cache-replay-badge");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    dir.write(
+        "fixtures/p28-xdr-pass.toml",
+        &xdr_fixture_with_id("p28-xdr-pass", VALID_STELLAR_VALUE_BASE64),
+    );
+    dir.write(
+        "fixtures/p28-xdr-fail.toml",
+        &xdr_fixture_with_id("p28-xdr-fail", DECODE_FAILURE_BASE64),
+    );
+
+    // First execution: both fixtures run and their results are recorded.
+    let first = run_in(&dir.path, &["check", "--json"]);
+    assert_eq!(first.status.code(), Some(1), "{}", stderr(&first));
+    let first_report: serde_json::Value =
+        serde_json::from_str(&stdout(&first)).expect("stdout is the JSON report");
+    assert_eq!(source_of(&first_report, "p28-xdr-pass"), "live");
+    assert_eq!(source_of(&first_report, "p28-xdr-fail"), "live");
+
+    // Second execution over identical fixtures: both are answered from the
+    // cache, and the terminal says so.
+    let second = run_in(&dir.path, &["check"]);
+    assert_eq!(second.status.code(), Some(1), "{}", stderr(&second));
+    let text = stdout(&second);
+    assert!(
+        text.contains(
+            "2 of 2 results were replayed from the local result cache and were not executed in this run. Use --no-cache for a fresh run."
+        ),
+        "the replay badge must name the replayed and total counts: {text}"
+    );
+    // The badge describes fixtures that are still listed, including the
+    // failing one: a replay must not launder a cached failure into a pass.
+    assert!(text.contains("p28-xdr-pass"), "{text}");
+    assert!(text.contains("p28-xdr-fail"), "{text}");
+    assert!(text.contains("❌ FAIL"), "{text}");
+    assert!(text.contains("1/2 applicable checks passed."), "{text}");
+    assert!(text.contains("Status: NOT READY"), "{text}");
+    assert_eq!(
+        cache_entries(&dir).len(),
+        2,
+        "replaying cached results writes no new entries"
+    );
+
+    // Third execution: the JSON report marks every result as replayed and
+    // keeps the elapsed time recorded when each one actually ran.
+    let third = run_in(&dir.path, &["check", "--json"]);
+    assert_eq!(third.status.code(), Some(1), "{}", stderr(&third));
+    let third_report: serde_json::Value =
+        serde_json::from_str(&stdout(&third)).expect("stdout is the JSON report");
+    for result in results(&third_report) {
+        assert_eq!(result["source"], "cache", "{result}");
+    }
+    assert_eq!(
+        durations_by_id(&third_report),
+        durations_by_id(&first_report),
+        "a replayed result reports the duration recorded when it ran"
+    );
 }

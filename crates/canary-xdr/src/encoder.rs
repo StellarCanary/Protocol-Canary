@@ -70,7 +70,10 @@ mod tests {
         decode, decode_ledger_close_meta, decode_ledger_entry, decode_ledger_header,
         decode_transaction_envelope, DecodedValue, XdrTypeName,
     };
-    use stellar_xdr::{ContractExecutable, StellarValue};
+    use stellar_xdr::{
+        ContractExecutable, ContractId, Hash, MuxedContract, MuxedEd25519Account, ScAddress, ScVal,
+        StellarValue, Uint256,
+    };
 
     #[test]
     fn encoding_a_decoded_value_reproduces_the_same_value() {
@@ -182,6 +185,78 @@ mod tests {
         let typed = encode_ledger_close_meta(&meta).expect("encodes");
         let generic = encode(&DecodedValue::LedgerCloseMeta(Box::new(meta))).expect("encodes");
         assert_eq!(typed, generic);
+    }
+
+    /// Encodes one CAP-84 address-bearing `ScVal` through both the typed
+    /// `stellar-xdr` path and the generic [`encode`] path, then decodes it
+    /// through the fixture-facing [`decode`] entry point and asserts that all
+    /// three agree.
+    ///
+    /// The expected base64 is reproduced in full rather than derived, so a
+    /// change to the generated `ScAddress` layout fails here instead of
+    /// silently redefining the expected bytes. The vectors are the canonical
+    /// CAP-0084 structural vectors from the Protocol 30 fixture pack.
+    fn assert_cap84_scval_roundtrip(value: ScVal, expected_base64: &str) {
+        // The specialized typed encoder: serialising the concrete `ScVal`
+        // type directly must produce the canonical protocol bytes.
+        let specialized = value
+            .to_xdr_base64(Limits::none())
+            .expect("specialized encoding");
+        assert_eq!(
+            specialized, expected_base64,
+            "the specialized encoder must reproduce the CAP-84 canonical vector"
+        );
+
+        // The generic encoder is the path fixtures take through
+        // `DecodedValue`; it must agree byte for byte with the typed one.
+        let generic = encode(&DecodedValue::ScVal(value.clone())).expect("generic encoding");
+        assert_eq!(
+            generic, specialized,
+            "the generic encoder must agree with the specialized encoder"
+        );
+
+        // Decoding the generic bytes must recover the exact original value,
+        // not merely an equal-looking address.
+        let decoded = decode(XdrTypeName::ScVal, &generic).expect("decodes as ScVal");
+        match decoded {
+            DecodedValue::ScVal(ref decoded_value) => assert_eq!(*decoded_value, value),
+            other => panic!("expected ScVal, got {other:?}"),
+        }
+
+        // And the decoded value must re-encode to the same bytes, proving the
+        // round trip is symmetric through the generic path.
+        let re_encoded = encode(&decoded).expect("re-encodes");
+        assert_eq!(re_encoded, generic);
+    }
+
+    /// CAP-84's `SC_ADDRESS_TYPE_MUXED_ACCOUNT` arm: an 8-byte id followed by
+    /// a 32-byte ed25519 key inside `ScVal::Address`.
+    #[test]
+    fn cap84_muxed_account_scval_roundtrips_through_the_generic_encoder() {
+        let value = ScVal::Address(ScAddress::MuxedAccount(MuxedEd25519Account {
+            id: 0x0102_0304_0506_0708,
+            ed25519: Uint256([0x33; 32]),
+        }));
+
+        assert_cap84_scval_roundtrip(
+            value,
+            "AAAAEgAAAAIBAgMEBQYHCDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMz",
+        );
+    }
+
+    /// CAP-84's `SC_ADDRESS_TYPE_MUXED_CONTRACT` arm: an 8-byte id followed by
+    /// a 32-byte contract hash inside `ScVal::Address`.
+    #[test]
+    fn cap84_muxed_contract_scval_roundtrips_through_the_generic_encoder() {
+        let value = ScVal::Address(ScAddress::MuxedContract(MuxedContract {
+            id: 0x0102_0304_0506_0708,
+            contract_id: ContractId(Hash([0x22; 32])),
+        }));
+
+        assert_cap84_scval_roundtrip(
+            value,
+            "AAAAEgAAAAUBAgMEBQYHCCIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi",
+        );
     }
 
     #[test]

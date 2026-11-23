@@ -139,8 +139,11 @@ pub enum RpcError {
     MethodNotAvailable { method: String },
 
     /// The response parsed as JSON but is not what the method should return:
-    /// either it has neither a `result` nor an `error` key, or its `result`
-    /// failed to deserialize into the expected type.
+    /// either its JSON-RPC envelope is not a 2.0 response to this request
+    /// (a missing or non-`2.0` `jsonrpc` version, a missing or mismatched
+    /// `id`, or both `result` and `error` present), it has neither a
+    /// `result` nor an `error` key, or its `result` failed to deserialize
+    /// into the expected type.
     ///
     /// `reason` carries the structural or serde explanation. Never retried.
     #[error("unexpected response shape from {method}: {reason}")]
@@ -779,6 +782,8 @@ impl HttpRpcClient {
                 message: e.to_string(),
             })?;
 
+        validate_envelope(&envelope, body, method)?;
+
         if let Some(error) = envelope.get("error") {
             let code = error
                 .get("code")
@@ -816,6 +821,55 @@ impl HttpRpcClient {
             reason: e.to_string(),
         })
     }
+}
+
+/// Validates the JSON-RPC 2.0 response envelope before `try_call` reads
+/// `result` or `error`.
+///
+/// The client sends every request with `id: 1` (see [`HttpRpcClient::call`]),
+/// so JSON-RPC 2.0 requires the response to carry the same envelope:
+///
+/// - `jsonrpc` must be present and exactly `"2.0"`;
+/// - `id` must be present and equal to the request's ID, so a response from
+///   another caller — or a mislabelled endpoint — is not read as the answer
+///   to this one;
+/// - `result` and `error` must not both be present: together they are a
+///   malformed envelope, not the ordinary JSON-RPC error an `error` key
+///   would otherwise select.
+///
+/// Anything else is [`RpcError::InvalidResponse`], a deterministic,
+/// never-retried error.
+fn validate_envelope(
+    envelope: &serde_json::Value,
+    request: &serde_json::Value,
+    method: &str,
+) -> Result<(), RpcError> {
+    let invalid = |reason: String| RpcError::InvalidResponse {
+        method: method.to_string(),
+        reason,
+    };
+
+    if envelope.get("jsonrpc").and_then(serde_json::Value::as_str) != Some("2.0") {
+        return Err(invalid(
+            "the response is missing \"jsonrpc\": \"2.0\" or reports a version other than 2.0"
+                .to_string(),
+        ));
+    }
+
+    if envelope.get("id") != request.get("id") {
+        return Err(invalid(format!(
+            "the response ID does not match the request ID ({:?})",
+            request.get("id")
+        )));
+    }
+
+    if envelope.get("result").is_some() && envelope.get("error").is_some() {
+        return Err(invalid(
+            "the response has both \"result\" and \"error\"".to_string(),
+        ));
+    }
+
+    Ok(())
 }
 
 /// Reads a response body while enforcing [`MAX_RESPONSE_BYTES`].
@@ -1469,6 +1523,82 @@ mod tests {
             err,
             RpcError::InvalidResponse { ref reason, .. } if reason.contains("neither \"result\" nor \"error\"")
         ));
+    }
+
+    /// The envelope is validated before anything is read from it: a
+    /// response whose `jsonrpc` is missing or not `"2.0"` is
+    /// [`RpcError::InvalidResponse`], never a success or error read.
+    #[tokio::test]
+    async fn rejects_a_response_without_version_2_0() {
+        for envelope in [
+            json!({ "id": 1, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": null, "id": 1, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": "1.9", "id": 1, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": 2.0, "id": 1, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(envelope.clone()))
+                .mount(&server)
+                .await;
+
+            let client = HttpRpcClient::new(server.uri());
+            let err = client.get_network().await.unwrap_err();
+            assert!(
+                matches!(err, RpcError::InvalidResponse { .. }),
+                "expected InvalidResponse, got {err:?}, for {envelope}"
+            );
+        }
+    }
+
+    /// A response whose `id` is missing or does not echo the request's ID
+    /// is [`RpcError::InvalidResponse`], so an unrelated response cannot be
+    /// read as the answer to this call.
+    #[tokio::test]
+    async fn rejects_a_response_with_a_missing_or_mismatched_id() {
+        for envelope in [
+            json!({ "jsonrpc": "2.0", "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": "2.0", "id": null, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": "2.0", "id": 2, "result": { "passphrase": "x", "protocolVersion": 28 } }),
+            json!({ "jsonrpc": "2.0", "id": "1", "result": { "passphrase": "x", "protocolVersion": 28 } }),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(envelope.clone()))
+                .mount(&server)
+                .await;
+
+            let client = HttpRpcClient::new(server.uri());
+            let err = client.get_network().await.unwrap_err();
+            assert!(
+                matches!(err, RpcError::InvalidResponse { .. }),
+                "expected InvalidResponse, got {err:?}, for {envelope}"
+            );
+        }
+    }
+
+    /// A response carrying both `result` and `error` is a malformed
+    /// envelope — [`RpcError::InvalidResponse`] — not the ordinary
+    /// JSON-RPC error the `error` key would otherwise select.
+    #[tokio::test]
+    async fn rejects_a_response_with_both_result_and_error() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": { "passphrase": "x", "protocolVersion": 28 },
+                "error": { "code": -32602, "message": "invalid params" }
+            })))
+            .mount(&server)
+            .await;
+
+        let client = HttpRpcClient::new(server.uri());
+        let err = client.get_network().await.unwrap_err();
+        assert!(matches!(err, RpcError::InvalidResponse { .. }));
     }
 
     #[tokio::test]

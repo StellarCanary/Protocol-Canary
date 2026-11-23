@@ -251,6 +251,69 @@ fn no_configuration_file_is_the_valid_default() {
     assert!(text.contains("defaults"), "{text}");
 }
 
+/// A zero-byte file is not "no configuration": it is a configuration file
+/// that says nothing, so the required `version` key is missing and the
+/// command answers the question with "no" (exit code 1), naming the missing
+/// field. It must not fall back to the built-in defaults, which would report
+/// a file as valid that `check` would refuse to load.
+#[test]
+fn an_empty_configuration_file_fails_validation_naming_the_missing_version() {
+    let dir = TempProject::new("config-validate-empty");
+    dir.write(".stellar-canary.toml", "");
+
+    let output = run_in(&dir.path, &["config", "validate"]);
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+    // A failure is not a verdict: nothing is printed on stdout.
+    assert_eq!(stdout(&output), "");
+    let text = stderr(&output);
+    assert!(
+        text.contains("missing field `version`"),
+        "the missing required key is named: {text}"
+    );
+    assert!(
+        text.contains(".stellar-canary.toml"),
+        "the file being validated is named: {text}"
+    );
+}
+
+/// A file that is present but cannot be read never reaches the loader, so
+/// this is "validation could not start" (exit code 2), not "your
+/// configuration is invalid" (exit code 1): the command cannot answer the
+/// question it was asked, and the diagnostic names both the file and the
+/// underlying cause. Skipped implicitly when the test runs as root, where the
+/// mode bits do not deny the read.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_configuration_file_is_a_configuration_error() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = TempProject::new("config-validate-unreadable");
+    dir.write(".stellar-canary.toml", VALID);
+    let path = dir.path.join(".stellar-canary.toml");
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+    // Running as root bypasses the mode bits, so there is nothing to assert.
+    if std::fs::read_to_string(&path).is_ok() {
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+        return;
+    }
+
+    let output = run_in(&dir.path, &["config", "validate"]);
+    // Restore the mode before asserting so a failing assertion cannot leave
+    // an entry behind that the harness has to clean up.
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(output.status.code(), Some(2), "{}", stdout(&output));
+    assert_eq!(stdout(&output), "", "no verdict may be printed on stdout");
+    let text = stderr(&output);
+    assert!(text.contains("failed to read configuration file"), "{text}");
+    assert!(text.contains(".stellar-canary.toml"), "{text}");
+    assert!(
+        text.to_lowercase().contains("permission denied"),
+        "the underlying permission failure is named: {text}"
+    );
+}
+
 /// Naming a file explicitly changes the contract: the caller pointed at that
 /// path, so not being able to read it is a broken invocation (exit code 2),
 /// not an answer about the project's configuration.

@@ -1,11 +1,39 @@
 //! Default human-readable terminal output.
 
+use std::borrow::Cow;
 use std::fmt::Write as _;
 
 use canary_core::Status;
 
 use crate::diff::{Classification, Comparison, State, Verdict};
 use crate::{surface_heading, ReportInput, ReportStatus, SURFACE_ORDER};
+
+/// Whether `c` is a control character that must never reach the terminal.
+/// Newlines and tabs are layout, not control, and pass through.
+fn needs_escaping(c: char) -> bool {
+    c.is_control() && c != '\n' && c != '\t'
+}
+
+/// Renders report-supplied text for a terminal: control characters (ESC,
+/// which starts an ANSI sequence, among them) are shown as a visible
+/// `\u{..}` escape instead of being interpreted, while ordinary text and
+/// intentional line breaks pass through unchanged. Reporter-owned styling
+/// is applied separately, so this never touches the reporter's own colour
+/// codes.
+fn escape_controls(value: &str) -> Cow<'_, str> {
+    if !value.chars().any(needs_escaping) {
+        return Cow::Borrowed(value);
+    }
+    let mut out = String::with_capacity(value.len() + 8);
+    for c in value.chars() {
+        if needs_escaping(c) {
+            let _ = write!(out, "\\u{{{:x}}}", c as u32);
+        } else {
+            out.push(c);
+        }
+    }
+    Cow::Owned(out)
+}
 
 const RULE: &str = "────────────────────────────────────────";
 
@@ -61,7 +89,8 @@ impl TerminalReporter {
         let _ = writeln!(
             out,
             "Project: {} ({})",
-            input.project.name, input.project.project_type
+            escape_controls(&input.project.name),
+            input.project.project_type
         );
         let _ = writeln!(out, "Target protocol: {}", input.target_protocol);
         if let Some(network) = &input.network {
@@ -77,8 +106,9 @@ impl TerminalReporter {
                     if let Some(err) = &network.error {
                         let _ = writeln!(
                             out,
-                            "Network: {} (protocol not observed: {err})",
-                            network.name
+                            "Network: {} (protocol not observed: {})",
+                            network.name,
+                            escape_controls(err)
                         );
                     } else {
                         let _ = writeln!(out, "Network: {} (protocol not observed)", network.name);
@@ -109,15 +139,15 @@ impl TerminalReporter {
                         let _ = writeln!(
                             out,
                             "  {:<28} {} {}",
-                            result.test_id,
+                            escape_controls(&result.test_id),
                             status_badge(result.status),
-                            input.verification_badge(result)
+                            escape_controls(&input.verification_badge(result))
                         );
                     } else {
                         let _ = writeln!(
                             out,
                             "  {:<28} {}",
-                            result.test_id,
+                            escape_controls(&result.test_id),
                             status_badge(result.status)
                         );
                     }
@@ -133,7 +163,9 @@ impl TerminalReporter {
                     let _ = writeln!(
                         out,
                         "  {} ({}): {}",
-                        skip.fixture_id, skip.surface, skip.reason
+                        escape_controls(&skip.fixture_id),
+                        skip.surface,
+                        escape_controls(&skip.reason)
                     );
                 }
             }
@@ -165,12 +197,12 @@ impl TerminalReporter {
             let _ = writeln!(out);
             for failure in failures {
                 let _ = writeln!(out, "Failure:");
-                let _ = writeln!(out, "{}", failure.test_id);
+                let _ = writeln!(out, "{}", escape_controls(&failure.test_id));
                 let _ = writeln!(out);
-                let _ = writeln!(out, "{}", failure.summary);
+                let _ = writeln!(out, "{}", escape_controls(&failure.summary));
                 if let Some(details) = &failure.details {
                     let _ = writeln!(out);
-                    let _ = writeln!(out, "{details}");
+                    let _ = writeln!(out, "{}", escape_controls(details));
                 }
                 let _ = writeln!(out);
             }
@@ -321,14 +353,14 @@ impl TerminalReporter {
         let _ = writeln!(
             out,
             "Baseline: {}, protocol {}, status {}",
-            comparison.baseline.tool_version,
+            escape_controls(&comparison.baseline.tool_version),
             comparison.baseline.target_protocol,
             comparison.baseline.status
         );
         let _ = writeln!(
             out,
             "Current:  {}, protocol {}, status {}",
-            comparison.current.tool_version,
+            escape_controls(&comparison.current.tool_version),
             comparison.current.target_protocol,
             comparison.current.status
         );
@@ -385,7 +417,7 @@ impl TerminalReporter {
                 out,
                 "  {} {:<28} {} → {}",
                 badge,
-                entry.id,
+                escape_controls(&entry.id),
                 state_label(entry.from),
                 state_label(entry.to)
             );
@@ -404,7 +436,8 @@ impl TerminalReporter {
                 let _ = writeln!(
                     out,
                     "  {}/{} passed in the baseline and is not running now",
-                    missing.surface, missing.id
+                    missing.surface,
+                    escape_controls(&missing.id)
                 );
             }
             let _ = writeln!(out);
@@ -678,6 +711,53 @@ mod tests {
         let text = TerminalReporter::render(&base_input(vec![failing], PolicyDecision::Fail));
         assert!(text.contains("p28-xdr-1"), "{text}");
         assert!(!text.contains("[unverified]"), "{text}");
+    }
+
+    #[test]
+    fn control_characters_in_report_values_are_escaped_not_emitted() {
+        let mut failing = result(
+            "p28-xdr-\u{1b}[31mfake",
+            canary_core::Surface::Xdr,
+            Status::Fail,
+        );
+        failing.summary = "bad \u{1b}]0;title\u{7} summary".into();
+        failing.details = Some("first line\nsecond \u{1b}[2J line".into());
+        let mut input = base_input(vec![failing], PolicyDecision::Fail);
+        input.project.name = "proj\u{1b}[31mred".into();
+        input.verbose = true;
+        input.skipped.push(skip(
+            "p28-soroban-1",
+            canary_core::Surface::Soroban,
+            "reason\u{9b}31m",
+            canary_core::SkipCode::Unknown,
+        ));
+        input.network = Some(crate::NetworkSummary {
+            name: canary_core::NetworkName::Testnet,
+            observed_protocol: None,
+            error: Some("boom\u{1b}[0m".into()),
+        });
+
+        let text = TerminalReporter::render(&input);
+
+        assert!(
+            !text.chars().any(needs_escaping),
+            "no control character reaches the terminal: {text:?}"
+        );
+        // The escape is visible report text now, not an ANSI sequence.
+        assert!(text.contains("proj\\u{1b}[31mred"), "{text:?}");
+        assert!(text.contains("p28-xdr-\\u{1b}[31mfake"), "{text:?}");
+        assert!(
+            text.contains("bad \\u{1b}]0;title\\u{7} summary"),
+            "{text:?}"
+        );
+        assert!(text.contains("reason\\u{9b}31m"), "{text:?}");
+        assert!(text.contains("boom\\u{1b}[0m"), "{text:?}");
+        // Intentional line breaks and ordinary text stay readable.
+        assert!(
+            text.contains("first line\nsecond \\u{1b}[2J line"),
+            "{text:?}"
+        );
+        assert!(text.contains("Status: NOT READY"), "{text:?}");
     }
 
     mod comparison {

@@ -204,7 +204,10 @@ fn a_read_only_output_directory_is_a_clean_configuration_error() {
         stdout(&output).is_empty(),
         "nothing can be printed for a run whose report was not written"
     );
-    assert!(!report.exists(), "no report may appear in a directory that denies writes");
+    assert!(
+        !report.exists(),
+        "no report may appear in a directory that denies writes"
+    );
 
     let leftovers: Vec<_> = std::fs::read_dir(&read_only)
         .expect("read the destination directory")

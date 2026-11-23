@@ -206,7 +206,9 @@ fn a_passphrase_mismatch_prints_the_exact_configuration_error_line() {
         "the mismatch line is a fixed, quoted format; stderr: {err}"
     );
     assert_eq!(
-        err.lines().filter(|line| line.starts_with("error:")).count(),
+        err.lines()
+            .filter(|line| line.starts_with("error:"))
+            .count(),
         1,
         "exactly one error line, with no warning or rendered report around it; stderr: {err}"
     );
@@ -224,7 +226,9 @@ fn a_passphrase_mismatch_prints_the_exact_configuration_error_line() {
 fn a_passphrase_mismatch_does_not_echo_rpc_url_credentials() {
     let (_rt, server) = mock_get_network(OTHER_PASSPHRASE, 28);
     let dir = project("network-passphrase-url-redaction");
-    let rpc_url = server.uri().replacen("http://", "http://canary-user:canary-secret@", 1);
+    let rpc_url = server
+        .uri()
+        .replacen("http://", "http://canary-user:canary-secret@", 1);
 
     let output = run_in(
         &dir.path,

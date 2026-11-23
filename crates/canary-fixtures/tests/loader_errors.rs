@@ -82,6 +82,44 @@ fn parse_reports_the_file_and_line_of_invalid_toml() {
 }
 
 #[test]
+fn an_empty_fixture_file_is_a_parse_error_naming_the_missing_metadata() {
+    let dir = TempDir::new("empty");
+    let path = dir.write("empty.toml", "");
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 0, "a 0-byte file");
+
+    let err = load_directory(&dir.path).unwrap_err();
+    match &err {
+        FixtureError::Parse { path: source, .. } => assert_eq!(source, &path),
+        other => panic!("expected Parse, got {other}"),
+    }
+    let message = err.to_string();
+    assert!(message.contains("empty.toml"), "names the file: {message}");
+    assert!(
+        message.contains("missing field"),
+        "says required metadata is missing: {message}"
+    );
+}
+
+#[test]
+fn a_fixture_of_binary_nul_bytes_is_a_parse_error_naming_the_file() {
+    let dir = TempDir::new("binary");
+    let path = dir.path.join("binary.toml");
+    std::fs::write(&path, b"\0\0\0\0id = \"p28-binary\"\0\0\0").unwrap();
+
+    let err = load_directory(&dir.path).unwrap_err();
+    match &err {
+        FixtureError::Parse { path: source, .. } => assert_eq!(source, &path),
+        other => panic!("expected Parse, got {other}"),
+    }
+    let message = err.to_string();
+    assert!(message.contains("binary.toml"), "names the file: {message}");
+    assert!(
+        message.len() > "failed to parse fixture file binary.toml: ".len(),
+        "carries the parser's description: {message}"
+    );
+}
+
+#[test]
 fn read_dir_reports_a_directory_that_cannot_be_read() {
     let missing = std::env::temp_dir().join("canary-loader-errors-no-such-dir");
     let err = load_directory(&missing).unwrap_err();

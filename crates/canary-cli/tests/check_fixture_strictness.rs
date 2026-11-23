@@ -88,3 +88,69 @@ fn a_well_formed_xdr_fixture_still_runs() {
     let output = run_in(&dir.path, &["check", "--rpc-url", "http://127.0.0.1:1"]);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 }
+
+const SOROBAN_CONFIG: &str =
+    "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\nrpc = true\nsoroban = true\n";
+
+fn soroban_project(name: &str, body: &str) -> TempProject {
+    let dir = TempProject::new(name);
+    dir.write(".stellar-canary.toml", SOROBAN_CONFIG);
+    dir.write("fixtures/f.toml", body);
+    dir
+}
+
+const SOROBAN_HEAD: &str = "id = \"p28-soroban-1\"\nprotocol = 28\nsurface = \"soroban\"\ncategory = \"test\"\ndescription = \"test\"\nsource_account = \"GBZDC4D5GBNGBH5S627T23Y7E5C464TMTKCGP6WCOY4K4L2C67V4V537\"\ncontract_id = \"CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC\"\nfunction = \"hello\"\nsequence_number = 1\n";
+
+#[test]
+fn an_unknown_top_level_key_in_a_soroban_fixture_is_rejected() {
+    let body = format!(
+        "{SOROBAN_HEAD}extra_top_key = \"disallowed\"\n[expect]\nkind = \"simulation-success\"\n"
+    );
+    let dir = soroban_project("strict-soroban-top", &body);
+    let output = run_in(&dir.path, &["check", "--rpc-url", "http://127.0.0.1:1"]);
+    assert_eq!(output.status.code(), Some(4));
+    let err = stderr(&output);
+    assert!(err.contains("unknown key(s) \"extra_top_key\""), "{err}");
+}
+
+#[test]
+fn an_unknown_result_level_key_in_soroban_expect_is_rejected() {
+    let body = format!(
+        "{SOROBAN_HEAD}[expect]\nkind = \"simulation-success\"\nextra_result_key = \"disallowed\"\n"
+    );
+    let dir = soroban_project("strict-soroban-result", &body);
+    let output = run_in(&dir.path, &["check", "--rpc-url", "http://127.0.0.1:1"]);
+    assert_eq!(output.status.code(), Some(4));
+    let err = stderr(&output);
+    assert!(
+        err.contains("[expect]: unknown key(s) \"extra_result_key\""),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_unknown_key_in_soroban_required_auth_is_rejected() {
+    let body = format!(
+        "{SOROBAN_HEAD}[expect]\nkind = \"simulation-success\"\n[[expect.required_auth]]\naddress = \"GBZDC4D5GBNGBH5S627T23Y7E5C464TMTKCGP6WCOY4K4L2C67V4V537\"\nextra_auth_key = 123\n"
+    );
+    let dir = soroban_project("strict-soroban-auth", &body);
+    let output = run_in(&dir.path, &["check", "--rpc-url", "http://127.0.0.1:1"]);
+    assert_eq!(output.status.code(), Some(4));
+    let err = stderr(&output);
+    assert!(
+        err.contains("[[expect.required_auth]] entry: unknown key(s) \"extra_auth_key\""),
+        "{err}"
+    );
+}
+
+#[test]
+fn an_unknown_top_level_key_in_an_rpc_fixture_is_rejected() {
+    let body = format!(
+        "{RPC_HEAD}extra_rpc_key = \"disallowed\"\n[[assert]]\nkind = \"field-exists\"\nfield = \"passphrase\"\n"
+    );
+    let dir = project("strict-rpc-top", &body);
+    let output = run_in(&dir.path, &["check", "--rpc-url", "http://127.0.0.1:1"]);
+    assert_eq!(output.status.code(), Some(4));
+    let err = stderr(&output);
+    assert!(err.contains("unknown key(s) \"extra_rpc_key\""), "{err}");
+}

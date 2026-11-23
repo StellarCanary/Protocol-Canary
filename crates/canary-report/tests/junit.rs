@@ -379,3 +379,206 @@ fn an_empty_report_still_renders_a_closed_root_element() {
         "a surface with nothing to report must not get an empty suite"
     );
 }
+
+/// Asserts that every character in the rendered XML string belongs to the
+/// permitted XML 1.0 character set.
+///
+/// Under XML 1.0 (Fifth Edition):
+/// `Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`
+fn assert_valid_xml_10_characters(xml: &str) {
+    for (i, c) in xml.chars().enumerate() {
+        let cp = c as u32;
+        let is_valid = matches!(
+            cp,
+            0x09 | 0x0A | 0x0D | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+        );
+        assert!(
+            is_valid,
+            "XML contains character U+{cp:04X} forbidden by XML 1.0 at character position {i}: {c:?}"
+        );
+    }
+}
+
+#[test]
+fn ansi_escape_sequences_and_cdata_closing_tokens_are_handled() {
+    let mut failing = result("p28-xdr-ansi", Surface::Xdr, Status::Fail);
+    failing.summary = "\x1b[31mError:\x1b[0m payload failed with ]]> in message".into();
+    failing.details = Some(
+        "Traceback:\n  \x1b[1;33mwarning\x1b[0m: nested CDATA <![CDATA[nested]]> token".into(),
+    );
+
+    let mut errored = result("p28-rpc-ansi", Surface::Rpc, Status::Error);
+    errored.summary = "crash in <eval> with \x1b[32mcolor\x1b[0m and ]]>".into();
+    errored.details = Some("details with \x1b[0m and ]]> end token".into());
+
+    let xml = JUnitReporter::render(&report(vec![failing, errored], Vec::new()));
+
+    // Verify all emitted characters conform strictly to XML 1.0
+    assert_valid_xml_10_characters(&xml);
+    assert!(
+        !xml.contains('\x1b'),
+        "raw ESC byte must not appear in rendered XML: {xml}"
+    );
+    assert!(
+        xml.contains(r"\u{001B}[31mError:\u{001B}[0m"),
+        "ESC must be represented deterministically as \\u{{001B}}: {xml}"
+    );
+
+    // Document must be strictly well-formed XML and parseable by standard XML parsers
+    let elements = parse(&xml);
+
+    let failure = elements
+        .iter()
+        .find(|element| element.name == "failure")
+        .expect("<failure> element");
+    assert!(
+        attr(failure, "message").contains("]]>"),
+        "attribute value must preserve ]]> unescaped"
+    );
+    assert!(
+        attr(failure, "message").contains(r"\u{001B}[31mError:\u{001B}[0m"),
+        "attribute value must carry safe \\u{{001B}} representation"
+    );
+    assert!(
+        failure
+            .text
+            .contains("nested CDATA <![CDATA[nested]]> token"),
+        "element text must preserve content"
+    );
+    assert!(
+        failure.text.contains(r"\u{001B}[1;33mwarning\u{001B}[0m"),
+        "element text must carry safe \\u{{001B}} representation"
+    );
+
+    let error = elements
+        .iter()
+        .find(|element| element.name == "error")
+        .expect("<error> element");
+    assert!(error.text.contains("]]> end token"));
+
+    // Raw XML must escape '>' so ']]>' never appears unescaped as raw ']]>' inside element text
+    assert!(
+        !xml.contains("]]>"),
+        "raw ]]> must never leak into rendered XML text: {xml}"
+    );
+    assert!(
+        xml.contains("]]&gt;"),
+        "nested CDATA close tokens must be escaped as ]]&gt;: {xml}"
+    );
+}
+
+#[test]
+fn forbidden_xml_control_characters_and_noncharacters_are_safely_encoded_and_valid() {
+    let mut failing = result("p28-xdr-forbidden", Surface::Xdr, Status::Fail);
+    // Include a mix of forbidden control characters, noncharacters U+FFFE/U+FFFF,
+    // allowed whitespace (TAB, LF, CR), XML metacharacters (&, <, >, ", '), and CDATA end token (]]>).
+    failing.summary = "bad chars: nul:\0, bell:\x07, bs:\x08, vt:\x0b, ff:\x0c, esc:\x1b, us:\x1f, nonchar:\u{FFFE} & \u{FFFF} <tag> 'quote' \"double\" ]]>".into();
+    failing.details = Some(
+        "diagnostics:\n\tline 1: \0 \x01 \x08 \x0b \x0c \x1b \x1f\r\n\tline 2: \u{FFFE} \u{FFFF} <script> & \"bar\" ]]>".into(),
+    );
+
+    let mut errored = result("p28-rpc-forbidden", Surface::Rpc, Status::Error);
+    errored.summary = "error with \x1b and \0 and <meta>".into();
+    errored.details = Some("errored \x1b[31mfailure\x1b[0m with \u{FFFF} and ]]>".into());
+
+    let xml = JUnitReporter::render(&report(vec![failing, errored], Vec::new()));
+
+    // 1. Every character in the rendered document must be valid XML 1.0
+    assert_valid_xml_10_characters(&xml);
+
+    // 2. The rendered XML must be parseable by standard XML parsers
+    let elements = parse(&xml);
+
+    // 3. Raw forbidden characters must not be in the output
+    for forbidden in [
+        '\0', '\x01', '\x07', '\x08', '\x0b', '\x0c', '\x1b', '\x1f', '\u{FFFE}', '\u{FFFF}',
+    ] {
+        assert!(
+            !xml.contains(forbidden),
+            "rendered XML must not contain forbidden character U+{:04X}",
+            forbidden as u32
+        );
+    }
+
+    // 4. Safe representations must be present
+    assert!(
+        xml.contains(r"\u{001B}"),
+        "ESC must be represented as \\u{{001B}}"
+    );
+    assert!(
+        xml.contains(r"\u{0000}"),
+        "NUL must be represented as \\u{{0000}}"
+    );
+    assert!(
+        xml.contains(r"\u{0007}"),
+        "BEL must be represented as \\u{{0007}}"
+    );
+    assert!(
+        xml.contains(r"\u{0008}"),
+        "BS must be represented as \\u{{0008}}"
+    );
+    assert!(
+        xml.contains(r"\u{000B}"),
+        "VT must be represented as \\u{{000B}}"
+    );
+    assert!(
+        xml.contains(r"\u{000C}"),
+        "FF must be represented as \\u{{000C}}"
+    );
+    assert!(
+        xml.contains(r"\u{001F}"),
+        "US must be represented as \\u{{001F}}"
+    );
+    assert!(
+        xml.contains(r"\u{FFFE}"),
+        "U+FFFE must be represented as \\u{{FFFE}}"
+    );
+    assert!(
+        xml.contains(r"\u{FFFF}"),
+        "U+FFFF must be represented as \\u{{FFFF}}"
+    );
+
+    // 5. Permitted whitespace (TAB, LF, CR) and XML metacharacters are preserved/escaped properly
+    assert!(xml.contains('\t'), "TAB (U+0009) must remain permitted");
+    assert!(xml.contains('\n'), "LF (U+000A) must remain permitted");
+    assert!(xml.contains('\r'), "CR (U+000D) must remain permitted");
+    assert!(!xml.contains("<tag>"), "< must be escaped as &lt;");
+    assert!(!xml.contains("<script>"), "< must be escaped as &lt;");
+    assert!(
+        !xml.contains("]]>"),
+        "raw ]]> sequence must never appear in rendered XML"
+    );
+    assert!(
+        xml.contains("]]&gt;"),
+        "CDATA closing tokens must be escaped as ]]&gt;"
+    );
+
+    // 6. Parsed element text and attribute values retain escaped diagnostics cleanly
+    let failure = elements
+        .iter()
+        .find(|e| e.name == "failure")
+        .expect("<failure> element");
+    assert!(attr(failure, "message").contains(r"\u{001B}"));
+    assert!(attr(failure, "message").contains(r"\u{0000}"));
+    assert!(attr(failure, "message").contains(r"\u{FFFF}"));
+    assert!(attr(failure, "message").contains("]]>"));
+    assert!(attr(failure, "message").contains("<tag>"));
+    assert!(attr(failure, "message").contains("'quote'"));
+    assert!(attr(failure, "message").contains("\"double\""));
+
+    assert!(failure.text.contains(r"\u{001B}"));
+    assert!(failure.text.contains(r"\u{0000}"));
+    assert!(failure.text.contains(r"\u{FFFF}"));
+    assert!(failure.text.contains("]]>"));
+    assert!(failure.text.contains("<script>"));
+    assert!(failure.text.contains('\t'));
+    assert!(failure.text.contains('\n'));
+
+    let error = elements
+        .iter()
+        .find(|e| e.name == "error")
+        .expect("<error> element");
+    assert!(attr(error, "message").contains(r"\u{001B}"));
+    assert!(error.text.contains(r"\u{001B}[31mfailure\u{001B}[0m"));
+    assert!(error.text.contains("]]>"));
+}

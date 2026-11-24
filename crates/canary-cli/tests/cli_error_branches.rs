@@ -78,7 +78,7 @@ fn assert_fails(output: &Output, context: &str, code: i32, needles: &[&str]) -> 
 }
 
 /// A clap usage error: exit 2, clap's own message, and a pointer to help.
-fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) {
+fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) -> String {
     let err = assert_fails(output, context, 2, needles);
     assert!(err.starts_with("error: "), "{context}: {err}");
     assert!(
@@ -86,6 +86,7 @@ fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) {
         "{context}: a usage error is reported by the argument parser: {err}"
     );
     assert!(err.contains("--help"), "{context}: no help hint: {err}");
+    err
 }
 
 /// A configuration problem found at run time: exit 2 and an
@@ -446,14 +447,17 @@ fn diff_without_both_report_paths_is_a_usage_error() {
         ],
     );
 
-    // Only the current path: the baseline is the one that is missing.
+    // Only the current path: the baseline is the one that is missing. The
+    // `Usage:` line still spells out both positionals, so inspect only the
+    // required-arguments block that precedes it.
     let output = run(&project, "diff", &["current.json"]);
     let err = assert_usage_error(&output, "diff one path", &["BASELINE_REPORT"]);
+    let missing = err.split("Usage:").next().unwrap_or(&err);
     assert!(
-        err.contains("required arguments were not provided"),
+        missing.contains("required arguments were not provided"),
         "diff: {err}"
     );
-    assert!(!err.contains("CURRENT_REPORT"), "diff: {err}");
+    assert!(!missing.contains("CURRENT_REPORT"), "diff: {err}");
 }
 
 // --- report -----------------------------------------------------------------

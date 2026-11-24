@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import io
+import json
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -122,6 +126,34 @@ class CanonicalPackReportTests(unittest.TestCase):
         }
         counts = report_guard.validate_report(report, protocol=28, minimum_xdr=3)
         self.assertEqual(counts["total"], 3)
+
+    def test_non_string_expected_skip_reason_is_a_controlled_cli_error(self) -> None:
+        report = p30_report()
+        report["skipped"][0]["reason"] = 42
+        stderr = io.StringIO()
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "report.json"
+            path.write_text(json.dumps(report), encoding="utf-8")
+            with redirect_stderr(stderr):
+                status = report_guard.main(
+                    [
+                        str(path),
+                        "--protocol",
+                        "30",
+                        "--minimum-xdr",
+                        "3",
+                        "--expected-skipped-id",
+                        P30_RPC_ID,
+                    ]
+                )
+
+        self.assertEqual(status, 1)
+        self.assertIn(
+            "canonical pack report invalid: skipped[0].reason must be a string",
+            stderr.getvalue(),
+        )
+        self.assertNotIn("Traceback", stderr.getvalue())
 
 
 if __name__ == "__main__":

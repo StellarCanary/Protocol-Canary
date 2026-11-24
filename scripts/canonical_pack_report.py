@@ -120,10 +120,13 @@ def validate_report(
                 f"expected only skipped fixture {expected_skipped_id}, got {skipped_ids}"
             )
         skip = skipped[0]
+        reason = skip.get("reason")
+        if not isinstance(reason, str):
+            raise ReportValidationError("skipped[0].reason must be a string")
         if (
             skip.get("surface") != "rpc"
             or skip.get("code") != "SURFACE_DISABLED"
-            or "rpc checks are disabled in configuration" not in skip.get("reason", "")
+            or "rpc checks are disabled in configuration" not in reason
         ):
             raise ReportValidationError(
                 f"fixture {expected_skipped_id} was not explicitly skipped as disabled RPC"

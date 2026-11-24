@@ -49,6 +49,106 @@ fn the_valid_example_parses_and_reserializes_canonically() {
     assert_eq!(serialize_lock(&reparsed).unwrap(), canonical);
 }
 
+/// Every key and table header the canonical form can contain, in the order
+/// CF-03 section 3 writes them.
+const CANONICAL_ORDER: [&str; 9] = [
+    "lockVersion",
+    "[tool]",
+    "version",
+    "[fixtures]",
+    "protocol",
+    "packDigest",
+    "registryVersion",
+    "source",
+    "revision",
+];
+
+/// The key or table header each non-blank line of `text` starts with.
+fn entries(text: &str) -> Vec<&str> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| match line.split_once(" = ") {
+            Some((key, _)) => key,
+            None => line,
+        })
+        .collect()
+}
+
+#[test]
+fn the_canonical_form_orders_keys_as_the_contract_does() {
+    let blocks = marked_blocks("<!-- contract-example: lock-v1 -->");
+    let lock = parse_lock(&blocks[0], Path::new(LOCK_FILE_NAME)).unwrap();
+    let canonical = serialize_lock(&lock).unwrap();
+
+    let positions: Vec<usize> = entries(&canonical)
+        .into_iter()
+        .map(|entry| {
+            CANONICAL_ORDER
+                .iter()
+                .position(|known| *known == entry)
+                .unwrap_or_else(|| panic!("unexpected entry {entry:?} in:\n{canonical}"))
+        })
+        .collect();
+    assert!(
+        positions.windows(2).all(|pair| pair[0] < pair[1]),
+        "keys are out of contract order:\n{canonical}"
+    );
+}
+
+#[test]
+fn the_order_of_keys_in_the_input_does_not_change_the_canonical_bytes() {
+    let blocks = marked_blocks("<!-- contract-example: lock-v1 -->");
+    let lock = parse_lock(&blocks[0], Path::new(LOCK_FILE_NAME)).unwrap();
+    let canonical = serialize_lock(&lock).unwrap();
+
+    // Write the same data with the [fixtures] keys in reverse order.
+    let (head, fixtures) = canonical
+        .split_once("[fixtures]\n")
+        .expect("the example has a [fixtures] table");
+    let reversed: Vec<&str> = fixtures.lines().rev().collect();
+    let shuffled = format!("{head}[fixtures]\n{}\n", reversed.join("\n"));
+    assert_ne!(shuffled, canonical, "the input must really be reordered");
+
+    let reparsed = parse_lock(&shuffled, Path::new(LOCK_FILE_NAME)).unwrap();
+    assert_eq!(reparsed, lock);
+    assert_eq!(serialize_lock(&reparsed).unwrap(), canonical);
+}
+
+#[test]
+fn repeated_roundtrips_of_the_example_never_drift() {
+    let blocks = marked_blocks("<!-- contract-example: lock-v1 -->");
+    let lock = parse_lock(&blocks[0], Path::new(LOCK_FILE_NAME)).unwrap();
+
+    let first = serialize_lock(&lock).unwrap();
+    let mut text = first.clone();
+    for round in 0..5 {
+        let parsed = parse_lock(&text, Path::new(LOCK_FILE_NAME)).unwrap();
+        text = serialize_lock(&parsed).unwrap();
+        assert_eq!(text.as_bytes(), first.as_bytes(), "drift in round {round}");
+    }
+}
+
+#[test]
+fn the_canonical_form_drops_the_examples_comments_and_keeps_one_lf_ending() {
+    let blocks = marked_blocks("<!-- contract-example: lock-v1 -->");
+    let source = &blocks[0];
+    let lock = parse_lock(source, Path::new(LOCK_FILE_NAME)).unwrap();
+    let canonical = serialize_lock(&lock).unwrap();
+
+    // The documented example carries an illustrative comment; the canonical
+    // form must not, and so differs from the source text.
+    assert!(
+        source.lines().any(|line| line.contains('#')),
+        "the CF-03 example is expected to carry a comment"
+    );
+    assert!(canonical.lines().all(|line| !line.contains('#')));
+    assert_ne!(&canonical, source);
+
+    assert!(!canonical.contains('\r'));
+    assert!(canonical.ends_with('\n') && !canonical.ends_with("\n\n"));
+    assert!(canonical.lines().all(|line| line == line.trim_end()));
+}
+
 #[test]
 fn the_invalid_examples_are_rejected() {
     let blocks = marked_blocks("<!-- contract-example: lock-v1-invalid -->");

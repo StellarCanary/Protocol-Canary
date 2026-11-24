@@ -173,6 +173,70 @@ fn an_evidence_record_for_another_fixture_warns_and_leaves_the_fixture_unverifie
 }
 
 #[test]
+fn a_sidecar_naming_a_different_protocol_than_the_fixture_is_rejected() {
+    // The fixture declares `protocol = 28` (see `fixture`). A record is
+    // not allowed to carry its own `protocol` claim: the only protocol a
+    // record states is the one it *observed* on the network, and
+    // `VerificationRecord` rejects any other key. A sidecar that says
+    // `"protocol": 29` must therefore warn and leave the fixture unverified,
+    // so a fixture is never attributed a result for another protocol.
+    let dir = TempDir::new("protocol-mismatch");
+    dir.write("p28-rpc-001.toml", &fixture("p28-rpc-001"));
+    let evidence = valid_evidence("p28-rpc-001").replace(
+        "\"outcome\": \"matched\"",
+        "\"outcome\": \"matched\", \"protocol\": 29",
+    );
+    assert!(evidence.contains("\"protocol\": 29"), "the claim was added");
+    let sidecar = dir.write("p28-rpc-001.evidence.json", &evidence);
+
+    let outcome = load_directory_with_evidence(&dir.path).expect("the load does not crash");
+    assert!(
+        outcome.fixtures[0].verification.is_none(),
+        "the fixture stays unverified"
+    );
+    assert_eq!(outcome.warnings.len(), 1, "{:?}", outcome.warnings);
+    assert_eq!(outcome.warnings[0].path, sidecar);
+    assert!(
+        outcome.warnings[0]
+            .reason
+            .contains("invalid verification record"),
+        "{:?}",
+        outcome.warnings[0]
+    );
+    assert!(
+        outcome.warnings[0].reason.contains("protocol"),
+        "the warning names the offending key: {:?}",
+        outcome.warnings[0]
+    );
+}
+
+#[test]
+fn a_record_observed_on_another_protocol_is_kept_for_the_historical_state() {
+    // CF-04 section 4: a record whose `observedProtocol` differs from the
+    // fixture's `protocol` is not discarded at load time. It is retained
+    // as-is and *derived* as `historical` when the freshness state is
+    // computed. This pins that split: the loader keeps the record without
+    // a warning and does not rewrite either protocol, so the later
+    // comparison has both numbers to work from.
+    let dir = TempDir::new("observed-protocol");
+    dir.write("p28-rpc-001.toml", &fixture("p28-rpc-001"));
+    let evidence = valid_evidence("p28-rpc-001")
+        .replace("\"observedProtocol\": 28", "\"observedProtocol\": 29");
+    assert!(evidence.contains("\"observedProtocol\": 29"));
+    dir.write("p28-rpc-001.evidence.json", &evidence);
+
+    let outcome = load_directory_with_evidence(&dir.path).expect("loads");
+    assert!(outcome.warnings.is_empty(), "{:?}", outcome.warnings);
+    let loaded = &outcome.fixtures[0];
+    let record = loaded.verification.as_ref().expect("the record is kept");
+    assert_eq!(
+        record.network.as_ref().map(|net| net.observed_protocol),
+        Some(29)
+    );
+    assert_eq!(loaded.metadata.protocol.to_string(), "28");
+}
+
+#[test]
 fn a_live_record_without_a_network_warns_and_leaves_the_fixture_unverified() {
     // CF-04 section 3: `network` is required for live methods. JSON has
     // no comments, so drop the network object wholesale.

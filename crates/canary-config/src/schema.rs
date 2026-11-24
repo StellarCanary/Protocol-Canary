@@ -24,7 +24,18 @@ pub const DEFAULT_PROTOCOL: u32 = 28;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    /// `version` — the configuration schema version this file is written
+    /// against. Required. Must equal [`SUPPORTED_CONFIG_VERSION`]: the loader
+    /// rejects any other value with
+    /// [`ConfigError::UnsupportedVersion`](crate::loader::ConfigError::UnsupportedVersion)
+    /// instead of guessing a migration. [`ConfigFile::default`] uses the
+    /// supported version.
     pub version: u32,
+    /// `protocol` — the target Stellar protocol version for this project.
+    /// Required and positive: the loader rejects `0` as an invalid
+    /// configuration. This value is the fallback when `--protocol` is not
+    /// passed, and an explicit `--protocol` overrides it.
+    /// [`ConfigFile::default`] uses [`DEFAULT_PROTOCOL`] (`28`).
     pub protocol: u32,
     /// `network` — the network to run live checks against (`testnet`,
     /// `mainnet`, `futurenet`, or a custom name). Optional: absent means
@@ -42,10 +53,19 @@ pub struct ConfigFile {
     /// `--fixtures-dir`, else the built-in `fixtures` default).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fixtures_dir: Option<PathBuf>,
+    /// `[project]` — how to classify the project under test. Optional and
+    /// defaulted: an absent table means `[project] type = "auto"`. See
+    /// [`ProjectSection`].
     #[serde(default)]
     pub project: ProjectSection,
+    /// `[tests]` — which compatibility surfaces are enabled. Optional;
+    /// every surface defaults to `true`, and the loader rejects a table that
+    /// turns all three off. See [`TestsSection`].
     #[serde(default)]
     pub tests: TestsSection,
+    /// `[policy]` — how results are turned into the overall pass/warn/fail
+    /// decision. Optional; every member defaults to `false`. See
+    /// [`PolicySection`].
     #[serde(default)]
     pub policy: PolicySection,
 }
@@ -69,6 +89,11 @@ impl Default for ConfigFile {
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectSection {
+    /// `type` — how the project is classified. One of `"auto"` (run the
+    /// built-in detection), `"soroban"`, `"rpc-consumer"`, `"stellar-sdk"`,
+    /// `"generic-stellar"` or `"unknown"` (the five [`ProjectType`] names,
+    /// used as a user-declared override). Defaults to `"auto"`; any other
+    /// string is rejected at parse time.
     #[serde(rename = "type", default)]
     pub project_type: ProjectTypeSetting,
 }
@@ -132,13 +157,21 @@ impl<'de> Deserialize<'de> for ProjectTypeSetting {
 }
 
 /// `[tests]` — which surfaces are enabled for this project.
+///
+/// At least one surface must stay enabled: the loader rejects a configuration
+/// that turns all three off, because a run that executes nothing cannot claim
+/// to have checked anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TestsSection {
+    /// `xdr` — enable the offline XDR surface. Defaults to `true`.
     #[serde(default = "default_true")]
     pub xdr: bool,
+    /// `rpc` — enable the live RPC surface. Defaults to `true`.
     #[serde(default = "default_true")]
     pub rpc: bool,
+    /// `soroban` — enable the Soroban simulation surface. Defaults to
+    /// `true`.
     #[serde(default = "default_true")]
     pub soroban: bool,
 }
@@ -161,6 +194,10 @@ impl Default for TestsSection {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PolicySection {
+    /// `warnings_are_failures` — treat warning results as failures in the
+    /// overall decision and exit code. Defaults to `false`. The CLI's
+    /// `--fail-on-warning` flag enables the same promotion for one run, so
+    /// either source is enough.
     #[serde(default)]
     pub warnings_are_failures: bool,
 }

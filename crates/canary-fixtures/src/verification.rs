@@ -143,7 +143,11 @@ impl VerificationRecord {
             return Err("network is required for live verification methods");
         }
         if let Some(host) = &self.endpoint_host {
-            if host.is_empty() || host.contains(['/', '?', '#', ' ']) || host.starts_with('[') {
+            // A `:` means the value carries a port (or an unbracketed IPv6
+            // address, which is not a bare host name either); CF-04 keeps
+            // endpointHost to the name alone, so reject it with the rest.
+            if host.is_empty() || host.contains(['/', '?', '#', ' ', ':']) || host.starts_with('[')
+            {
                 return Err("endpointHost must be a bare host name: no path, query, port or token");
             }
         }
@@ -252,6 +256,12 @@ mod tests {
             "https://rpc.example.invalid",
             "rpc.example.invalid/path",
             "rpc.example.invalid?token=x",
+            "rpc.example.invalid#fragment",
+            "rpc.example.invalid:443",
+            "rpc.example.invalid:443/path",
+            "[::1]",
+            "::1",
+            "rpc example invalid",
             "",
         ] {
             record.endpoint_host = Some(bad.to_string());

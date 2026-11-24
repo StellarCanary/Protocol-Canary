@@ -105,6 +105,83 @@ fn writes_the_lock_with_mode_0644() {
     assert_eq!(mode & 0o777, 0o644, "mode was {:o}", mode & 0o777);
 }
 
+#[cfg(unix)]
+#[test]
+fn replacing_an_existing_lock_keeps_its_permission_bits() {
+    use std::os::unix::fs::PermissionsExt;
+
+    for mode in [0o640, 0o600, 0o664] {
+        let dir = Scratch::new("keep-mode");
+        write_lock(&dir.lock_path(), &lock(28)).unwrap();
+        std::fs::set_permissions(dir.lock_path(), std::fs::Permissions::from_mode(mode)).unwrap();
+
+        write_lock(&dir.lock_path(), &lock(29)).expect("overwrite");
+
+        let actual = std::fs::metadata(dir.lock_path())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(actual, mode, "mode was {actual:o}, expected {mode:o}");
+        // The content is the complete new lock, and nothing is left behind.
+        assert_eq!(load_lock(&dir.lock_path()).unwrap(), lock(29));
+        assert!(!dir.temp_path().exists());
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_lock_written_for_the_first_time_still_gets_mode_0644() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = Scratch::new("new-mode");
+    assert!(!dir.lock_path().exists());
+
+    write_lock(&dir.lock_path(), &lock(28)).unwrap();
+
+    let mode = std::fs::metadata(dir.lock_path())
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o644, "mode was {mode:o}");
+}
+
+#[test]
+fn a_write_into_a_missing_directory_fails_and_leaves_no_temporary_file() {
+    let dir = Scratch::new("missing-dir");
+    let missing = dir.0.join("no-such-directory");
+    let target = missing.join(LOCK_FILE_NAME);
+
+    let error = write_lock(&target, &lock(28)).unwrap_err();
+
+    assert!(matches!(error, LockError::Write { .. }), "{error}");
+    assert!(!missing.exists(), "the writer must not create directories");
+    assert!(!missing.join(format!("{LOCK_FILE_NAME}.tmp")).exists());
+    // Nothing was created next to the scratch directory's own contents either.
+    assert_eq!(std::fs::read_dir(&dir.0).unwrap().count(), 0);
+}
+
+#[test]
+fn a_failed_overwrite_leaves_the_existing_lock_and_no_temporary_file() {
+    let dir = Scratch::new("failed-overwrite");
+    write_lock(&dir.lock_path(), &lock(28)).unwrap();
+    let before = std::fs::read(dir.lock_path()).unwrap();
+
+    // A lock that cannot be read back is refused before any file is created.
+    let mut invalid = lock(29);
+    invalid.fixtures.registry_version = 99;
+    assert!(write_lock(&dir.lock_path(), &invalid).is_err());
+
+    assert_eq!(std::fs::read(dir.lock_path()).unwrap(), before);
+    assert!(!dir.temp_path().exists());
+    let names: Vec<_> = std::fs::read_dir(&dir.0)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert_eq!(names, [std::ffi::OsString::from(LOCK_FILE_NAME)]);
+}
+
 #[test]
 fn an_in_progress_writer_makes_a_second_writer_fail_without_touching_the_lock() {
     let dir = Scratch::new("busy");

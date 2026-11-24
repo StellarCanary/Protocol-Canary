@@ -472,7 +472,9 @@ pub fn serialize_lock(lock: &LockFile) -> Result<String, LockError> {
 /// The lock is validated and rendered first, so a lock that could not be
 /// read back never touches the filesystem. The canonical bytes are then
 /// written to a temporary file in the same directory as `path`, flushed and
-/// synced, given mode `0644`, and renamed over the target. The rename is
+/// synced, given mode `0644` (or, when it replaces an existing lock, that
+/// lock's permission bits, so an atomic replace does not silently change
+/// who can read it), and renamed over the target. The rename is
 /// atomic on a POSIX filesystem, so a crash leaves either the old lock or
 /// the complete new one, never a zero-byte or partially written file.
 ///
@@ -507,7 +509,7 @@ pub fn write_lock(path: &Path, lock: &LockFile) -> Result<(), LockError> {
     let temp = parent.join(format!("{file_name}.tmp"));
 
     // The target may be an existing lock, but never a link or a directory.
-    match std::fs::symlink_metadata(path) {
+    let existing_mode = match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             return Err(LockError::Symlink {
                 path: path.to_path_buf(),
@@ -518,15 +520,15 @@ pub fn write_lock(path: &Path, lock: &LockFile) -> Result<(), LockError> {
                 path: path.to_path_buf(),
             });
         }
-        Ok(_) => {}
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(metadata) => permission_bits(&metadata),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
         Err(source) => {
             return Err(LockError::Read {
                 path: path.to_path_buf(),
                 source,
             });
         }
-    }
+    };
 
     // Refuse to follow a pre-existing link at the temporary path, then claim
     // it exclusively. `create_new` is the lock: only one writer can hold it.
@@ -566,7 +568,7 @@ pub fn write_lock(path: &Path, lock: &LockFile) -> Result<(), LockError> {
             path: temp.clone(),
             source,
         })?;
-        set_lock_permissions(&file, &temp)?;
+        set_lock_permissions(&file, &temp, existing_mode)?;
         drop(file);
         std::fs::rename(&temp, path).map_err(|source| LockError::Write {
             path: path.to_path_buf(),
@@ -580,21 +582,43 @@ pub fn write_lock(path: &Path, lock: &LockFile) -> Result<(), LockError> {
     result
 }
 
-/// Gives a freshly created lockfile mode `0644` on Unix. Other platforms
-/// inherit the permissions a newly created file normally receives.
-fn set_lock_permissions(file: &std::fs::File, path: &Path) -> Result<(), LockError> {
+/// The Unix permission bits of an existing lockfile, or `None` on platforms
+/// without them.
+fn permission_bits(metadata: &std::fs::Metadata) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o644))
-            .map_err(|source| LockError::Write {
-                path: path.to_path_buf(),
-                source,
-            })?;
+        Some(metadata.permissions().mode() & 0o777)
     }
     #[cfg(not(unix))]
     {
-        let _ = (file, path);
+        let _ = metadata;
+        None
+    }
+}
+
+/// Gives the new lockfile the permission bits of the lock it replaces on
+/// Unix, or mode `0644` when there is none. Other platforms inherit the
+/// permissions a newly created file normally receives.
+fn set_lock_permissions(
+    file: &std::fs::File,
+    path: &Path,
+    existing_mode: Option<u32>,
+) -> Result<(), LockError> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(
+            existing_mode.unwrap_or(0o644),
+        ))
+        .map_err(|source| LockError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (file, path, existing_mode);
     }
     Ok(())
 }

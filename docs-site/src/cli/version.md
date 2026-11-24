@@ -16,7 +16,7 @@ stellar-canary version
 ```
 
 ```text
-stellar-canary 0.2.0
+stellar-canary 0.3.0
 ```
 
 ## Why version visibility matters here

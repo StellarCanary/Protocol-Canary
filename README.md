@@ -39,12 +39,18 @@ endpoint, before the network moves.
 
 ## Quick start
 
-Download a prebuilt binary and its checksum from the [Releases](https://github.com/StellarCanary/Protocol-Canary/releases) page. Checksums are verified via `sha256sum -c SHA256SUMS`.
+Download a prebuilt archive for Linux x86_64, macOS x86_64, macOS arm64, or
+Windows x86_64 from the [Releases](https://github.com/StellarCanary/Protocol-Canary/releases)
+page. Every asset has a `.sha256` sidecar and each release publishes a
+`SHA256SUMS` manifest: verify with `sha256sum -c SHA256SUMS` (or
+`shasum -a 256 -c SHA256SUMS`) on Linux and macOS, and with `Get-FileHash` on
+Windows. See [Installation](https://stellarcanary.github.io/Protocol-Canary/installation.html)
+for the exact archive names.
 
-Alternatively, install a released version from source:
+Alternatively, install the current release from source:
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.3.0 --locked
 stellar-canary check
 ```
 
@@ -203,10 +209,15 @@ supplied via `--fixtures-dir`.
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.3.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | not yet verified with a published Action release (default input is still `0.1.1`) |
 | `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
 Only combinations that have actually been run together are listed here.
+`v0.3.0` is the current Engine release, but no `ProtocolCanary-Action`
+release pins it yet: the Action's default `version` input is still `0.1.1`,
+so this table does not claim that combination.
+
 `v0.1.0` reports predate the `counts` field and predate `ContractExecutable`
 XDR support (needed by two of the current Protocol 28 fixtures); the Action
 tolerates the missing field but `v0.1.1` is the version this table

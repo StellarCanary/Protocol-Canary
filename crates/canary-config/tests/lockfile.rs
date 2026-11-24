@@ -605,6 +605,92 @@ fn validate_stored_report_against_lock_missing_lockfile_fails_with_exit_code_2()
     assert_eq!(ExitCode::from(&err).code(), 2);
 }
 
+/// Runs `validate_stored_report_against_lock` on a lockfile holding `bytes`
+/// and returns the error, asserting that it is a configuration error (exit
+/// code 2) whose message names the lockfile.
+fn stored_report_rejection(label: &str, bytes: &[u8]) -> String {
+    let dir = Scratch::new(label);
+    let lock_path = dir.file(bytes);
+
+    let err = validate_stored_report_against_lock(&lock_path, DIGEST, 28).unwrap_err();
+
+    assert_eq!(ExitCode::from(&err), ExitCode::ConfigurationError);
+    assert_eq!(ExitCode::from(&err).code(), 2);
+    let diagnostic = err.to_string();
+    assert!(
+        diagnostic.contains(&lock_path.display().to_string()),
+        "the diagnostic must name the lockfile: {diagnostic}"
+    );
+    diagnostic
+}
+
+#[test]
+fn validate_stored_report_against_lock_corrupted_toml_fails_with_exit_code_2() {
+    let diagnostic = stored_report_rejection("corrupted_toml", b"this is [[[ not toml = = =");
+    assert!(
+        diagnostic.contains("failed to parse lockfile"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn validate_stored_report_against_lock_binary_garbage_fails_with_exit_code_2() {
+    // Valid UTF-8 that is not TOML, then bytes that are not UTF-8 at all.
+    stored_report_rejection("garbage_text", "\u{1f980}\u{1f980}\u{1f980}".as_bytes());
+    let diagnostic = stored_report_rejection("garbage_bytes", &[0xff, 0xfe, 0x00, 0x80]);
+    assert!(diagnostic.contains("not valid UTF-8"), "{diagnostic}");
+}
+
+#[test]
+fn validate_stored_report_against_lock_truncated_mid_value_fails_with_exit_code_2() {
+    // Cut inside a quoted string: the TOML itself is incomplete.
+    let cut = FULL.find("0.1.1").expect("the version is in FULL") + 2;
+    let diagnostic = stored_report_rejection("truncated_value", &FULL.as_bytes()[..cut]);
+    assert!(
+        diagnostic.contains("failed to parse lockfile"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn validate_stored_report_against_lock_truncated_before_required_keys_fails_with_exit_code_2() {
+    // Cut at a line boundary: valid TOML, but `packDigest` and
+    // `registryVersion` are gone.
+    let cut = FULL.find("packDigest").expect("packDigest is in FULL");
+    let diagnostic = stored_report_rejection("truncated_keys", &FULL.as_bytes()[..cut]);
+    assert!(diagnostic.contains("packDigest"), "{diagnostic}");
+}
+
+#[test]
+fn validate_stored_report_against_lock_empty_lockfile_fails_with_exit_code_2() {
+    // A zero-byte file exists on disk but has no `lockVersion`, and says so.
+    let diagnostic = stored_report_rejection("empty_lockfile", b"");
+    assert!(diagnostic.contains("lockVersion"), "{diagnostic}");
+}
+
+#[test]
+fn validate_stored_report_against_lock_whitespace_only_lockfile_fails_with_exit_code_2() {
+    let diagnostic = stored_report_rejection("blank_lockfile", b"\n  \t\n\n");
+    assert!(diagnostic.contains("lockVersion"), "{diagnostic}");
+}
+
+#[test]
+fn a_corrupted_lockfile_is_reported_before_any_digest_comparison() {
+    // Even with a digest that could never match, the lockfile problem is what
+    // is reported: the comparison never runs on a lock that did not load.
+    let dir = Scratch::new("corrupted_before_compare");
+    let lock_path = dir.file(b"not toml [[[");
+
+    let err = validate_stored_report_against_lock(&lock_path, "sha256:nope", 99).unwrap_err();
+
+    let diagnostic = err.to_string();
+    assert!(
+        diagnostic.contains("failed to parse lockfile"),
+        "{diagnostic}"
+    );
+    assert!(!diagnostic.contains("packDigest"), "{diagnostic}");
+}
+
 #[test]
 fn report_built_against_different_pack_digest_fails_validation_with_exit_code_2() {
     let dir = Scratch::new("different_pack_digest");

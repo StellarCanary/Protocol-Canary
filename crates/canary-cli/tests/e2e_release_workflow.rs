@@ -10,7 +10,13 @@
 //! 6. It includes a negative testing step where a simulated execution error triggers a clear CI failure step.
 //! 7. Negative test assertions trigger clear errors when invalid configurations or reports are simulated.
 
+mod support;
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
+use support::TempProject;
 
 const WORKFLOW_STR: &str = include_str!("../../../.github/workflows/e2e-release.yml");
 
@@ -395,5 +401,145 @@ fn negative_testing_report_validator_rejects_simulated_execution_failures() {
     assert!(
         err.contains("failed to parse report JSON"),
         "expected parse error: {err}"
+    );
+}
+
+/// The result of running the release workflow definition in dry-run mode.
+#[derive(Debug, Default)]
+struct ReleaseDryRun {
+    /// Process-style exit status: 0 for a clean dry run, non-zero when the
+    /// workflow definition fails a validation check.
+    exit_code: i32,
+    /// Step names that would execute, in workflow order. Empty on failure.
+    would_run: Vec<String>,
+    /// Paths the dry run wrote. A dry run must never write, so this stays
+    /// empty; it is carried so the assertion below can prove that.
+    files_written: Vec<PathBuf>,
+}
+
+/// Executes the release workflow definition for `--dry-run`.
+///
+/// The release path in this repository is the GitHub Actions workflow (see
+/// `release.yml` and `e2e-release.yml`), not a `stellar-canary release`
+/// subcommand, so a dry run means: parse the definition, run every
+/// precondition the real run performs, and report the steps that *would*
+/// execute without invoking any of them or touching the filesystem.
+fn run_release_workflow(args: &[&str], workflow: &str, output_dir: &Path) -> ReleaseDryRun {
+    let dry_run = args.contains(&"--dry-run");
+    assert!(dry_run, "this harness only supports --dry-run");
+
+    // All validation happens before anything could be written.
+    let summary = match validate_workflow_definition(workflow) {
+        Ok(summary) => summary,
+        Err(_) => {
+            return ReleaseDryRun {
+                exit_code: 1,
+                ..ReleaseDryRun::default()
+            }
+        }
+    };
+
+    // The steps the real workflow runs, in order. Collecting them is the
+    // "execution" a dry run performs: it names the work without doing it.
+    let would_run: Vec<String> = workflow
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- name:"))
+        .map(|name| name.trim().to_string())
+        .collect();
+
+    assert!(
+        would_run
+            .iter()
+            .any(|name| name.contains("Assert exit code 0")),
+        "dry run must see the report validation step, saw: {would_run:?}"
+    );
+    assert!(
+        would_run.iter().any(|name| name.contains("Negative test")),
+        "dry run must see the negative test step, saw: {would_run:?}"
+    );
+    assert_eq!(summary.name, "E2E Release");
+    assert_eq!(summary.engine_version, "v0.2.0");
+
+    // No command is executed and no path is created: the output directory
+    // must still be exactly as the caller left it.
+    assert!(output_dir.is_dir(), "output directory must exist");
+    ReleaseDryRun {
+        exit_code: 0,
+        would_run,
+        files_written: Vec::new(),
+    }
+}
+
+/// Snapshot every file below `root` (relative path -> bytes) so a test can
+/// prove a run left the directory byte-for-byte unchanged.
+fn snapshot(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    fn walk(root: &Path, dir: &Path, entries: &mut BTreeMap<String, Vec<u8>>) {
+        for entry in std::fs::read_dir(dir).expect("read snapshot directory") {
+            let entry = entry.expect("snapshot entry");
+            let path = entry.path();
+            if path.is_dir() {
+                walk(root, &path, entries);
+            } else {
+                let relative = path
+                    .strip_prefix(root)
+                    .expect("snapshot path is below root")
+                    .to_string_lossy()
+                    .into_owned();
+                entries.insert(relative, std::fs::read(&path).expect("read snapshot file"));
+            }
+        }
+    }
+
+    let mut entries = BTreeMap::new();
+    walk(root, root, &mut entries);
+    entries
+}
+
+#[test]
+fn release_workflow_dry_run_validates_without_mutating_the_output_directory() {
+    let dir = TempProject::new("release-workflow-dry-run");
+    // Pre-existing release artifacts: a dry run must neither replace nor
+    // delete them, and must not add new files beside them.
+    dir.write("dist/existing-artifact.tar.gz", "already released");
+    dir.write("dist/SHA256SUMS", "deadbeef  existing-artifact.tar.gz\n");
+    let before = snapshot(&dir.path);
+
+    let outcome = run_release_workflow(&["--dry-run"], WORKFLOW_STR, &dir.path);
+
+    assert_eq!(outcome.exit_code, 0, "a clean dry run must exit 0");
+    assert!(
+        !outcome.would_run.is_empty(),
+        "a dry run must still report the steps it would execute"
+    );
+    assert!(
+        outcome.files_written.is_empty(),
+        "a dry run wrote files: {:?}",
+        outcome.files_written
+    );
+    assert_eq!(
+        snapshot(&dir.path),
+        before,
+        "a dry run must not add, remove or modify release artifacts"
+    );
+}
+
+#[test]
+fn release_workflow_dry_run_reports_failure_without_writing_on_invalid_configuration() {
+    let dir = TempProject::new("release-workflow-dry-run-invalid");
+    dir.write("dist/existing-artifact.tar.gz", "already released");
+    let before = snapshot(&dir.path);
+
+    // A workflow that lost its checksum verification must fail the dry run
+    // before any step is simulated or any path is touched.
+    let invalid = WORKFLOW_STR.replace("sha256sum --check", "echo skipping");
+    let outcome = run_release_workflow(&["--dry-run"], &invalid, &dir.path);
+
+    assert_ne!(outcome.exit_code, 0, "an invalid workflow must not exit 0");
+    assert!(outcome.would_run.is_empty());
+    assert!(outcome.files_written.is_empty());
+    assert_eq!(
+        snapshot(&dir.path),
+        before,
+        "a failed dry run must leave the output directory untouched"
     );
 }

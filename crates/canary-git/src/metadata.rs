@@ -79,6 +79,22 @@ mod tests {
     }
 
     #[test]
+    fn detached_head_with_dirty_state_preserves_both_fields() {
+        // CI checkouts of a merge commit leave HEAD detached (no branch)
+        // while the working tree can still carry modifications.
+        let sha = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        let repo = FakeRepository {
+            commit: Ok(Some(sha.to_string())),
+            branch: Ok(None),
+            dirty: Ok(true),
+        };
+        let context = collect_git_context(&repo);
+        assert_eq!(context.commit.as_deref(), Some(sha));
+        assert_eq!(context.branch, None);
+        assert_eq!(context.is_dirty, Some(true));
+    }
+
+    #[test]
     fn a_current_commit_error_degrades_to_a_none_commit_without_panicking() {
         let repo = FakeRepository {
             commit: Err(invalid_utf8_error()),

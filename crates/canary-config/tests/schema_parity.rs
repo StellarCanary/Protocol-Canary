@@ -753,3 +753,336 @@ fn every_documented_divergence_still_diverges() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Complex sample configurations (issue #742)
+// ---------------------------------------------------------------------------
+//
+// The corpus above is generated from single-key mutations of one flat file.
+// Real files are written in more varied TOML: inline tables, dotted keys,
+// tables out of order, partial per-section overrides — and sometimes the
+// array-of-tables syntax (`[[...]]`) or a `profile`/`filter` section copied
+// from another tool's configuration. Configuration version 1 has no array
+// tables, no profiles and no filters, so every such document must be refused
+// by *both* sides with a diagnostic that names the offending key, and must be
+// refused without panicking.
+
+/// What a sample is expected to do, independent of either implementation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Expect {
+    Accept,
+    /// Refused, and both diagnostics must mention this key.
+    RejectNaming(&'static str),
+    /// Refused by the TOML grammar itself, before any schema rule applies.
+    RejectAsMalformed,
+}
+
+/// Hand-written samples that exercise the TOML shapes the generated corpus
+/// does not: each one is a document a user could plausibly commit.
+fn complex_samples() -> Vec<(&'static str, &'static str, Expect)> {
+    vec![
+        // ---- accepted: optional sections overriding the defaults -----------
+        (
+            "every optional section overridden with non-default values",
+            "version = 1\nprotocol = 22\nnetwork = \"futurenet\"\n\
+             rpc_url = \"https://rpc-futurenet.stellar.org\"\nfixtures_dir = \"ci/fixtures\"\n\n\
+             [project]\ntype = \"rpc-consumer\"\n\n\
+             [tests]\nxdr = false\nrpc = true\nsoroban = false\n\n\
+             [policy]\nwarnings_are_failures = true\n",
+            Expect::Accept,
+        ),
+        (
+            "sections written as inline tables",
+            "version = 1\nprotocol = 28\n\
+             project = { type = \"soroban\" }\n\
+             tests = { xdr = true, rpc = false, soroban = true }\n\
+             policy = { warnings_are_failures = true }\n",
+            Expect::Accept,
+        ),
+        (
+            "sections written as dotted keys",
+            "version = 1\nprotocol = 28\n\
+             project.type = \"stellar-sdk\"\n\
+             tests.rpc = false\n\
+             policy.warnings_are_failures = true\n",
+            Expect::Accept,
+        ),
+        (
+            "sections out of document order",
+            "version = 1\nprotocol = 28\n\n\
+             [policy]\nwarnings_are_failures = true\n\n\
+             [tests]\nsoroban = false\n\n\
+             [project]\ntype = \"generic-stellar\"\n",
+            Expect::Accept,
+        ),
+        (
+            "a partial surface filter overriding one default",
+            "version = 1\nprotocol = 28\n\n[tests]\nsoroban = false\n",
+            Expect::Accept,
+        ),
+        (
+            "empty optional sections alongside populated ones",
+            "version = 1\nprotocol = 28\n\n[project]\n\n[tests]\nrpc = false\n\n[policy]\n",
+            Expect::Accept,
+        ),
+        // ---- refused: array tables ----------------------------------------
+        (
+            "a known section written as an array of tables",
+            "version = 1\nprotocol = 28\n\n[[tests]]\nxdr = true\n",
+            Expect::RejectNaming("tests"),
+        ),
+        (
+            "a known section repeated as an array of tables",
+            "version = 1\nprotocol = 28\n\n\
+             [[policy]]\nwarnings_are_failures = true\n\n\
+             [[policy]]\nwarnings_are_failures = false\n",
+            Expect::RejectNaming("policy"),
+        ),
+        (
+            "an array of inline tables for a known section",
+            "version = 1\nprotocol = 28\nproject = [{ type = \"soroban\" }]\n",
+            Expect::RejectNaming("project"),
+        ),
+        // A bare array of *scalars* where a section belongs (`tests = []`,
+        // `policy = [true]`) is deliberately absent: serde reads a struct
+        // positionally from a sequence, so the loader accepts those while the
+        // schema refuses them. That is a loader-side gap, tracked separately,
+        // not something a test-only change may paper over.
+        // ---- refused: profiles, which version 1 does not have -------------
+        (
+            "multiple profile overrides as an array of tables",
+            "version = 1\nprotocol = 28\n\n\
+             [[profile]]\nname = \"ci\"\nnetwork = \"testnet\"\n\n\
+             [[profile]]\nname = \"release\"\nnetwork = \"mainnet\"\n",
+            Expect::RejectNaming("profile"),
+        ),
+        (
+            "named profile tables overriding a section",
+            "version = 1\nprotocol = 28\n\n\
+             [profiles.ci.policy]\nwarnings_are_failures = true\n\n\
+             [profiles.local.tests]\nrpc = false\n",
+            Expect::RejectNaming("profiles"),
+        ),
+        // ---- refused: filters, which version 1 does not have --------------
+        (
+            "a filter array of tables nested under a known section",
+            "version = 1\nprotocol = 28\n\n\
+             [[tests.filter]]\ninclude = \"p28-xdr-*\"\n\n\
+             [[tests.filter]]\nexclude = \"p28-rpc-*\"\n",
+            Expect::RejectNaming("filter"),
+        ),
+        (
+            "a filter list at the document root",
+            "version = 1\nprotocol = 28\nfilter = [\"p28-xdr-*\", \"!p28-rpc-*\"]\n",
+            Expect::RejectNaming("filter"),
+        ),
+        (
+            "a filter table inside a known section",
+            "version = 1\nprotocol = 28\n\n[policy.filter]\nskip = [\"p28-soroban-1\"]\n",
+            Expect::RejectNaming("filter"),
+        ),
+        // ---- refused by the grammar ---------------------------------------
+        (
+            "a table header defined twice",
+            "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\n\n[tests]\nrpc = false\n",
+            Expect::RejectAsMalformed,
+        ),
+        (
+            "an array of tables over an existing table",
+            "version = 1\nprotocol = 28\n\n[tests]\nxdr = true\n\n[[tests]]\nrpc = false\n",
+            Expect::RejectAsMalformed,
+        ),
+    ]
+}
+
+#[test]
+fn complex_sample_configurations_reach_the_expected_decision_on_both_sides() {
+    let schema = schema();
+    let mut problems = Vec::new();
+    for (name, text, expect) in complex_samples() {
+        // "Without panics" is part of the contract: run each side under
+        // `catch_unwind` so a panic is reported as this sample's failure.
+        let rust = std::panic::catch_unwind(|| rust_outcome(text))
+            .unwrap_or_else(|_| panic!("{name}: the loader panicked"));
+        let model = std::panic::catch_unwind(|| schema_outcome(text, &schema))
+            .unwrap_or_else(|_| panic!("{name}: the schema validator panicked"));
+        if let Some(miss) = parity_miss(name, text, &schema) {
+            problems.push(miss);
+            continue;
+        }
+        match expect {
+            Expect::Accept => {
+                if !rust.accepted() {
+                    problems.push(format!(
+                        "{name}: expected accept, both sides {}",
+                        rust.describe()
+                    ));
+                }
+            }
+            Expect::RejectNaming(key) => {
+                for (side, outcome) in [("loader", &rust), ("schema", &model)] {
+                    match outcome {
+                        Outcome::Accepted => {
+                            problems.push(format!("{name}: the {side} accepts it"))
+                        }
+                        Outcome::Rejected(reason) if !reason.contains(key) => {
+                            problems.push(format!(
+                                "{name}: the {side} refuses it without naming `{key}`: {reason}"
+                            ))
+                        }
+                        Outcome::Rejected(_) => {}
+                    }
+                }
+            }
+            Expect::RejectAsMalformed => {
+                if rust.accepted() || model.accepted() {
+                    problems.push(format!(
+                        "{name}: malformed TOML must be refused, loader would {} and schema would {}",
+                        rust.describe(),
+                        model.describe()
+                    ));
+                }
+                if toml::from_str::<toml::Value>(text).is_ok() {
+                    problems.push(format!("{name}: the sample is not actually malformed TOML"));
+                }
+            }
+        }
+    }
+    assert!(
+        problems.is_empty(),
+        "{} complex sample(s) misbehave:\n{}",
+        problems.len(),
+        problems.join("\n\n")
+    );
+}
+
+#[test]
+fn the_complex_samples_cover_both_decisions_and_every_rejection_kind() {
+    // Guards the sample list itself from degenerating: it must keep at least
+    // one accepted override, one array table, one profile and one filter.
+    let samples = complex_samples();
+    let accepted = samples
+        .iter()
+        .filter(|(_, _, expect)| *expect == Expect::Accept)
+        .count();
+    assert!(accepted >= 4, "only {accepted} accepted samples");
+    for key in [
+        "tests", "policy", "project", "profile", "profiles", "filter",
+    ] {
+        assert!(
+            samples
+                .iter()
+                .any(|(_, _, expect)| *expect == Expect::RejectNaming(key)),
+            "no sample is refused for `{key}`"
+        );
+    }
+    assert!(
+        samples.iter().any(|(_, text, _)| text.contains("[[")),
+        "no array-of-tables sample"
+    );
+    assert!(samples
+        .iter()
+        .any(|(_, _, expect)| *expect == Expect::RejectAsMalformed));
+}
+
+#[test]
+fn inline_dotted_and_header_spellings_of_the_same_overrides_load_identically() {
+    // Three spellings of one configuration: the loader must not care which
+    // TOML syntax a section was written in, and neither may the schema.
+    let header = "version = 1\nprotocol = 28\n\n\
+                  [project]\ntype = \"soroban\"\n\n\
+                  [tests]\nrpc = false\n\n\
+                  [policy]\nwarnings_are_failures = true\n";
+    let inline = "version = 1\nprotocol = 28\n\
+                  project = { type = \"soroban\" }\n\
+                  tests = { rpc = false }\n\
+                  policy = { warnings_are_failures = true }\n";
+    let dotted = "version = 1\nprotocol = 28\n\
+                  project.type = \"soroban\"\n\
+                  tests.rpc = false\n\
+                  policy.warnings_are_failures = true\n";
+
+    let schema = schema();
+    let loaded: Vec<ConfigFile> = [header, inline, dotted]
+        .iter()
+        .map(|text| {
+            assert!(
+                schema_outcome(text, &schema).accepted(),
+                "the schema accepts:\n{text}"
+            );
+            parse_config(text, Path::new(PATH))
+                .unwrap_or_else(|error| panic!("the loader accepts:\n{text}\n{error}"))
+        })
+        .collect();
+    assert_eq!(loaded[0], loaded[1], "inline tables load like headers");
+    assert_eq!(loaded[0], loaded[2], "dotted keys load like headers");
+
+    // The overrides took effect, and every key left out kept its default.
+    let config = &loaded[0];
+    let default = ConfigFile::default();
+    assert_eq!(
+        config.project.project_type,
+        ProjectTypeSetting::Explicit(canary_core::ProjectType::Soroban)
+    );
+    assert!(!config.tests.rpc, "the rpc override applied");
+    assert_eq!(config.tests.xdr, default.tests.xdr, "xdr kept its default");
+    assert_eq!(
+        config.tests.soroban, default.tests.soroban,
+        "soroban kept its default"
+    );
+    assert!(config.policy.warnings_are_failures);
+    assert_eq!(config.network, None);
+    assert_eq!(config.rpc_url, None);
+    assert_eq!(config.fixtures_dir, None);
+}
+
+#[test]
+fn unknown_keys_in_every_table_are_refused_under_deny_unknown_fields() {
+    // Strictness setting: every table is closed (`deny_unknown_fields` in the
+    // loader, `additionalProperties: false` in the schema). An unknown key
+    // written as a scalar, as an inline table or as an array table is refused
+    // in each of them, and the loader's diagnostic names the key and the
+    // `unknown field` rule so a user can find the typo.
+    let schema = schema();
+    for table in TABLES {
+        let prefix = if table.is_empty() {
+            String::new()
+        } else {
+            format!("[{table}]\n")
+        };
+        let header_for = |child: &str| {
+            if table.is_empty() {
+                child.to_string()
+            } else {
+                format!("{table}.{child}")
+            }
+        };
+        for (shape, body) in [
+            ("scalar", format!("{prefix}unexpected_key = 1\n")),
+            (
+                "inline table",
+                format!("{prefix}unexpected_key = {{ a = 1 }}\n"),
+            ),
+            (
+                "array of tables",
+                format!("[[{}]]\na = 1\n", header_for("unexpected_key")),
+            ),
+        ] {
+            let text = format!("version = 1\nprotocol = 28\n\n{body}");
+            let Outcome::Rejected(reason) = rust_outcome(&text) else {
+                panic!("{table:?} {shape}: the loader accepted an unknown key:\n{text}");
+            };
+            assert!(
+                reason.contains("unknown field") && reason.contains("unexpected_key"),
+                "{table:?} {shape}: the loader must name the unknown key, got: {reason}"
+            );
+            let Outcome::Rejected(reason) = schema_outcome(&text, &schema) else {
+                panic!("{table:?} {shape}: the schema accepted an unknown key:\n{text}");
+            };
+            assert!(
+                reason.contains("unexpected_key"),
+                "{table:?} {shape}: the schema must name the unknown key, got: {reason}"
+            );
+        }
+    }
+}

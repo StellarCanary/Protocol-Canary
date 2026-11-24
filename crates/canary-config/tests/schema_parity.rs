@@ -419,9 +419,9 @@ fn the_published_schema_is_draft_2020_12_for_configuration_version_1() {
 
 #[test]
 fn the_schema_uses_only_keywords_the_test_validator_interprets() {
-    // Walks schema positions only: each value of `properties`, the single
-    // `not`, and a schema-valued `additionalProperties` are themselves
-    // schemas, while key names, enums and required lists are data.
+    // Walks schema positions only: each value of `properties`, each `not`,
+    // each `allOf` branch, and a schema-valued `additionalProperties` are
+    // themselves schemas, while key names, enums and required lists are data.
     fn walk(node: &Value) {
         let Some(map) = node.as_object() else {
             return;
@@ -439,6 +439,7 @@ fn the_schema_uses_only_keywords_the_test_validator_interprets() {
                     .flat_map(|properties| properties.values())
                     .for_each(walk),
                 "not" => walk(value),
+                "allOf" => value.as_array().into_iter().flatten().for_each(walk),
                 "additionalProperties" if value.is_object() => walk(value),
                 _ => {}
             }

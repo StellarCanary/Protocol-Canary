@@ -29,9 +29,21 @@
       "pattern": "^https?://[A-Za-z0-9._~%:#/?@!$&'()*+,;=-]+$"
     },
     "fixtures_dir": {
-      "description": "The directory holding fixture files, relative to the project root, for example `fixtures` or `tests/fixtures`. Optional; absent means the CLI decides, cascading `--fixtures-dir` over the built-in `fixtures` default. Must be a non-empty relative path: segments of letters, digits, `.`, `_`, `~`, `%`, `+`, `-`, spaces and `/` or `\\` separators. It may not start with a separator and may not carry a drive prefix, so an absolute path is not a value for this key — name one with `--fixtures-dir`. The loader turns the string into an operating-system path without checking it, so a path the platform happens to accept but this file does not document is a runtime finding, not a schema one.",
+      "description": "The directory holding fixture files, relative to the project root, for example `fixtures` or `tests/fixtures`. Optional; absent means the CLI decides, cascading `--fixtures-dir` over the built-in `fixtures` default. Must be a non-empty relative path: segments of letters, digits, `.`, `_`, `~`, `%`, `+`, `-`, spaces and `/` or `\\` separators. It may not start with a separator and may not carry a drive prefix, so an absolute path is not a value for this key — name one with `--fixtures-dir`. It may not contain a parent-directory segment (`..`) or end in whitespace. The loader turns the string into an operating-system path without checking it, so a path the platform happens to accept but this file does not document is a runtime finding, not a schema one.",
       "type": "string",
-      "pattern": "^[A-Za-z0-9._~%+-][A-Za-z0-9 ._~%+\\-/\\\\]*$"
+      "pattern": "^[A-Za-z0-9._~%+-][A-Za-z0-9 ._~%+\\-/\\\\]*$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "^[A-Za-z0-9 ._~%+\\-/\\\\]*\\.\\.[A-Za-z0-9 ._~%+\\-/\\\\]*$"
+          }
+        },
+        {
+          "not": {
+            "pattern": "^[A-Za-z0-9 ._~%+\\-/\\\\]* $"
+          }
+        }
+      ]
     },
     "project": {
       "description": "How to classify the project under test. Optional; every member has a default, so an absent table means `type = \"auto\"`.",

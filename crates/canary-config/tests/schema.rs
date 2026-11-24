@@ -21,7 +21,7 @@
 //! [`every_pattern_is_anchored_and_inside_the_supported_subset`] fails if a
 //! schema pattern steps outside that subset, and
 //! [`the_published_patterns_accept_and_reject_the_documented_shapes`] runs the
-//! three published patterns against the values the descriptions name.
+//! published patterns against the values the descriptions name.
 //!
 //! A consumer that validates a configuration with a real JSON Schema validator
 //! should see the verdict these tests reach for the documented shapes; the
@@ -172,9 +172,9 @@ fn the_published_schema_is_draft_2020_12_for_configuration_version_1() {
 
 #[test]
 fn the_schema_uses_only_keywords_the_test_validator_interprets() {
-    // Walks schema positions only: each value of `properties`, each `not`, and
-    // a schema-valued `additionalProperties` are themselves schemas, while key
-    // names, enums and required lists are data.
+    // Walks schema positions only: each value of `properties`, each `not`,
+    // each `allOf` branch, and a schema-valued `additionalProperties` are
+    // themselves schemas, while key names, enums and required lists are data.
     fn walk(node: &Value) {
         let Some(map) = node.as_object() else {
             return;
@@ -192,6 +192,7 @@ fn the_schema_uses_only_keywords_the_test_validator_interprets() {
                     .flat_map(|properties| properties.values())
                     .for_each(walk),
                 "not" | "items" => walk(value),
+                "allOf" => value.as_array().into_iter().flatten().for_each(walk),
                 "additionalProperties" if value.is_object() => walk(value),
                 _ => {}
             }
@@ -206,8 +207,8 @@ fn every_pattern_is_anchored_and_inside_the_supported_subset() {
     schema_pattern::collect_patterns(&schema(), &mut patterns);
     assert_eq!(
         patterns.len(),
-        3,
-        "the three run settings are the string shapes this schema pins"
+        5,
+        "the three run settings plus fixtures_dir's two path-safety rules"
     );
     for text in &patterns {
         let pattern = schema_pattern::parse(text)
@@ -559,6 +560,9 @@ fn an_absolute_or_empty_fixtures_dir_is_rejected() {
         r"\\server\fixtures",
         r"C:\fixtures",
         " leading",
+        "../fixtures",
+        "a/../../b",
+        "fixtures ",
     ] {
         let error = validate_toml(&config_with("fixtures_dir", value))
             .expect_err("fixtures_dir is documented as a path relative to the project root");

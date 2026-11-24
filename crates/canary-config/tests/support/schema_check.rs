@@ -43,6 +43,7 @@ pub const SUPPORTED_KEYWORDS: &[&str] = &[
     "maximum",
     "pattern",
     "not",
+    "allOf",
 ];
 
 /// The JSON type name a schema `type` keyword compares against.
@@ -148,9 +149,12 @@ pub fn validate(instance: &Value, schema: &Value, path: &str) -> Result<(), Stri
             }
         }
     }
-    // A `not` subschema is a rejection: matching it is the violation. The
-    // configuration schema uses exactly one, for the rule that a file cannot
-    // turn off every surface at once.
+    if let Some(branches) = schema.get("allOf").and_then(Value::as_array) {
+        for branch in branches {
+            validate(instance, branch, path)?;
+        }
+    }
+    // A `not` subschema is a rejection: matching it is the violation.
     if let Some(negated) = schema.get("not") {
         if validate(instance, negated, path).is_ok() {
             return Err(format!("{path}: matches the schema's `not` constraint"));

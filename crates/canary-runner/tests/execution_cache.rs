@@ -887,6 +887,166 @@ async fn one_corrupt_entry_does_not_affect_another_fixture() {
     assert_eq!(request_count(&server).await, 3);
 }
 
+// --- capacity, eviction and entry accounting --------------------------------
+
+/// A plan of several XDR fixtures, so a run writes several cache entries
+/// without needing a server. Every fixture has a distinct id, and the id is
+/// part of the cache key, so no two of them share an entry.
+fn xdr_plan_of(ids: &[&str]) -> CompatibilityPlan {
+    let mut plan = CompatibilityPlan::default();
+    for id in ids {
+        plan.xdr
+            .push(xdr_fixture(id, "decode-success", VALID_STELLAR_VALUE));
+    }
+    plan
+}
+
+fn cache_sources(results: &[CompatibilityResult]) -> Vec<ResultSource> {
+    results.iter().map(|result| result.source).collect()
+}
+
+/// Removes the entry that belongs to `test_id`, the way a size-bounded cache
+/// evicts an entry, and returns the path it removed.
+fn evict_entry_for(cache: &TempCache, test_id: &str) -> PathBuf {
+    let path = cache
+        .entries()
+        .into_iter()
+        .find(|path| {
+            std::fs::read(path)
+                .ok()
+                .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .is_some_and(|entry| entry["result"]["test_id"] == test_id)
+        })
+        .unwrap_or_else(|| panic!("no cache entry for {test_id}"));
+    std::fs::remove_file(&path).expect("the entry is removable");
+    path
+}
+
+/// CF-01 section 6 gives the cache no capacity bound: XDR entries are kept
+/// until something removes them, there is no LRU or size limit, and a
+/// directory holding many entries must not silently drop any of them.
+/// Dropping one would turn a replay into a live execution without saying so.
+#[tokio::test]
+async fn every_entry_is_retained_past_a_small_entry_count_and_replays() {
+    let cache = TempCache::new("xdr-many-entries");
+    let ids = ["many-a", "many-b", "many-c", "many-d", "many-e", "many-f"];
+    let plan = xdr_plan_of(&ids);
+
+    let first = execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(first.len(), ids.len());
+    assert_eq!(
+        cache.entries().len(),
+        ids.len(),
+        "one entry per fixture's key is written"
+    );
+    assert!(
+        first
+            .iter()
+            .all(|result| result.source == ResultSource::Live),
+        "the first run executes every fixture"
+    );
+
+    // The second run, with more entries than a small bound would allow,
+    // still finds every one: nothing was evicted behind the runner's back.
+    let second = execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(
+        cache_sources(&second),
+        vec![ResultSource::Cache; ids.len()],
+        "every entry remains a hit"
+    );
+    assert_eq!(cache.entries().len(), ids.len());
+    assert_eq!(
+        second.iter().map(outcome).collect::<Vec<_>>(),
+        first.iter().map(outcome).collect::<Vec<_>>(),
+        "a replay reproduces each recorded outcome"
+    );
+}
+
+/// When an entry is gone (evicted by whatever manages the directory's size),
+/// only that fixture misses and re-executes; its neighbours keep hitting.
+/// The miss is a live result, and the re-execution recreates the entry.
+#[tokio::test]
+async fn an_evicted_entry_misses_while_its_neighbours_still_hit() {
+    let cache = TempCache::new("xdr-evicted-neighbour");
+    let ids = ["evict-a", "evict-b", "evict-c"];
+    let plan = xdr_plan_of(&ids);
+
+    execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(cache.entries().len(), ids.len());
+
+    evict_entry_for(&cache, "evict-b");
+    assert_eq!(cache.entries().len(), ids.len() - 1);
+
+    let results = execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(results.len(), ids.len());
+
+    let evicted = results
+        .iter()
+        .find(|result| result.test_id == "evict-b")
+        .expect("the evicted fixture is still executed and reported");
+    assert_eq!(
+        evicted.source,
+        ResultSource::Live,
+        "an evicted entry must miss, not replay"
+    );
+    assert_eq!(evicted.status, Status::Pass);
+
+    let survivors: Vec<&CompatibilityResult> = results
+        .iter()
+        .filter(|result| result.test_id != "evict-b")
+        .collect();
+    assert_eq!(survivors.len(), 2);
+    assert!(
+        survivors
+            .iter()
+            .all(|result| result.source == ResultSource::Cache),
+        "the remaining entries still hit: {:?}",
+        cache_sources(&results)
+    );
+    assert_eq!(
+        cache.entries().len(),
+        ids.len(),
+        "the miss re-created the evicted fixture's entry"
+    );
+}
+
+/// Explicit eviction removes every entry: the directory and its accounted
+/// size go to zero, and the next run executes every fixture live instead of
+/// replaying an entry that survived the clear.
+#[tokio::test]
+async fn clearing_a_full_cache_evicts_every_entry_and_forces_live_runs() {
+    let cache = TempCache::new("xdr-clear-many");
+    let ids = ["clear-a", "clear-b", "clear-c", "clear-d", "clear-e"];
+    let plan = xdr_plan_of(&ids);
+
+    execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(cache.entries().len(), ids.len());
+    let size_with_entries = cache.store(default_policy()).cache_size().unwrap();
+    assert!(
+        size_with_entries > 0,
+        "a populated cache accounts for its entries"
+    );
+
+    cache.store(default_policy()).clear().unwrap();
+    assert!(
+        cache.entries().is_empty(),
+        "clear evicts every entry, not just the oldest"
+    );
+    assert_eq!(
+        cache.store(default_policy()).cache_size().unwrap(),
+        0,
+        "an empty cache accounts for zero bytes"
+    );
+
+    let after = execute(&plan, &context(cache.store(default_policy())), NO_ENDPOINT).await;
+    assert_eq!(
+        cache_sources(&after),
+        vec![ResultSource::Live; ids.len()],
+        "after eviction every fixture is a miss"
+    );
+    assert_eq!(cache.entries().len(), ids.len());
+}
+
 /// The Soroban requests counted above are `simulateTransaction` calls: a
 /// mock that only answers that method is enough for a passing run.
 #[tokio::test]

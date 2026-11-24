@@ -272,6 +272,18 @@ test("findings cards expose surface, id, status, timing and a collapsible detail
   assert.ok(!stub.byId("skipped-section").hidden);
 });
 
+test("a null fixture ID renders with the test ID as its accessible identity", async () => {
+  const stub = dom();
+  await loaded(stub, {
+    results: [result({ testId: "fallback-id", fixtureId: null })],
+    skipped: [],
+  });
+
+  const identity = stub.byId("ready-list").children[0].children[2];
+  assert.equal(identity.textContent, "fallback-id");
+  assert.equal(identity.getAttribute("aria-label"), "Show detail for xdr/fallback-id");
+});
+
 test("results are grouped under readiness headings with live counts and formatted timings", async () => {
   const stub = dom();
   await loaded(stub, {

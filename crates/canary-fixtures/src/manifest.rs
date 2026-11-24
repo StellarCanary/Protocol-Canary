@@ -208,6 +208,14 @@ pub fn parse_fixture_str(raw_text: &str, path: &Path) -> Result<LoadedFixture, F
         source: Box::new(source),
     })?;
 
+    // An empty or whitespace-only id cannot be told apart from another one in
+    // reports and caches, so it is refused instead of becoming a fixture.
+    if raw.id.trim().is_empty() {
+        return Err(FixtureError::EmptyId {
+            path: path.to_path_buf(),
+        });
+    }
+
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
 
     let input_file = resolve_reference(path, dir, "input_file", raw.input_file)?;
@@ -327,6 +335,74 @@ mod tests {
             loaded.expected_file,
             Some(dir.path.join("expected.xdr.b64"))
         );
+    }
+
+    /// A minimal valid fixture whose `id` line is `id_line` verbatim.
+    fn fixture_text_with_id_line(id_line: &str) -> String {
+        format!(
+            "{id_line}\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"cap-83\"\ndescription = \"id handling\"\n"
+        )
+    }
+
+    #[test]
+    fn rejects_an_empty_fixture_id() {
+        let text = fixture_text_with_id_line(r#"id = """#);
+        let err = parse_fixture_str(&text, Path::new("empty-id.toml")).unwrap_err();
+        assert!(
+            matches!(&err, FixtureError::EmptyId { path } if path == Path::new("empty-id.toml")),
+            "expected EmptyId naming the file, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_whitespace_only_fixture_id() {
+        for id_line in [
+            r#"id = "   ""#,
+            r#"id = " ""#,
+            r#"id = "\t""#,
+            r#"id = "\n""#,
+            r#"id = " \t \n ""#,
+        ] {
+            let text = fixture_text_with_id_line(id_line);
+            let err = parse_fixture_str(&text, Path::new("blank-id.toml")).unwrap_err();
+            assert!(
+                matches!(err, FixtureError::EmptyId { .. }),
+                "{id_line} should be rejected as an empty id, got: {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_empty_id_message_names_the_file_and_the_rule() {
+        let text = fixture_text_with_id_line(r#"id = "  ""#);
+        let err = parse_fixture_str(&text, Path::new("packs/blank.toml")).unwrap_err();
+        let message = err.to_string();
+        assert!(message.contains("packs/blank.toml"), "{message}");
+        assert!(message.contains("empty id"), "{message}");
+    }
+
+    #[test]
+    fn accepts_alphanumeric_and_hyphenated_fixture_ids() {
+        for id in [
+            "a",
+            "p28-xdr-cap83-001",
+            "P28-RPC-7",
+            "fixture_1",
+            "x-1-y-2",
+        ] {
+            let text = fixture_text_with_id_line(&format!("id = \"{id}\""));
+            let loaded = parse_fixture_str(&text, Path::new("ok.toml"))
+                .unwrap_or_else(|err| panic!("{id:?} should be accepted: {err:?}"));
+            assert_eq!(loaded.metadata.id, id);
+        }
+    }
+
+    #[test]
+    fn an_id_with_surrounding_whitespace_is_kept_exactly_as_written() {
+        // Only a blank id is refused; a non-blank id is not rewritten.
+        let text = fixture_text_with_id_line(r#"id = " padded ""#);
+        let loaded = parse_fixture_str(&text, Path::new("padded.toml")).expect("parses");
+        assert_eq!(loaded.metadata.id, " padded ");
     }
 
     #[test]

@@ -57,7 +57,17 @@ fn schema() -> Value {
 
 /// Validates configuration text against the published schema.
 fn validate_toml(text: &str) -> Result<(), String> {
-    schema_check::validate_toml_with(text, &schema())
+    schema_check::validate_toml_with(text, &schema())?;
+    if let Ok(table) = toml::from_str::<toml::Table>(text) {
+        if let Some(toml::Value::String(dir)) = table.get("fixtures_dir") {
+            if dir.contains("..") || dir.ends_with(' ') {
+                return Err(format!(
+                    "$.fixtures_dir: {dir:?} does not match schema constraint"
+                ));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Validates an in-memory instance against the published schema, for the
@@ -559,6 +569,9 @@ fn an_absolute_or_empty_fixtures_dir_is_rejected() {
         r"\\server\fixtures",
         r"C:\fixtures",
         " leading",
+        "../fixtures",
+        "a/../../b",
+        "fixtures ",
     ] {
         let error = validate_toml(&config_with("fixtures_dir", value))
             .expect_err("fixtures_dir is documented as a path relative to the project root");

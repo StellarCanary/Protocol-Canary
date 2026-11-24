@@ -259,7 +259,10 @@ fn a_cache_directory_inside_a_read_only_parent_is_a_configuration_error() {
     // unwritable directory behind for `TempProject::drop`.
     std::fs::set_permissions(&readonly, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-    assert!(!readonly.join("cache").exists(), "the cache directory was not created");
+    assert!(
+        !readonly.join("cache").exists(),
+        "the cache directory was not created"
+    );
     assert_eq!(
         output.status.code(),
         Some(2),

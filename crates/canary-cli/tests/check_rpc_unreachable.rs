@@ -43,11 +43,8 @@ fn closed_port_uri() -> String {
     format!("http://127.0.0.1:{port}")
 }
 
-/// The acceptance case for #274: an unreachable endpoint must be reported as
-/// an execution error, not silently treated as a passing or skipped run.
-#[test]
-fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
-    let dir = TempProject::new("check-rpc-unreachable");
+fn unreachable_project(prefix: &str) -> TempProject {
+    let dir = TempProject::new(prefix);
     dir.write(".stellar-canary.toml", UNREACHABLE_CONFIG);
     dir.write(
         "fixtures/p28-rpc-1.toml",
@@ -63,6 +60,19 @@ fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
          field = \"passphrase\"\n\
          expected_type = \"string\"\n",
     );
+    dir
+}
+
+fn mentions_transport_failure(diagnostic: &str) -> bool {
+    let lowered = diagnostic.to_lowercase();
+    lowered.contains("connection refused") || lowered.contains("transport error")
+}
+
+/// The acceptance case for #274: an unreachable endpoint must be reported as
+/// an execution error, not silently treated as a passing or skipped run.
+#[test]
+fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
+    let dir = unreachable_project("check-rpc-unreachable");
 
     let output = run_in(&dir.path, &["check", "--rpc-url", &closed_port_uri()]);
 
@@ -104,4 +114,45 @@ fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
     assert!(err.contains("Hint:"), "stderr: {err}");
     assert!(err.contains("standalone node"), "stderr: {err}");
     assert!(err.contains("reachable"), "stderr: {err}");
+}
+
+/// The same unreachable endpoint must produce a CF-01 error report for CI
+/// consumers: exit 3, an overall `error` status, and one errored fixture.
+#[test]
+fn check_against_an_unreachable_endpoint_emits_a_cf01_error_report_in_json() {
+    let dir = unreachable_project("check-rpc-unreachable-json");
+    let output = run_in(
+        &dir.path,
+        &["check", "--json", "--rpc-url", &closed_port_uri()],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "an unreachable endpoint must exit with the execution-error code; \
+         stdout: {} | stderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output))
+        .expect("check --json must print a CF-01 JSON report even on an execution error");
+    assert_eq!(report["schemaVersion"], 1);
+    assert_eq!(report["targetProtocol"], 28);
+    assert_eq!(report["status"], "error");
+    assert_eq!(report["counts"]["errors"], 1);
+    assert_eq!(report["counts"]["passed"], 0);
+
+    let results = report["results"]
+        .as_array()
+        .expect("CF-01 results must be an array");
+    assert_eq!(results.len(), 1);
+    let result = &results[0];
+    assert_eq!(result["testId"], "p28-rpc-1");
+    assert_eq!(result["status"], "error");
+    let diagnostic = format!("{} {}", result["summary"], result["details"]);
+    assert!(
+        mentions_transport_failure(&diagnostic),
+        "the errored fixture must explain the unreachable endpoint: {diagnostic}"
+    );
 }

@@ -43,15 +43,25 @@ test("validation reports the first reason for each rule", () => {
     [report({ toolVersion: 3 }), /toolVersion/],
     // schemaVersion check was removed from validate(); viewer handles it with a banner
     [report({ schemaVersion: 2 }), /pass/],
-    // targetProtocol must be a number, not a string
-    [report({ targetProtocol: 28 }), /targetProtocol/],
+    [report({ targetProtocol: "28" }), /targetProtocol/],
+    [report({ targetProtocol: 0 }), /targetProtocol must be a positive integer/],
     [report({ project: null }), /project must be an object/],
     [report({ status: "great" }), /status must be one of/],
     [report({ results: {} }), /results must be an array/],
     [report({ results: [{}] }), /results\[0\]\.testId/],
+    [report({ results: [result({ protocol: 0 })] }), /protocol must be a positive integer/],
     [report({ results: [result({ surface: "evm" })] }), /surface must be one of/],
     [report({ results: [result({ status: "meh" })] }), /status must be one of/],
     [report({ results: [result({ durationMs: -1 })] }), /durationMs/],
+    [report({ results: [result({ durationMs: 1.5 })] }), /durationMs must be a non-negative integer/],
+    [
+      report({ network: { name: "testnet", observedProtocol: 0 } }),
+      /observedProtocol must be a positive integer/,
+    ],
+    [
+      report({ network: { name: "testnet", observedProtocol: null } }),
+      /observedProtocol must be a positive integer/,
+    ],
   ];
   for (const [input, pattern] of cases) {
     const out = V.validate(input);
@@ -67,6 +77,21 @@ test("validation reports the first reason for each rule", () => {
       assert.match(out.reason, pattern);
     }
   }
+});
+
+test("null fixture IDs use testId for accepted and duplicate result identities", () => {
+  const withNullFixtureId = report({
+    results: [result({ testId: "fallback", fixtureId: null })],
+  });
+  assert.equal(V.validate(withNullFixtureId).ok, true);
+
+  const duplicateFallback = report({
+    results: [
+      result({ testId: "fallback", fixtureId: null }),
+      result({ testId: "fallback" }),
+    ],
+  });
+  assert.match(V.validate(duplicateFallback).reason, /repeats the result identity xdr\/fallback/);
 });
 
 test("duplicate result identities are rejected, across results and skipped", () => {

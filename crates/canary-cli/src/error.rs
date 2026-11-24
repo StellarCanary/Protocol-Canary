@@ -47,6 +47,12 @@ pub fn hint_for(message: &str) -> Option<&'static str> {
         );
     }
 
+    if contains_any(&text, &["fixtures directory", "fixture directory"]) {
+        return Some(
+            "check the path given to --fixtures-dir (or `fixtures_dir` in .stellar-canary.toml) points at a directory that exists, or run `stellar-canary fixtures` to confirm the fixture pack is present",
+        );
+    }
+
     if contains_any(
         &text,
         &[
@@ -176,6 +182,30 @@ mod tests {
         assert!(hint.contains(".stellar-canary.toml"), "{hint}");
         assert!(hint.contains("--config"), "{hint}");
         assert!(hint.contains("inspect"), "{hint}");
+    }
+
+    #[test]
+    fn a_missing_fixtures_directory_gets_a_path_or_pack_hint() {
+        for message in [
+            "configuration error: fixtures directory fixtures does not exist or is not a directory",
+            "fixture load error: failed to read fixture directory ./fixtures: No such file or directory (os error 2)",
+        ] {
+            let hint = hint_for(message)
+                .unwrap_or_else(|| panic!("a missing fixture directory needs a hint: {message}"));
+            assert!(hint.contains("--fixtures-dir"), "{hint}");
+            assert!(hint.contains("stellar-canary fixtures"), "{hint}");
+        }
+
+        // The error line itself is never rewritten by adding the hint.
+        let rendered = format_error(&err(
+            "fixtures directory fixtures does not exist or is not a directory",
+        ));
+        assert!(
+            rendered.starts_with(
+                "error: configuration error: fixtures directory fixtures does not exist or is not a directory\nHint: "
+            ),
+            "{rendered}"
+        );
     }
 
     #[test]

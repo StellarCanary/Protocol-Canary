@@ -189,6 +189,71 @@ fn overriding_the_fixtures_dir_still_verifies_against_the_pin() {
     assert!(stdout(&output).contains(&ci_digest));
 }
 
+/// Neither a crash nor an unhandled backtrace is an acceptable way to reject
+/// a bad `--fixtures-dir`: the CLI must diagnose the path and exit normally.
+fn assert_no_panic(output: &std::process::Output) {
+    let text = stderr(output);
+    assert!(
+        !text.contains("panicked at"),
+        "the CLI must not panic: {text}"
+    );
+    assert!(
+        !text.contains("stack backtrace"),
+        "the CLI must not print an unhandled backtrace: {text}"
+    );
+    assert!(
+        output.status.code().is_some(),
+        "the process must exit normally"
+    );
+}
+
+/// A `--fixtures-dir` that does not exist cannot be digested, so the pin does
+/// not hold: verification fails with exit code 1, naming the missing path on
+/// stderr rather than panicking or claiming success.
+#[test]
+fn a_missing_fixtures_dir_fails_verification_without_panicking() {
+    let dir = TempProject::new("lock-verify-missing-dir");
+    let digest = make_pack(&dir);
+    write_lock(&dir, &digest);
+
+    let output = run_in(
+        &dir.path,
+        &["lock", "verify", "--fixtures-dir", "no-such-fixtures"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("Verified"), "{}", stdout(&output));
+
+    let text = stderr(&output);
+    assert!(text.contains("no-such-fixtures"), "{text}");
+    assert!(text.contains("could not be verified"), "{text}");
+    assert!(text.contains("failed to read"), "{text}");
+    assert_no_panic(&output);
+}
+
+/// A regular file passed as `--fixtures-dir` is not a pack: it cannot be
+/// walked or digested, so verification fails with exit code 1 and a clear
+/// diagnostic instead of a panic or a misleading "verified" outcome.
+#[test]
+fn a_regular_file_as_fixtures_dir_fails_verification_without_panicking() {
+    let dir = TempProject::new("lock-verify-file-dir");
+    let digest = make_pack(&dir);
+    write_lock(&dir, &digest);
+    dir.write("not-a-pack", "this is a file, not a fixture pack\n");
+
+    let output = run_in(
+        &dir.path,
+        &["lock", "verify", "--fixtures-dir", "not-a-pack"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stdout(&output));
+    assert!(!stdout(&output).contains("Verified"), "{}", stdout(&output));
+
+    let text = stderr(&output);
+    assert!(text.contains("not-a-pack"), "{text}");
+    assert!(text.contains("could not be verified"), "{text}");
+    assert!(text.contains("failed to read"), "{text}");
+    assert_no_panic(&output);
+}
+
 /// A `--project-root` that does not exist is a configuration error (exit
 /// code 2): the run could not start, which is different from failing.
 #[test]

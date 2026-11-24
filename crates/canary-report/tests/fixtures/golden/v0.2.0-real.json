@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "v0.2.0",
+    "type": "unknown"
+  },
+  "status": "pass",
+  "counts": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 2
+  },
+  "results": [
+    {
+      "testId": "p28-xdr-cap83-empty-tx-set",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "StellarValue round-tripped byte-for-byte",
+      "durationMs": 0,
+      "fixtureId": "p28-xdr-cap83-empty-tx-set",
+      "source": "live"
+    },
+    {
+      "testId": "p28-xdr-cap85-external-ref-malformed",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "ContractExecutable was correctly rejected",
+      "details": "failed to fill whole buffer",
+      "durationMs": 0,
+      "fixtureId": "p28-xdr-cap85-external-ref-malformed",
+      "source": "live"
+    },
+    {
+      "testId": "p28-xdr-cap85-external-ref-roundtrip",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "ContractExecutable round-tripped byte-for-byte",
+      "durationMs": 0,
+      "fixtureId": "p28-xdr-cap85-external-ref-roundtrip",
+      "source": "live"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "p28-rpc-network",
+      "surface": "rpc",
+      "reason": "rpc checks are disabled in configuration"
+    },
+    {
+      "fixtureId": "p28-soroban-native-asset-name",
+      "surface": "soroban",
+      "reason": "soroban checks are disabled in configuration"
+    }
+  ],
+  "git": {
+    "commit": null,
+    "branch": null,
+    "isDirty": false
+  },
+  "verbose": false
+}

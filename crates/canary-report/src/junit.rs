@@ -86,7 +86,23 @@ fn seconds(time_ms: u64) -> String {
     format!("{}.{:03}", time_ms / 1000, time_ms % 1000)
 }
 
-/// Escapes the five XML entities that may appear in element text.
+/// Returns true if `c` is a valid character under the XML 1.0 specification.
+///
+/// Under XML 1.0 (Fifth Edition, section 2.2):
+/// `Char ::= #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`
+#[inline]
+fn is_xml_10_char(c: char) -> bool {
+    matches!(
+        c as u32,
+        0x09 | 0x0A | 0x0D | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF
+    )
+}
+
+/// Escapes XML markup characters (`&`, `<`, `>`) and encodes characters forbidden
+/// by XML 1.0 into a readable hexadecimal representation (`\u{001B}`).
+///
+/// Permitted XML 1.0 whitespace characters (TAB U+0009, LF U+000A, CR U+000D)
+/// and characters in legal Unicode scalar ranges are preserved directly.
 fn escape_text(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     for c in text.chars() {
@@ -94,18 +110,33 @@ fn escape_text(text: &str) -> String {
             '&' => out.push_str("&amp;"),
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
-            _ => out.push(c),
+            c if is_xml_10_char(c) => out.push(c),
+            c => {
+                let _ = write!(out, "\\u{{{:04X}}}", c as u32);
+            }
         }
     }
     out
 }
 
-/// Escapes everything [`escape_text`] escapes plus the attribute-delimiter
-/// quotes, so a value can never break out of its quotes.
+/// Escapes everything [`escape_text`] escapes plus attribute-delimiter
+/// quotes (`"` as `&quot;`, `'` as `&apos;`), ensuring the value cannot break
+/// out of its delimiter quotes and contains only valid XML 1.0 characters.
 fn escape_attribute(text: &str) -> String {
-    let mut out = escape_text(text);
-    out.reserve(text.len());
-    out = out.replace('"', "&quot;").replace('\'', "&apos;");
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&apos;"),
+            c if is_xml_10_char(c) => out.push(c),
+            c => {
+                let _ = write!(out, "\\u{{{:04X}}}", c as u32);
+            }
+        }
+    }
     out
 }
 
@@ -354,6 +385,43 @@ mod tests {
         assert_eq!(
             JUnitReporter::render(&report),
             JUnitReporter::render(&report)
+        );
+    }
+
+    #[test]
+    fn forbidden_control_characters_are_escaped_to_unicode_representation() {
+        let text = "esc: \x1b, nul: \0, bell: \x07, bs: \x08, vt: \x0b, ff: \x0c, us: \x1f";
+        let escaped = escape_text(text);
+        assert_eq!(
+            escaped,
+            "esc: \\u{001B}, nul: \\u{0000}, bell: \\u{0007}, bs: \\u{0008}, vt: \\u{000B}, ff: \\u{000C}, us: \\u{001F}"
+        );
+    }
+
+    #[test]
+    fn noncharacters_fffe_and_ffff_are_escaped() {
+        let text = "bad: \u{FFFE} and \u{FFFF}";
+        let escaped = escape_text(text);
+        assert_eq!(escaped, "bad: \\u{FFFE} and \\u{FFFF}");
+    }
+
+    #[test]
+    fn whitespace_tab_lf_cr_and_standard_unicode_are_preserved() {
+        let text = "tab:\t, newline:\n, cr:\r, space: , unicode: 🦀 & 🚀";
+        let escaped = escape_text(text);
+        assert_eq!(
+            escaped,
+            "tab:\t, newline:\n, cr:\r, space: , unicode: 🦀 &amp; 🚀"
+        );
+    }
+
+    #[test]
+    fn attribute_escaping_handles_quotes_metacharacters_and_control_chars() {
+        let text = "quote: \"hello\", apostrophe: 'world', esc: \x1b, tag: <bad>";
+        let escaped = escape_attribute(text);
+        assert_eq!(
+            escaped,
+            "quote: &quot;hello&quot;, apostrophe: &apos;world&apos;, esc: \\u{001B}, tag: &lt;bad&gt;"
         );
     }
 }

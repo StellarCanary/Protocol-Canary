@@ -416,6 +416,13 @@ pub trait RpcClient {
     ) -> impl std::future::Future<Output = Result<serde_json::Value, RpcError>> + Send;
 }
 
+/// Ceiling applied to a single backoff wait when a policy is built through
+/// [`RetryPolicy::from_retries`] (30 seconds).
+///
+/// It only matters for policies with many retries: the exponential step from a
+/// 200 ms base reaches it at attempt 8.
+pub const DEFAULT_MAX_RETRY_DELAY: Duration = Duration::from_secs(30);
+
 /// Bounded retry policy for transient failures.
 ///
 /// Only transport errors, timeouts, and rate limiting are retried;
@@ -424,7 +431,12 @@ pub trait RpcClient {
 #[derive(Debug, Clone, Copy)]
 pub struct RetryPolicy {
     pub max_attempts: u32,
+    /// The first backoff wait; each further wait doubles it (see
+    /// [`RetryPolicy::delay_for_attempt`]).
     pub base_delay: Duration,
+    /// Upper bound on any single backoff wait, so delayed growth stops at a
+    /// ceiling instead of growing without bound.
+    pub max_delay: Duration,
 }
 
 impl Default for RetryPolicy {
@@ -432,6 +444,7 @@ impl Default for RetryPolicy {
         RetryPolicy {
             max_attempts: 3,
             base_delay: Duration::from_millis(200),
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         }
     }
 }
@@ -447,9 +460,10 @@ impl RetryPolicy {
     /// `--rpc-max-retries 0` promises. The count saturates instead of
     /// overflowing at `u32::MAX`.
     ///
-    /// `base_delay` is the linear-backoff base: attempt *n* waits `n *
-    /// base_delay` before the next attempt (see [`HttpRpcClient::with_retry_policy`]
-    /// for the timing model).
+    /// `base_delay` is the exponential-backoff base: the wait after attempt
+    /// *n* is `base_delay * 2^(n-1)`, capped at
+    /// [`DEFAULT_MAX_RETRY_DELAY`] (see [`RetryPolicy::delay_for_attempt`] and
+    /// [`HttpRpcClient::with_retry_policy`] for the timing model).
     ///
     /// # Examples
     ///
@@ -471,7 +485,40 @@ impl RetryPolicy {
         RetryPolicy {
             max_attempts: max_retries.saturating_add(1),
             base_delay,
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         }
+    }
+
+    /// The wait applied after failed attempt number `attempt`, before the next
+    /// attempt is made.
+    ///
+    /// The wait grows exponentially — `base_delay * 2^(attempt - 1)` — and is
+    /// clamped to [`RetryPolicy::max_delay`], so it never exceeds the
+    /// configured ceiling. `attempt` is 1-based, as the retry loop counts it;
+    /// `attempt == 0` is treated as the first attempt. The multiplication
+    /// saturates rather than overflowing, so a very large `base_delay` cannot
+    /// panic here.
+    ///
+    /// This is a pure function of the policy and the attempt number: no state
+    /// carries over between calls, which is what makes a new [`RpcClient`]
+    /// call start again from `base_delay`.
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use canary_rpc::RetryPolicy;
+    ///
+    /// let policy = RetryPolicy::from_retries(4, Duration::from_millis(100));
+    /// assert_eq!(policy.delay_for_attempt(1), Duration::from_millis(100));
+    /// assert_eq!(policy.delay_for_attempt(2), Duration::from_millis(200));
+    /// assert_eq!(policy.delay_for_attempt(3), Duration::from_millis(400));
+    /// ```
+    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let exponent = attempt.saturating_sub(1);
+        // `1 << exponent` overflows past 31; saturating there is harmless
+        // because `max_delay` is far below `base_delay * 2^31` in any
+        // realistic policy.
+        let factor = 1u32.checked_shl(exponent).unwrap_or(u32::MAX);
+        self.base_delay.saturating_mul(factor).min(self.max_delay)
     }
 }
 
@@ -539,8 +586,8 @@ impl HttpRpcClient {
     /// When the deadline elapses, `reqwest` reports a timeout error, which
     /// this crate maps to [`RpcError::Timeout`]. That is a retryable error,
     /// so a call may still be retried up to
-    /// [`RetryPolicy::max_attempts`] times (with a linear
-    /// `base_delay * attempt` backoff) before the run sees
+    /// [`RetryPolicy::max_attempts`] times (with an exponential
+    /// `base_delay * 2^(attempt-1)` backoff) before the run sees
     /// [`RpcError::Timeout`] — each attempt gets the full `timeout`, so the
     /// worst case for one call is `timeout * max_attempts` plus backoff.
     /// Callers should therefore treat `Timeout` as "this run could not
@@ -565,6 +612,7 @@ impl HttpRpcClient {
     ///     .with_retry_policy(RetryPolicy {
     ///         max_attempts: 5,
     ///         base_delay: Duration::from_millis(200),
+    ///         max_delay: Duration::from_secs(2),
     ///     });
     /// ```
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -598,12 +646,14 @@ impl HttpRpcClient {
     /// # Timing
     ///
     /// At most `max_attempts` requests are made in total, and the wait
-    /// between attempt *n* and attempt *n+1* is `base_delay * n` — a linear
-    /// backoff, so there is no delay after the final attempt and the total
-    /// time spent sleeping is `base_delay * n(n-1)/2`. Combined with a
-    /// per-request deadline, the worst-case wall time for one call is
-    /// roughly `max_attempts * timeout` plus that backoff, which is worth
-    /// keeping in mind when both values are configured.
+    /// between attempt *n* and attempt *n+1* is `base_delay * 2^(n-1)` — an
+    /// exponential backoff clamped to [`RetryPolicy::max_delay`], so there is
+    /// no delay after the final attempt, the delay never grows without bound,
+    /// and the total time spent sleeping is bounded by
+    /// `max_delay * (max_attempts - 1)`. Combined with a per-request deadline,
+    /// the worst-case wall time for one call is roughly
+    /// `max_attempts * timeout` plus that backoff, which is worth keeping in
+    /// mind when both values are configured.
     ///
     /// # Failure conditions
     ///
@@ -625,12 +675,14 @@ impl HttpRpcClient {
     ///
     /// use canary_rpc::{HttpRpcClient, RetryPolicy};
     ///
-    /// // Up to five attempts, backing off 100ms, 200ms, 300ms, 400ms.
+    /// // Up to five attempts, backing off 100ms, 200ms, 400ms, 800ms
+    /// // (never more than the one-second ceiling).
     /// let _client = HttpRpcClient::new("https://soroban-testnet.stellar.org")
     ///     .with_timeout(Duration::from_secs(5))
     ///     .with_retry_policy(RetryPolicy {
     ///         max_attempts: 5,
     ///         base_delay: Duration::from_millis(100),
+    ///         max_delay: Duration::from_secs(1),
     ///     });
     /// ```
     pub fn with_retry_policy(mut self, policy: RetryPolicy) -> Self {
@@ -704,7 +756,7 @@ impl HttpRpcClient {
             match outcome {
                 Ok(value) => return Ok(value),
                 Err(err) if is_retryable(&err) && attempt < self.retry_policy.max_attempts => {
-                    tokio::time::sleep(self.retry_policy.base_delay * attempt).await;
+                    tokio::time::sleep(self.retry_policy.delay_for_attempt(attempt)).await;
                 }
                 Err(RpcError::Timeout { method, .. }) => {
                     return Err(RpcError::Timeout {
@@ -1636,6 +1688,7 @@ mod tests {
         let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 2,
             base_delay: Duration::from_millis(1),
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         });
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::Transport { .. }));
@@ -1653,6 +1706,7 @@ mod tests {
         let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 1,
             base_delay: Duration::from_millis(1),
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         });
         let err = client.get_network().await.unwrap_err();
         assert!(matches!(err, RpcError::Transport { .. }));
@@ -1696,6 +1750,7 @@ mod tests {
         let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 3,
             base_delay: Duration::from_millis(1),
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         });
 
         let info = client
@@ -1742,6 +1797,7 @@ mod tests {
         let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
             max_attempts: 3,
             base_delay: Duration::from_millis(1),
+            max_delay: DEFAULT_MAX_RETRY_DELAY,
         });
         let info = client.get_network().await.expect("retry succeeds");
         assert_eq!(info.protocol_version, 28);

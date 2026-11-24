@@ -216,7 +216,12 @@ fn worktree_resolves_relative_gitdir_pointer() {
         "git writes an absolute gitdir"
     );
 
-    let relative_target = relative_path(&wt_path, &absolute_target);
+    // macOS exposes the temp directory through `/var`, while Git may write
+    // the same target under its canonical `/private/var` path.
+    let relative_target = relative_path(
+        &wt_path.canonicalize().unwrap(),
+        &absolute_target.canonicalize().unwrap(),
+    );
     assert!(
         relative_target.is_relative(),
         "the rewritten pointer must be relative"

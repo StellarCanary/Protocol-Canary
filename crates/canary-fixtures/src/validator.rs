@@ -123,6 +123,86 @@ mod tests {
         assert!(validate(&[f]).is_ok());
     }
 
+    /// Creates `link` pointing at `target`. Returns `false` when the platform
+    /// refuses (Windows without the symlink privilege), so the caller can skip
+    /// instead of failing for a reason unrelated to the validator.
+    fn try_symlink(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (target, link);
+            false
+        }
+    }
+
+    #[test]
+    fn rejects_symbolic_link_referenced_payload() {
+        let dir = crate::test_support::temp_dir("validator-symlink-input");
+        let target = dir.path.join("target.bin");
+        std::fs::write(&target, b"data").unwrap();
+        let link = dir.path.join("link.bin");
+        if !try_symlink(&target, &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.input_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        match err {
+            FixtureError::SymbolicLink { path } => assert_eq!(path, link),
+            other => panic!("expected SymbolicLink naming the link, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_symbolic_link_referenced_expected_payload() {
+        let dir = crate::test_support::temp_dir("validator-symlink-expected");
+        let target = dir.path.join("target.bin");
+        std::fs::write(&target, b"data").unwrap();
+        let link = dir.path.join("link.bin");
+        if !try_symlink(&target, &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.expected_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        match err {
+            FixtureError::SymbolicLink { path } => assert_eq!(path, link),
+            other => panic!("expected SymbolicLink naming the link, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dangling_symbolic_link_is_reported_as_a_link_not_a_missing_file() {
+        let dir = crate::test_support::temp_dir("validator-symlink-dangling");
+        let link = dir.path.join("dangling.bin");
+        if !try_symlink(&dir.path.join("never-created.bin"), &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.input_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        assert!(
+            matches!(&err, FixtureError::SymbolicLink { path } if *path == link),
+            "expected SymbolicLink for a dangling link, got: {err:?}"
+        );
+    }
+
     #[test]
     fn rejects_missing_referenced_expected_file() {
         let dir = crate::test_support::temp_dir("validator-missing-expected-file");

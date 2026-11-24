@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "no-change-with-failures",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 2,
+    "passed": 0,
+    "failed": 1,
+    "warnings": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "unchanged-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "unchanged-fail"
+    },
+    {
+      "testId": "warn-unchanged",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "warn-unchanged"
+    }
+  ]
+}

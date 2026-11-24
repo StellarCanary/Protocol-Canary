@@ -2,9 +2,14 @@
 
 Stated plainly, not hidden:
 
-- **Current fixture coverage is not complete Protocol 28 coverage.** Five
-  fixtures exist today, across three CAPs' surfaces. See
-  [Protocol 28](./protocol-28.md) for exactly what is and isn't checked.
+- **Fixture coverage is not complete Protocol 28 coverage.** The
+  `protocol-28` pack at revision
+  [`e9d098d`](https://github.com/StellarCanary/ProtocolCanary-Fixtures/tree/e9d098df7931a9b94b183c6af807a58336b7b322/protocol-28)
+  holds 93 fixture definitions (86 XDR, 2 RPC, 5 Soroban). That is pack
+  inventory, not checks run: a project executes only the fixtures its
+  configuration and capabilities select, and fixture counts say nothing
+  about live network behavior. See [Protocol 28](./protocol-28.md) for
+  exactly what is and isn't checked.
 - **CAP-0086 currently lacks a fixture.** This is a documented, deliberate
   gap — the published `soroban-sdk` doesn't yet expose the relevant host
   functions at a stable API surface, and this project does not fabricate
@@ -25,10 +30,10 @@ Stated plainly, not hidden:
 - **The current release does not publish prebuilt binaries.** Every
   documented install path builds from source via `cargo install`. See
   [Releases](./releases.md).
-- **`CacheStore` exists but is not currently wired into the primary check
-  flow.** The type is implemented and unit-tested in `canary-core`, but
-  `check` calls RPC/Soroban fresh on every run rather than reusing a
-  prior cached result. See [Architecture](./architecture.md#stateful-vs-ephemeral-components).
+- **`--live-cache-ttl` replays recorded network answers.** It is off by
+  default. When set, a cached RPC or Soroban result is served for up to that
+  many seconds and marked `"source": "cache"`; it says nothing about what the
+  network does now. See [`check`](./cli/check.md#result-cache).
 - **No formal third-party security audit has been performed** on any of
   the three repositories. See [Security](./security.md#audit-status).
 - **Mainnet has not been separately verified.** Every fixture in the

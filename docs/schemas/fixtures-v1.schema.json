@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/StellarCanary/Protocol-Canary/main/docs/schemas/fixtures-v1.schema.json",
+  "title": "Stellar Protocol Canary fixture inventory, inventoryVersion 1",
+  "description": "The `stellar-canary fixtures --format json` inventory contract (CA-02). Required fields follow CA-02 section 3; consumers must ignore properties they do not know: inventoryVersion 1 only grows additively, and this schema therefore sets no `additionalProperties` restrictions.",
+  "type": "object",
+  "required": [
+    "inventoryVersion",
+    "toolVersion",
+    "fixtureFormat",
+    "protocol",
+    "directoryFound",
+    "counts",
+    "otherProtocols",
+    "fixtures"
+  ],
+  "properties": {
+    "inventoryVersion": {
+      "description": "The inventory format version. This schema validates version 1 only; an unsupported version makes the whole inventory invalid.",
+      "const": 1
+    },
+    "toolVersion": {
+      "description": "The Canary CLI's own semver, independent of inventoryVersion and protocol. Informational; never use it for feature detection.",
+      "type": "string"
+    },
+    "fixtureFormat": {
+      "description": "The fixture file format the engine reads (1 today).",
+      "const": 1
+    },
+    "protocol": {
+      "description": "The Stellar protocol version this inventory lists fixtures for.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "directoryFound": {
+      "description": "Whether --fixtures-dir exists as a directory. False is not an error; it reports an empty inventory.",
+      "type": "boolean"
+    },
+    "counts": {
+      "description": "Fixture counts for the listed protocol.",
+      "type": "object",
+      "required": ["total", "xdr", "rpc", "soroban"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "xdr": { "type": "integer", "minimum": 0 },
+        "rpc": { "type": "integer", "minimum": 0 },
+        "soroban": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "otherProtocols": {
+      "description": "Count of fixtures in the directory for every other protocol, keyed by the protocol number as a string.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "fixtures": {
+      "description": "One entry per fixture of protocol, sorted by id (comparing UTF-8 bytes).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "protocol",
+          "surface",
+          "category",
+          "description",
+          "path",
+          "requiredCapabilities"
+        ],
+        "properties": {
+          "id": {
+            "description": "The fixture's unique identity across the directory.",
+            "type": "string"
+          },
+          "protocol": {
+            "description": "The fixture's declared protocol; equals the top-level protocol.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "surface": {
+            "description": "The compatibility surface.",
+            "type": "string",
+            "enum": ["xdr", "rpc", "soroban"]
+          },
+          "category": {
+            "description": "Category from the fixture file.",
+            "type": "string"
+          },
+          "description": {
+            "description": "Human-readable description from the fixture file.",
+            "type": "string"
+          },
+          "path": {
+            "description": "Path relative to --fixtures-dir with forward slashes on every platform.",
+            "type": "string"
+          },
+          "requiredCapabilities": {
+            "description": "Sorted list of required capability names (lowercase kebab).",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sourceReference": {
+            "description": "Optional source reference (e.g. CAP or URL). Omitted, not null, when absent.",
+            "type": "string"
+          },
+          "method": {
+            "description": "RPC method value for rpc fixtures.",
+            "type": "string"
+          },
+          "type": {
+            "description": "XDR type name for xdr fixtures.",
+            "type": "string"
+          },
+          "kind": {
+            "description": "XDR kind (e.g. decode-success, roundtrip) for xdr fixtures.",
+            "type": "string"
+          },
+          "function": {
+            "description": "Contract function name for soroban fixtures.",
+            "type": "string"
+          },
+          "verification": {
+            "description": "The CF-04 verification record, copied as stored. Absent when unverified.",
+            "type": "object",
+            "required": ["verificationVersion", "fixtureId", "method", "checkedAt", "outcome"],
+            "properties": {
+              "verificationVersion": { "type": "integer", "const": 1 },
+              "fixtureId": { "type": "string" },
+              "method": { "type": "string" },
+              "checkedAt": { "type": "string" },
+              "outcome": { "type": "string" },
+              "network": { "type": "string" },
+              "endpoint": { "type": "string" }
+            }
+          },
+          "sha256": {
+            "description": "Reserved CF-02 SHA-256 digest of the fixture file bytes.",
+            "type": "string"
+          },
+          "payloads": {
+            "description": "Reserved CF-02 payload digests.",
+            "type": "array"
+          },
+          "packDigest": {
+            "description": "Reserved CF-02 pack digest.",
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

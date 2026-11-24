@@ -1,0 +1,31 @@
+{
+  "comment": "Golden report pairs for contract CF-05, driven by crates/canary-report/tests/transition_matrix.rs. pairs/<stem>.{baseline,current}.json hold the inputs; cases/<name>.expected.json holds the diffVersion 1 output, or the refusal and the message it must carry.",
+  "cases": [
+    "from-pass",
+    "from-warning",
+    "from-fail",
+    "from-error",
+    "from-skipped",
+    "from-absent",
+    "all-good-transitions",
+    "regressions",
+    "coverage-lost",
+    "no-change-with-failures",
+    "policy-degradation-default",
+    "policy-degradation-strict",
+    "empty-baseline",
+    "empty-current",
+    "cached-results",
+    "observed-protocol-change",
+    "identity-ordering",
+    "v0-1-1-baseline",
+    "verdict-precedence",
+    "missing-and-added",
+    "bad-json",
+    "not-a-report",
+    "schema-version-2",
+    "duplicate-identity",
+    "different-target-protocol",
+    "unknown-surface"
+  ]
+}

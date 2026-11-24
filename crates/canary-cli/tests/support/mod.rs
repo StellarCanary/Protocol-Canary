@@ -19,15 +19,27 @@ pub struct TempProject {
 }
 
 impl TempProject {
+    /// Creates a unique scratch directory under [`std::env::temp_dir`].
+    ///
+    /// The name combines the process id, a nanosecond timestamp and a
+    /// per-process counter: the timestamp alone cannot separate the threads
+    /// the test harness runs in parallel, since clock resolution on some
+    /// hosts is coarser than the interval between two threads' reads, and two
+    /// tests sharing one directory would delete each other's project via
+    /// `Drop`.
     pub fn new(prefix: &str) -> Self {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+
         let mut path = std::env::temp_dir();
         let unique = format!(
-            "{prefix}-{}-{}",
+            "{prefix}-{}-{}-{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_nanos()
+                .as_nanos(),
+            COUNTER.fetch_add(1, Ordering::Relaxed)
         );
         path.push(unique);
         std::fs::create_dir_all(&path).unwrap();
@@ -53,6 +65,11 @@ impl Drop for TempProject {
 pub const VALID_STELLAR_VALUE_BASE64: &str =
     "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
+/// Canonical base64 that is not a complete `StellarValue`, so a fixture
+/// using it parses and then fails the decode assertion at run time rather
+/// than being rejected as an invalid fixture.
+pub const DECODE_FAILURE_BASE64: &str = "AAAA";
+
 /// Runs the built `stellar-canary` binary with `args` inside `dir`.
 pub fn run_in(dir: &std::path::Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_stellar-canary"))
@@ -60,6 +77,35 @@ pub fn run_in(dir: &std::path::Path, args: &[&str]) -> Output {
         .current_dir(dir)
         .output()
         .expect("failed to execute stellar-canary binary")
+}
+
+/// Like [`run_in`], but feeds `input` to the process's standard input and
+/// closes it once written, so the binary sees a real EOF.
+///
+/// Write failures are deliberately ignored: a test that streams more input
+/// than the binary is willing to consume expects the child to exit first,
+/// which surfaces as a broken pipe here rather than as a test failure.
+pub fn run_in_with_stdin(dir: &std::path::Path, args: &[&str], input: &[u8]) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_stellar-canary"))
+        .args(args)
+        .current_dir(dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to execute stellar-canary binary");
+
+    {
+        let mut stdin = child.stdin.take().expect("child stdin was piped");
+        let _ = stdin.write_all(input);
+    }
+
+    child
+        .wait_with_output()
+        .expect("failed to wait for stellar-canary binary")
 }
 
 pub fn stdout(output: &Output) -> String {

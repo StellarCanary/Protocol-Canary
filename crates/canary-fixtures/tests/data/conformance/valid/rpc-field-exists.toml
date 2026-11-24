@@ -1,0 +1,12 @@
+id = "conformance-valid-rpc-field-exists"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "Accepted RPC field-exists assertion shape."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+[[assert]]
+kind = "field-exists"
+field = "protocolVersion"

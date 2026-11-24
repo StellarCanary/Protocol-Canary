@@ -1,0 +1,16 @@
+{
+  "case": "not-a-report",
+  "pair": "not-a-report",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "InvalidReport",
+    "side": "baseline",
+    "contains": [
+      "baseline",
+      "valid report",
+      "missing field"
+    ]
+  }
+}

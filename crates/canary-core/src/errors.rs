@@ -79,9 +79,47 @@ pub enum ExitCode {
     ExecutionError = 3,
     InvalidFixture = 4,
     InternalError = 5,
+    VerificationFailure = 6,
 }
 
 impl ExitCode {
+    /// Every exit code, in ascending numeric order.
+    ///
+    /// This is the shared definition the documentation is checked
+    /// against: `docs-site/src/exit-codes.md` must document exactly this
+    /// set, which `canary-cli`'s `exit_code_docs` integration tests
+    /// enforce by parsing that page. The exhaustive match in this
+    /// module's tests fails to compile if a variant is added without
+    /// being listed here, so a new code can never stay undocumented.
+    pub const ALL: &[ExitCode] = &[
+        ExitCode::Pass,
+        ExitCode::CompatibilityFailure,
+        ExitCode::ConfigurationError,
+        ExitCode::ExecutionError,
+        ExitCode::InvalidFixture,
+        ExitCode::InternalError,
+        ExitCode::VerificationFailure,
+    ];
+
+    /// The raw numeric value of this exit code, as passed to the OS.
+    ///
+    /// This is the numeric half of the stable contract described on
+    /// [`ExitCode`]: callers such as `canary-cli` hand the result
+    /// directly to `std::process::exit`, while [`Display`](fmt::Display)
+    /// renders the matching stable lowercase name (`"pass"`,
+    /// `"invalid_fixture"`, ...) for logs and human-readable output.
+    ///
+    /// The conversion is an infallible cast, so this method never
+    /// returns an error and never panics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::ExitCode;
+    ///
+    /// assert_eq!(ExitCode::Pass.code(), 0);
+    /// assert_eq!(ExitCode::CompatibilityFailure.code(), 1);
+    /// ```
     pub fn code(self) -> i32 {
         self as i32
     }
@@ -96,6 +134,7 @@ impl fmt::Display for ExitCode {
             ExitCode::ExecutionError => "execution_error",
             ExitCode::InvalidFixture => "invalid_fixture",
             ExitCode::InternalError => "internal_error",
+            ExitCode::VerificationFailure => "verification_failure",
         };
         f.write_str(name)
     }
@@ -153,6 +192,57 @@ mod tests {
     }
 
     #[test]
+    fn all_lists_every_exit_code_variant() {
+        // Exhaustive on purpose: adding an `ExitCode` variant without
+        // also listing it in `ExitCode::ALL` fails to compile here,
+        // which in turn forces the documentation consistency tests in
+        // `canary-cli` to see (and therefore require) the new code.
+        let all_variants = [
+            ExitCode::Pass,
+            ExitCode::CompatibilityFailure,
+            ExitCode::ConfigurationError,
+            ExitCode::ExecutionError,
+            ExitCode::InvalidFixture,
+            ExitCode::InternalError,
+            ExitCode::VerificationFailure,
+        ];
+        for &variant in &all_variants {
+            assert!(
+                ExitCode::ALL.contains(&variant),
+                "{variant:?} is missing from ExitCode::ALL"
+            );
+            match variant {
+                ExitCode::Pass
+                | ExitCode::CompatibilityFailure
+                | ExitCode::ConfigurationError
+                | ExitCode::ExecutionError
+                | ExitCode::InvalidFixture
+                | ExitCode::InternalError
+                | ExitCode::VerificationFailure => {}
+            }
+        }
+        assert_eq!(
+            ExitCode::ALL.len(),
+            all_variants.len(),
+            "ExitCode::ALL must list every variant"
+        );
+    }
+
+    #[test]
+    fn exit_code_all_is_ascending_and_duplicate_free() {
+        let codes: Vec<i32> = ExitCode::ALL.iter().map(|c| c.code()).collect();
+        let mut sorted = codes.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(codes, sorted, "ExitCode::ALL must be in ascending order");
+        assert_eq!(
+            codes.len(),
+            ExitCode::ALL.len(),
+            "ExitCode::ALL must not repeat a code"
+        );
+    }
+
+    #[test]
     fn exit_codes_match_the_documented_contract() {
         assert_eq!(ExitCode::Pass.code(), 0);
         assert_eq!(ExitCode::CompatibilityFailure.code(), 1);
@@ -160,5 +250,26 @@ mod tests {
         assert_eq!(ExitCode::ExecutionError.code(), 3);
         assert_eq!(ExitCode::InvalidFixture.code(), 4);
         assert_eq!(ExitCode::InternalError.code(), 5);
+        assert_eq!(ExitCode::VerificationFailure.code(), 6);
+    }
+
+    #[test]
+    fn exit_codes_display_as_their_documented_lowercase_names() {
+        assert_eq!(ExitCode::Pass.to_string(), "pass");
+        assert_eq!(
+            ExitCode::CompatibilityFailure.to_string(),
+            "compatibility_failure"
+        );
+        assert_eq!(
+            ExitCode::ConfigurationError.to_string(),
+            "configuration_error"
+        );
+        assert_eq!(ExitCode::ExecutionError.to_string(), "execution_error");
+        assert_eq!(ExitCode::InvalidFixture.to_string(), "invalid_fixture");
+        assert_eq!(ExitCode::InternalError.to_string(), "internal_error");
+        assert_eq!(
+            ExitCode::VerificationFailure.to_string(),
+            "verification_failure"
+        );
     }
 }

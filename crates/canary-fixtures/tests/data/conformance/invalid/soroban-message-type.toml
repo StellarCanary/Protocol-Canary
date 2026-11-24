@@ -1,0 +1,15 @@
+id = "conformance-invalid-soroban-message-type"
+protocol = 28
+surface = "soroban"
+category = "conformance"
+description = "Soroban message_contains value must be a string."
+source_reference = "https://developers.stellar.org/docs/tokens/stellar-asset-contract"
+
+source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+function = "missing"
+sequence_number = 1
+
+[expect]
+kind = "simulation-error"
+message_contains = 28

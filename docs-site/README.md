@@ -25,7 +25,11 @@ cargo install mdbook --locked
 # https://github.com/rust-lang/mdBook/releases
 
 cd docs-site
-mdbook build      # writes static HTML to docs-site/book/
+# stage the browser report viewer (D-08b) — `create-missing` is false, so
+# the sidebar's Report Viewer entry fails the build until this is done
+rm -rf src/viewer && cp -a ../viewer src/viewer
+
+mdbook build      # writes static HTML to docs-site/book/, viewer at book/viewer/
 mdbook serve      # local preview at http://localhost:3000 with live reload
 ```
 
@@ -44,6 +48,7 @@ cargo install lychee --locked
 # or download a prebuilt binary from
 # https://github.com/lycheeverse/lychee/releases
 
+rm -rf src/viewer && cp -a ../viewer src/viewer
 mdbook build
 lychee --offline book/          # internal links only, no network calls
 lychee book/                    # also checks external (https://...) links
@@ -51,10 +56,15 @@ lychee book/                    # also checks external (https://...) links
 
 ## Structure
 
-- `book.toml` — mdBook configuration (title, search, theme).
+- `book.toml` — mdBook configuration (title, search, theme). The bundled
+  static report viewer (D-08b, E-090) is staged into `src/viewer/` by
+  `docs.yml` before the build, so `book/viewer/` ships beside the pages
+  at `/viewer/` and the sidebar link reaches the link check.
 - `src/SUMMARY.md` — the table of contents; every page must be listed here
   or mdBook will not include it in the build.
 - `src/*.md`, `src/cli/*.md` — the pages themselves.
+- `src/viewer/` — the staged viewer bundle (not committed; produced by
+  the workflow's copy step from the repository's `viewer/`).
 
 ## Deployment
 

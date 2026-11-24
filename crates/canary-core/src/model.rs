@@ -41,7 +41,22 @@ impl fmt::Display for Surface {
     }
 }
 
-/// The outcome of running a single [`crate::engine::CompatibilityTest`].
+impl std::str::FromStr for Surface {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "xdr" => Ok(Surface::Xdr),
+            "rpc" => Ok(Surface::Rpc),
+            "soroban" => Ok(Surface::Soroban),
+            other => Err(format!(
+                "unknown surface {other:?}: expected 'xdr', 'rpc', or 'soroban'"
+            )),
+        }
+    }
+}
+
+/// The outcome of running a single compatibility test.
 ///
 /// `Fail` means the compatibility assertion ran and failed; `Error` means
 /// the test could not be executed correctly (e.g. a network timeout). Do
@@ -70,6 +85,41 @@ impl fmt::Display for Status {
     }
 }
 
+/// Where a [`CompatibilityResult`] came from.
+///
+/// A cached result is a recording of an earlier run, not an observation made
+/// now. Reports carry this so a reader can tell the two apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResultSource {
+    /// The fixture was executed during this run.
+    Live,
+    /// The result was replayed from the local result cache.
+    Cache,
+    /// Not recorded: the result was read from a report written by a version
+    /// that did not record its source. This is not a claim that it was live.
+    #[default]
+    Unknown,
+}
+
+impl ResultSource {
+    /// The lowercase name used in the JSON report: `live`, `cache` or
+    /// `unknown`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ResultSource::Live => "live",
+            ResultSource::Cache => "cache",
+            ResultSource::Unknown => "unknown",
+        }
+    }
+}
+
+impl fmt::Display for ResultSource {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// The normalized result of a single compatibility test, produced by every
 /// surface runner and consumed by every reporter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,9 +132,39 @@ pub struct CompatibilityResult {
     pub details: Option<String>,
     pub duration_ms: u64,
     pub fixture_id: Option<String>,
+    /// Whether this result was executed now or replayed from the cache.
+    /// Runners set [`ResultSource::Live`]; the result cache sets
+    /// [`ResultSource::Cache`] when it serves an entry.
+    #[serde(default)]
+    pub source: ResultSource,
 }
 
 impl CompatibilityResult {
+    /// Whether this single result should fail a run: `true` for
+    /// [`Status::Fail`] and [`Status::Error`], `false` otherwise.
+    ///
+    /// This is public API for external consumers of `canary-core` that
+    /// inspect individual results. The CLI does not call it: its run-level
+    /// decision uses `canary_runner::ResultSummary::has_required_failure`,
+    /// which applies the same `Fail`/`Error` rule to summary counts. Keep
+    /// the two in sync if either rule changes.
+    ///
+    /// ```
+    /// use canary_core::{CompatibilityResult, ProtocolVersion, Status, Surface};
+    ///
+    /// let result = CompatibilityResult {
+    ///     test_id: "t1".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     status: Status::Error,
+    ///     summary: "rpc timeout".into(),
+    ///     details: None,
+    ///     duration_ms: 1,
+    ///     fixture_id: None,
+    ///     source: canary_core::ResultSource::Live,
+    /// };
+    /// assert!(result.is_required_failure());
+    /// ```
     pub fn is_required_failure(&self) -> bool {
         matches!(self.status, Status::Fail | Status::Error)
     }
@@ -116,8 +196,8 @@ impl fmt::Display for ProjectType {
 
 /// A declared or detected capability of the project under test.
 ///
-/// Used by the [planner](crate::planner::CompatibilityPlanner) to decide
-/// whether a fixture that requires a capability is applicable.
+/// Used by the runner's fixture planner (see `canary-runner`'s scheduler) to
+/// decide whether a fixture that requires a capability is applicable.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
@@ -126,6 +206,35 @@ pub enum Capability {
     StellarSdkDependency,
     WasmArtifact,
     RawLedgerAccess,
+}
+
+impl Capability {
+    /// Alias for [`Capability::StellarSdkDependency`] representing Python SDK detection.
+    #[allow(non_upper_case_globals)]
+    pub const PythonSdk: Capability = Capability::StellarSdkDependency;
+    /// Constant alias for Python SDK capability.
+    pub const PYTHON_SDK: Capability = Capability::StellarSdkDependency;
+
+    /// Every capability variant the engine can declare, in declaration order.
+    ///
+    /// This is the engine side of the capability vocabulary shared with the
+    /// fixture validator: the canonical vector in `tests/fixtures/
+    /// capabilities.json` must name exactly these variants (kebab-case, as
+    /// serialized by [`Capability`]'s `serde` representation), and the
+    /// `capability_parity` integration test fails when either side grows a
+    /// tag the other lacks. Keep this list in step with `CAPABILITIES` in
+    /// ProtocolCanary-Fixtures' `tools/validate/validate.py` and with the
+    /// `required_capabilities` enum in its `schemas/fixture-v1.schema.json`
+    /// (CF-07 section 9).
+    pub fn all() -> &'static [Capability] {
+        &[
+            Capability::SorobanContract,
+            Capability::RpcClient,
+            Capability::StellarSdkDependency,
+            Capability::WasmArtifact,
+            Capability::RawLedgerAccess,
+        ]
+    }
 }
 
 /// Everything the pipeline knows about the project being checked.
@@ -138,6 +247,37 @@ pub struct ProjectContext {
 }
 
 impl ProjectContext {
+    /// Whether this project declares `capability` in its capability list.
+    ///
+    /// The check is an exact match on [`Capability`] against the stored
+    /// [`ProjectContext::capabilities`] (the same equality used by
+    /// `Vec::contains`); it does not infer capabilities from the project type,
+    /// name or dependencies, and aliases such as
+    /// [`Capability::PythonSdk`] compare equal to the variant they alias.
+    /// Nothing is detected, mutated or loaded here, so the method cannot
+    /// fail or panic: an empty list, or a capability that was not detected,
+    /// simply yields `false`.
+    ///
+    /// Fixture planning uses this to apply a fixture's `required_capabilities`
+    /// (see `canary_runner::build_plan`): a fixture requiring an undeclared
+    /// capability is skipped rather than run. Callers reporting why a fixture
+    /// was skipped can use it for the same purpose.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{Capability, ProjectContext, ProjectType};
+    ///
+    /// let project = ProjectContext {
+    ///     root: ".".into(),
+    ///     name: "example".into(),
+    ///     project_type: ProjectType::Soroban,
+    ///     capabilities: vec![Capability::SorobanContract],
+    /// };
+    ///
+    /// assert!(project.has_capability(&Capability::SorobanContract));
+    /// assert!(!project.has_capability(&Capability::RpcClient));
+    /// ```
     pub fn has_capability(&self, capability: &Capability) -> bool {
         self.capabilities.contains(capability)
     }
@@ -192,6 +332,26 @@ pub struct RunOptions {
     pub verbose: bool,
     pub quiet: bool,
     pub max_concurrency: u32,
+    pub rpc_timeout: u64,
+    /// Maximum retries after a failed RPC attempt: `0` disables retries
+    /// (one attempt is always made, and the first network error fails the
+    /// call). Defaults to the CLI flag's default of `3`. The serde default
+    /// keeps payloads written before this field existed deserializing to
+    /// that documented value.
+    #[serde(default = "default_rpc_max_retries")]
+    pub rpc_max_retries: u32,
+    /// Base delay between RPC retry attempts, in milliseconds (linear
+    /// backoff: attempt *n* waits `n * base_delay`).
+    #[serde(default = "default_rpc_retry_delay_ms")]
+    pub rpc_retry_delay_ms: u64,
+}
+
+fn default_rpc_max_retries() -> u32 {
+    3
+}
+
+fn default_rpc_retry_delay_ms() -> u64 {
+    500
 }
 
 impl Default for RunOptions {
@@ -200,6 +360,9 @@ impl Default for RunOptions {
             verbose: false,
             quiet: false,
             max_concurrency: 4,
+            rpc_timeout: 10,
+            rpc_max_retries: default_rpc_max_retries(),
+            rpc_retry_delay_ms: default_rpc_retry_delay_ms(),
         }
     }
 }
@@ -216,6 +379,13 @@ pub struct FixtureMetadata {
     pub description: String,
     pub source_reference: Option<String>,
     pub required_capabilities: Vec<Capability>,
+    /// SHA-256 (lowercase hex) of everything that defines this fixture's
+    /// behavior: the fixture file's bytes and the bytes of any `input_file`
+    /// and `expected_file` it references. Empty when the metadata was built
+    /// in memory rather than loaded from disk. It is part of the result
+    /// cache key, so editing a fixture or its payload cannot reuse a result.
+    #[serde(default)]
+    pub content_digest: String,
 }
 
 /// An in-memory collection of loaded, validated fixture metadata.
@@ -228,18 +398,96 @@ pub struct FixtureStore {
 }
 
 impl FixtureStore {
+    /// Builds a store from metadata that has already been loaded and
+    /// validated.
+    ///
+    /// Entries are kept in the given order and are not validated,
+    /// deduplicated, or sorted here. Callers loading fixtures from disk
+    /// should run `canary_fixtures::validate` first, so duplicate ids and
+    /// unsafe file references are rejected before a plan is built. An empty
+    /// vector is accepted and produces an empty store (see
+    /// [`FixtureStore::is_empty`]); construction neither fails nor panics.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = FixtureMetadata {
+    ///     id: "p28-xdr-cap83-001".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "StellarValue roundtrip".into(),
+    ///     source_reference: Some("CAP-0083".into()),
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture]);
+    /// assert_eq!(store.len(), 1);
+    /// ```
     pub fn new(fixtures: Vec<FixtureMetadata>) -> Self {
         FixtureStore { fixtures }
     }
 
+    /// Borrows every [`FixtureMetadata`] entry in insertion order, with no
+    /// filtering.
+    ///
+    /// Unlike [`FixtureStore::for_protocol`] and
+    /// [`FixtureStore::for_surface`], this returns all entries regardless of
+    /// their protocol or compatibility surface. The returned slice borrows
+    /// from the store, so it stays valid only while the store does; entries
+    /// are not copied. An empty store yields an empty slice, never `None`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = FixtureMetadata {
+    ///     id: "p28-xdr-cap83-001".into(),
+    ///     protocol: ProtocolVersion(28),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "StellarValue roundtrip".into(),
+    ///     source_reference: None,
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture]);
+    /// assert_eq!(store.all().len(), 1);
+    /// assert_eq!(store.all()[0].id, "p28-xdr-cap83-001");
+    /// assert!(FixtureStore::default().all().is_empty());
+    /// ```
     pub fn all(&self) -> &[FixtureMetadata] {
         &self.fixtures
     }
 
+    /// Returns the number of fixture metadata entries in the store.
+    ///
+    /// This counts all entries regardless of protocol or compatibility
+    /// surface. Use [`FixtureStore::is_empty`] when only checking whether
+    /// any fixtures are present.
     pub fn len(&self) -> usize {
         self.fixtures.len()
     }
 
+    /// Returns `true` when the store holds no fixtures.
+    ///
+    /// Equivalent to `self.len() == 0`. An empty store means loading and
+    /// validation produced nothing for any protocol or surface, so a run
+    /// planned from it executes no checks — a configuration error (exit 2)
+    /// unless `--allow-empty` is given.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::FixtureStore;
+    ///
+    /// let store = FixtureStore::default();
+    /// assert!(store.is_empty());
+    /// assert_eq!(store.len(), 0);
+    /// ```
     pub fn is_empty(&self) -> bool {
         self.fixtures.is_empty()
     }
@@ -254,6 +502,35 @@ impl FixtureStore {
         self.fixtures.iter().filter(move |f| f.surface == surface)
     }
 
+    /// Iterates over the fixtures that declare `protocol`.
+    ///
+    /// The comparison is an exact match against each fixture's `protocol`
+    /// metadata: no compatibility range is applied, so a store holding only
+    /// protocol 27 fixtures yields an empty iterator — never an error — when
+    /// asked for `ProtocolVersion(28)`, and a fixture's position in the
+    /// store is preserved. `canary-cli`'s `fixtures` command uses this to
+    /// list one target protocol's fixture ids grouped by surface.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use canary_core::{FixtureMetadata, FixtureStore, ProtocolVersion, Surface};
+    ///
+    /// let fixture = |protocol| FixtureMetadata {
+    ///     id: "p28-xdr-001".into(),
+    ///     protocol: ProtocolVersion(protocol),
+    ///     surface: Surface::Xdr,
+    ///     category: "cap-83".into(),
+    ///     description: "roundtrip".into(),
+    ///     source_reference: None,
+    ///     required_capabilities: vec![],
+    ///     content_digest: String::new(),
+    /// };
+    /// let store = FixtureStore::new(vec![fixture(27), fixture(28)]);
+    ///
+    /// assert_eq!(store.for_protocol(ProtocolVersion(28)).count(), 1);
+    /// assert_eq!(store.for_protocol(ProtocolVersion(29)).count(), 0);
+    /// ```
     pub fn for_protocol(
         &self,
         protocol: ProtocolVersion,
@@ -290,6 +567,15 @@ mod tests {
     }
 
     #[test]
+    fn statuses_display_as_their_reporter_names() {
+        assert_eq!(Status::Pass.to_string(), "pass");
+        assert_eq!(Status::Warning.to_string(), "warning");
+        assert_eq!(Status::Fail.to_string(), "fail");
+        assert_eq!(Status::Skipped.to_string(), "skipped");
+        assert_eq!(Status::Error.to_string(), "error");
+    }
+
+    #[test]
     fn fixture_store_filters_by_surface_and_protocol() {
         let store = FixtureStore::new(vec![
             FixtureMetadata {
@@ -300,6 +586,7 @@ mod tests {
                 description: "StellarValue roundtrip".into(),
                 source_reference: Some("CAP-0083".into()),
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
             FixtureMetadata {
                 id: "p27-rpc-001".into(),
@@ -309,6 +596,7 @@ mod tests {
                 description: "network identity".into(),
                 source_reference: None,
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
         ]);
 
@@ -330,6 +618,7 @@ mod tests {
             details: None,
             duration_ms: 1,
             fixture_id: Some("p28-xdr-cap83-001".into()),
+            source: crate::model::ResultSource::Live,
         };
         let error = CompatibilityResult {
             status: Status::Error,

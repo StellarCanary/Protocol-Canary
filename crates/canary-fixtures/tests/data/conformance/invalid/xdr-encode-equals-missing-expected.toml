@@ -1,0 +1,10 @@
+id = "conformance-invalid-xdr-encode-equals-missing-expected"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "XDR encode-equals fixture omits its conditional expected payload."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "encode-equals"
+value_base64 = "AAAAAA=="

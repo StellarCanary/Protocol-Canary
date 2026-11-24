@@ -1,0 +1,9 @@
+{
+  "required_capabilities": [
+    "soroban-contract",
+    "rpc-client",
+    "stellar-sdk-dependency",
+    "wasm-artifact",
+    "raw-ledger-access"
+  ]
+}

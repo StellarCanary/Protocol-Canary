@@ -23,9 +23,10 @@ change would.
   "status": "pass",
   "counts": { "total": 5, "passed": 5, "failed": 0, "warnings": 0, "errors": 0, "skipped": 0 },
   "results": [
-    { "testId": "p28-xdr-cap83-empty-tx-set", "protocol": 28, "surface": "xdr", "status": "pass", "summary": "StellarValue round-tripped byte-for-byte", "durationMs": 0, "fixtureId": "p28-xdr-cap83-empty-tx-set" }
+    { "testId": "p28-xdr-cap83-empty-tx-set", "protocol": 28, "surface": "xdr", "status": "pass", "summary": "StellarValue round-tripped byte-for-byte", "durationMs": 0, "fixtureId": "p28-xdr-cap83-empty-tx-set", "source": "live" }
   ],
-  "git": { "commit": "ffa072cb14c682bfa5ebf158ab9bbe6058962aef", "branch": "main", "isDirty": false }
+  "git": { "commit": "ffa072cb14c682bfa5ebf158ab9bbe6058962aef", "branch": "main", "isDirty": false },
+  "verbose": false
 }
 ```
 
@@ -43,12 +44,14 @@ change would.
 | `network` | object \| absent | only when `rpc` or `soroban` checks are enabled | Omitted entirely for a fully offline (XDR-only) run — its absence *is* the offline signal. |
 | `network.name` | string | when `network` present | `testnet`, `mainnet`, `futurenet`, or a custom network name. |
 | `network.observedProtocol` | integer \| absent | when `network` present and `getNetwork` succeeded | Absent if the live call failed. Compare against `targetProtocol` to detect a protocol mismatch — do not assume they match. |
+| `network.error` | string \| absent | when `network` present and `getNetwork` failed | Explanation of why the network identity could not be observed. |
 | `status` | string | yes | `pass`, `warning`, `fail`, or `error`. `error` means at least one result is `error` (an execution problem) and **overrides** what the pass/fail counts alone would suggest — the same precedence the process exit code follows. |
 | `counts` | object | yes | Aggregate over `results` only; `skipped` fixtures are counted separately and never included in `counts.total`. Always re-derivable from `results[].status`. |
 | `counts.total` | integer | yes | `results.length`. |
 | `counts.passed` / `.failed` / `.warnings` / `.errors` | integer | yes | Count of each status among `results`. |
 | `counts.skipped` | integer | yes | `skipped.length`. |
-| `results` | array | yes | One entry per fixture that actually ran. Empty is valid (no fixtures found) and is a pass. |
+| `results` | array | yes | One entry per fixture that actually ran. Empty is a valid shape, but after `0.1.1` `check` only produces it with `--allow-empty`; otherwise a run with no applicable fixture exits `2` and prints no report. `0.1.1` and earlier reported such a run as a pass. `counts.total == 0` is never evidence of compatibility. |
+| `results[].source` | string \| absent | `"live"` or `"cache"` | `"live"`: executed during this run. `"cache"`: replayed from the local result cache (an earlier run, not an observation made now). Absent in reports written by `0.1.1` and earlier, which means *not recorded*, not "live". |
 | `results[].testId` / `.fixtureId` | string | yes (`fixtureId` may be `null`) | Currently always equal to each other and to the fixture's `id`. |
 | `results[].protocol` | integer | yes | The fixture's own declared protocol. |
 | `results[].surface` | string | yes | `xdr`, `rpc`, or `soroban` (lowercase). |
@@ -58,9 +61,13 @@ change would.
 | `results[].durationMs` | integer | yes | Wall-clock time for that fixture. |
 | `skipped` | array | only when non-empty | Fixtures the planner decided not to run, and why. Omitted entirely (not `[]`) when there are none. |
 | `skipped[].fixtureId` / `.surface` / `.reason` | string | yes | `reason` is human-readable, e.g. `"fixture targets protocol 27, this run targets protocol 28"`. |
+| `skipped[].code` | string | yes | Stable machine-readable skip reason (`UNSUPPORTED_PROTOCOL`, `SURFACE_DISABLED`, `MISSING_CAPABILITY`, `OFFLINE`, `NETWORK_MISMATCH`, or `UNKNOWN`). Absent in reports written before the field existed. |
 | `git` | object | yes | Always present, with `null` fields when unavailable (not a Git repo, detached HEAD) — never omitted, never an error. |
 | `git.commit` / `.branch` | string \| null | yes | |
 | `git.isDirty` | boolean \| null | yes | |
+| `verbose` | boolean | yes | Whether `--verbose` was enabled. |
+| `run` | object \| absent | only when build provenance was recorded | Build provenance of the engine. Absent in reports written before the field existed (*not recorded*). Deliberately carries no timestamp so two builds of one commit stay byte-for-byte comparable. |
+| `run.toolBuildCommit` | string \| null | when `run` present | The Git commit the binary was built from, or `null` when built without Git history. |
 
 ## Backward compatibility around `counts`
 
@@ -87,7 +94,8 @@ Status: error
 ```
 
 `network.observedProtocol` is correctly **absent** here — the live call
-never returned a value — while `network.name` is still present.
+never returned a value — while `network.name` is still present and
+`network.error` carries the transport failure details.
 
 ## What a downstream consumer should key off of
 
@@ -109,3 +117,29 @@ stellar-canary report result.json --format markdown
 
 parses exactly this shape and re-renders it without touching the network
 — see [`report`](./cli/report.md).
+
+## Viewing a report in the browser
+
+The same JSON report can be opened in the static
+[report viewer](./viewer/index.html), a single local page published at
+`/viewer/` on this site. Drop the file onto that page: it is validated
+in the browser, shown as an accessible findings list, and never
+uploaded anywhere.
+
+Selecting a fixture id in that list opens a detail dialog. The report
+provides the run-specific findings: the test and fixture identity, surface,
+outcome status, duration, summary, failure details, and the target and
+observed protocol numbers.
+
+Additional fixture provenance — its SHA-256 hash, pack digest, category,
+description, and required capabilities — is not stored in the JSON report.
+To view these details, select the matching `stellar-canary fixtures --format json`
+output in the optional second file picker. When an inventory is loaded,
+the viewer joins it with the report findings in-browser and enables copy
+controls for the cryptographic hashes.
+
+Reports also do not carry verification records (verification evidence lives
+with the fixture pack, not within a run report). The dialog displays every
+unsupplied field as missing rather than guessing, so when verification
+records or fixture hashes are not present, it explicitly notes that no
+verification information is available.

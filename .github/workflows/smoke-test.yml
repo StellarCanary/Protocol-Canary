@@ -1,0 +1,170 @@
+name: Release smoke test
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to smoke-test (defaults to the latest release)
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    if: github.event_name == 'release' || github.ref == 'refs/heads/main'
+    name: smoke-test (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: stellar-canary-x86_64-unknown-linux-gnu.tar.gz
+            binary: stellar-canary
+            archive_ext: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: stellar-canary-aarch64-unknown-linux-gnu.tar.gz
+            binary: stellar-canary
+            archive_ext: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: stellar-canary-aarch64-apple-darwin.tar.gz
+            binary: stellar-canary
+            archive_ext: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: stellar-canary-x86_64-pc-windows-msvc.zip
+            binary: stellar-canary.exe
+            archive_ext: zip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Resolve the release tag
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="${INPUT_TAG:-$EVENT_TAG}"
+          if [ -z "$tag" ]; then
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+          fi
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tag must have the form vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check release asset availability
+        id: check-asset
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+          ARCHIVE: ${{ matrix.archive }}
+          IS_RELEASE_EVENT: ${{ github.event_name == 'release' }}
+        run: |
+          set -euo pipefail
+          asset_found=$(gh release view "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq ".assets[] | select(.name == \"$ARCHIVE\") | .name" || true)
+
+          if [ -z "$asset_found" ]; then
+            if [ "$IS_RELEASE_EVENT" = "true" ]; then
+              echo "::error::Newly published release $TAG is missing required asset $ARCHIVE"
+              exit 1
+            fi
+            if [ "$TARGET" = "aarch64-unknown-linux-gnu" ]; then
+              echo "Skipping ARM64 smoke test: historical release $TAG does not provide $ARCHIVE"
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              {
+                echo "### Release smoke test (${TARGET})"
+                echo "Skipped: historical release \`${TAG}\` does not provide \`${ARCHIVE}\`."
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            echo "::error::Release $TAG is missing required asset $ARCHIVE"
+            exit 1
+          fi
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+
+      - name: Download the published archive
+        if: steps.check-asset.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "${{ matrix.archive }}" \
+            --dir dist
+          gh release download "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "SHA256SUMS" \
+            --dir dist
+
+      - name: Verify the exact published asset checksum
+        if: steps.check-asset.outputs.skip != 'true'
+        shell: bash
+        env:
+          ASSET_PATH: dist/${{ matrix.archive }}
+          MANIFEST_PATH: dist/SHA256SUMS
+        run: node scripts/verify-release-asset.mjs "$ASSET_PATH" "$MANIFEST_PATH"
+
+      - name: Unpack the archive
+        if: steps.check-asset.outputs.skip != 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd dist
+          if [ "${{ matrix.archive_ext }}" = "zip" ]; then
+            unzip -o "${{ matrix.archive }}"
+          else
+            tar -xzf "${{ matrix.archive }}"
+          fi
+          chmod +x "${{ matrix.binary }}"
+          test -x "${{ matrix.binary }}"
+
+      - name: --version prints the released semver and exits 0
+        if: steps.check-asset.outputs.skip != 'true'
+        shell: bash
+        env:
+          TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          output=$(dist/${{ matrix.binary }} --version)
+          echo "$output"
+          expected="${TAG#v}"
+          reported=$(printf '%s\n' "$output" | awk '{print $NF}')
+          if ! printf '%s\n' "$reported" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::--version did not print a semver, got: $output"
+            exit 1
+          fi
+          if [ "$reported" != "$expected" ]; then
+            echo "::error::--version printed $reported but the release is $expected"
+            exit 1
+          fi
+
+      - name: --help exits 0
+        if: steps.check-asset.outputs.skip != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          dist/${{ matrix.binary }} --help > /dev/null

@@ -1,0 +1,15 @@
+id = "conformance-valid-soroban-simulation-error"
+protocol = 28
+surface = "soroban"
+category = "conformance"
+description = "Accepted Soroban simulation-error fixture shape with a message assertion."
+source_reference = "https://developers.stellar.org/docs/tokens/stellar-asset-contract"
+
+source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+function = "missing"
+sequence_number = 1
+
+[expect]
+kind = "simulation-error"
+message_contains = "unknown function"

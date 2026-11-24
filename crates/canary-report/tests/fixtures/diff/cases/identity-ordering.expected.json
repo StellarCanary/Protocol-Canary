@@ -1,0 +1,109 @@
+{
+  "case": "identity-ordering",
+  "pair": "identity-ordering",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "Zebra",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "apple",
+        "from": "pass",
+        "to": "pass",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "café",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "a",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "A",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "B",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "b",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "café",
+        "from": "absent",
+        "to": "pass",
+        "classification": "added",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 7,
+      "removed": 0,
+      "unchanged": 1,
+      "missing": 0
+    },
+    "verdict": "improved"
+  }
+}

@@ -1,0 +1,11 @@
+id = "conformance-valid-xdr-encode-equals"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "Accepted XDR encode-equals fixture shape."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "encode-equals"
+value_base64 = "AAAAAA=="
+expected_base64 = "AAAAAA=="

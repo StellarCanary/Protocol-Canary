@@ -1,0 +1,13 @@
+id = "conformance-valid-rpc-field-type"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "Accepted RPC field-type assertion shape."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getLatestLedger"
+
+method = "get-latest-ledger"
+
+[[assert]]
+kind = "field-type"
+field = "sequence"
+expected_type = "number"

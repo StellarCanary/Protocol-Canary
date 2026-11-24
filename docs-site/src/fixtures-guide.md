@@ -35,6 +35,12 @@ file's own `surface` and `protocol` fields matter. Non-`.toml` files
 sorted-by-path order, which is what makes `stellar-canary fixtures` and
 `stellar-canary check` output deterministic.
 
+To see which fixtures a directory actually contains before running them,
+use `stellar-canary fixtures --fixtures-dir <path> --protocol <N>` — it
+loads the directory exactly the way `check` does and lists everything it
+picked up, grouped by surface, without executing a single assertion. See
+[`fixtures`](./cli/fixtures.md) for the full command reference.
+
 The real `protocol-28` pack looks like this:
 
 ```text
@@ -85,9 +91,43 @@ target project doesn't have is **skipped**, not failed.
 
 | `surface` | Required body fields |
 |---|---|
-| `xdr` | `type` (`StellarValue` \| `ContractExecutable`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals`), `value_base64`, and `expected_base64` (only for `encode-equals`) |
+| `xdr` | `type` (`StellarValue` \| `ContractExecutable` \| `ScVal` \| `LedgerEntry` \| `TransactionEnvelope`), `kind` (`decode-success` \| `decode-failure` \| `roundtrip` \| `encode-equals` \| `decode-json-equals`), `value_base64`, `expected_base64` (only for `encode-equals`), and `expected_json` (only for `decode-json-equals`) |
 | `rpc` | `method` (`get-network` \| `get-latest-ledger`), `assert` — an array of `{kind, field, value?, expected_type?}` |
-| `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`) |
+| `soroban` | `source_account`, `contract_id`, `function`, `sequence_number`, optional `args`, and `expect` (`{kind = "simulation-success"}` or `{kind = "simulation-error", message_contains?}`; `simulation-success` may additionally declare `[[expect.required_auth]]` entries — `{address, function_name?, min_sub_invocations?}` — checked against the simulation's reported authorization entries) |
+
+#### Comparing decoded XDR to expected JSON
+
+A `decode-json-equals` fixture decodes `value_base64` as `type` and compares
+the result with `expected_json`, so the expected contents can be written as
+readable JSON instead of bytes:
+
+```toml
+type = "ScVal"
+kind = "decode-json-equals"
+value_base64 = "AAAABQAAAAAAAAAq"
+expected_json = '''
+{ "u64": "42" }
+'''
+```
+
+- The JSON form is `stellar-xdr`'s own (the one `stellar xdr decode --output
+  json` prints): `snake_case` field names, union arms as a single-key object
+  (or a bare string for an arm without a payload), 64-bit integers as decimal
+  strings, opaque bytes as lowercase hex, and keys as strkeys.
+- `expected_json` is JSON text, not a TOML table, because decoded values can
+  contain `null`, which TOML cannot express. Malformed JSON makes the fixture
+  invalid (exit 4), with the position counted from the start of that text.
+- The comparison is exact on the parsed JSON. Object key order and whitespace
+  are ignored; every key, value, JSON type, array element and array position
+  must match. A field left out of `expected_json` is reported as an unexpected
+  field, not treated as a wildcard.
+- A mismatch fails the check and lists each difference by its JSON Pointer
+  path (RFC 6901, so `/` in a key is written `~1` and `~` is `~0`), for
+  example `/tx/tx/fee: expected 200, found 100`, or
+  `/tx/tx/time_bounds: missing field (expected null)`. Input that does not
+  decode fails with the decode error.
+
+For Soroban argument typing and XDR `ScVal` authoring details, see [`docs/fixtures/scval.md`](https://github.com/StellarCanary/Protocol-Canary/blob/main/docs/fixtures/scval.md).
 
 ## ID resolution and protocol filtering
 
@@ -118,7 +158,9 @@ suite.
 
 `Protocol-Canary`'s own loader performs the load-time validation that
 actually gates a `check`/`fixtures` run: a duplicate ID, a dangling
-`input_file`/`expected_file` reference, or a structurally invalid file
+`input_file`/`expected_file` reference, an unsafe reference (absolute, `..`,
+backslash or drive prefix), a symbolic link anywhere in the fixture tree, or
+a structurally invalid file
 (bad TOML, missing required field, unrecognized `surface`) fails the
 whole load with [exit code `4`](./exit-codes.md) — never silently treated
 as a project incompatibility.
@@ -129,6 +171,9 @@ as a project incompatibility.
 stellar-canary fixtures --fixtures-dir <path> --protocol <N>   # confirm it's picked up
 stellar-canary check --fixtures-dir <path> --protocol <N>      # actually run it
 ```
+
+The `fixtures` command is the preview half of that pair — see
+[`fixtures`](./cli/fixtures.md) for its options and output format.
 
 ## Adding a fixture or a protocol pack
 

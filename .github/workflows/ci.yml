@@ -5,30 +5,37 @@ on:
     branches: [main]
   pull_request:
 
-env:
-  CARGO_TERM_COLOR: always
-
 permissions:
   contents: read
 
 jobs:
   test:
-    name: fmt, check, test, clippy
-    runs-on: ubuntu-latest
+    name: fmt, check, test, clippy (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
         run: rustup show
 
       - name: Cache cargo registry and build artifacts
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-v2
+          restore-keys: |
+            ${{ runner.os }}-cargo-
 
       - name: cargo fmt --check
         run: cargo fmt --all --check
@@ -41,3 +48,100 @@ jobs:
 
       - name: cargo clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+  canonical-pack:
+    name: canonical fixture pack (${{ matrix.pack }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # The released, immutable Protocol 28 pack.
+          - pack: protocol-28 tag
+            ref: protocol-28
+            pack_dir: protocol-28
+            protocol: 28
+            min_xdr: 3
+            vector: ""
+            expected_xdr_ids: ""
+            expected_skipped_id: ""
+          # Whatever the Fixtures repository holds now.
+          - pack: Fixtures main
+            ref: main
+            pack_dir: protocol-28
+            protocol: 28
+            min_xdr: 4
+            vector: canonical-pack/tests/vectors/conformance/invalid/xdr-toml-syntax.toml
+            expected_xdr_ids: ""
+            expected_skipped_id: ""
+          # Protocol 30's offline CAP-84/CAP-88 XDR vectors. The RPC identity
+          # fixture must stay in the report's skipped array because RPC is off.
+          - pack: Fixtures main Protocol 30 offline XDR
+            ref: main
+            pack_dir: protocol-30
+            protocol: 30
+            min_xdr: 9
+            vector: ""
+            expected_xdr_ids: p30-xdr-cap88-timepointms-endpoints-proposed-maximum,p30-xdr-cap88-timepointms-endpoints-proposed-zero,p30-xdr-cap88-timepointms-endpoints-signed-maximum,p30-xdr-cap88-timepointms-endpoints-signed-zero,p30-xdr-cap0084-muxed-contract-address-roundtrip,p30-xdr-cap0084-muxed-contract-id-u64-max,p30-xdr-cap0084-muxed-contract-id-zero,p30-xdr-cap0088-stellar-value-empty-tx-set-ms-roundtrip,p30-xdr-cap0088-stellar-value-signed-ms-roundtrip
+            expected_skipped_id: p30-rpc-version-info-protocol-30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Check out ProtocolCanary-Fixtures
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          repository: StellarCanary/ProtocolCanary-Fixtures
+          ref: ${{ matrix.ref }}
+          path: canonical-pack
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Test canonical-pack report guard
+        run: python3 -m unittest discover -s tests -p test_canonical_pack_report.py -v
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Load the pack and run its offline fixtures
+        # Pass the executable pack, not the checkout root: the root also holds
+        # the intentionally malformed negative vectors under tests/vectors.
+        run: scripts/check-canonical-pack.sh target/debug/stellar-canary canonical-pack/${{ matrix.pack_dir }} ${{ matrix.min_xdr }} "${{ matrix.vector }}" "${{ matrix.protocol }}" "${{ matrix.expected_xdr_ids }}" "${{ matrix.expected_skipped_id }}"
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        run: rustup show
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --version 0.22.2 --locked
+
+      - name: Security audit
+        run: cargo audit
+
+  viewer:
+    name: viewer tests (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Run the viewer suites
+        run: >
+          node --test
+          viewer/test/viewer.test.mjs
+          viewer/test/security.test.mjs
+          viewer/test/a11y.test.mjs
+          viewer/test/publish.test.mjs
+          tests/release-asset.test.mjs
+

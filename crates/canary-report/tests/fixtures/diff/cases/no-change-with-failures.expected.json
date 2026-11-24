@@ -1,0 +1,82 @@
+{
+  "case": "no-change-with-failures",
+  "pair": "no-change-with-failures",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "error-to-absent",
+        "from": "error",
+        "to": "absent",
+        "classification": "removed-failing",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "warn-unchanged",
+        "from": "warning",
+        "to": "warning",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "skip-to-absent",
+        "from": "skipped",
+        "to": "absent",
+        "classification": "unchanged-skip",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-absent",
+        "from": "fail",
+        "to": "absent",
+        "classification": "removed-failing",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "unchanged-fail",
+        "from": "fail",
+        "to": "fail",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 0,
+      "removed": 2,
+      "unchanged": 3,
+      "missing": 0
+    },
+    "verdict": "no-change"
+  }
+}

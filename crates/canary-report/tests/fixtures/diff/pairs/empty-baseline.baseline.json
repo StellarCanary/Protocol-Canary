@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "empty-baseline",
+    "type": "unknown"
+  },
+  "status": "pass",
+  "counts": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 1
+  },
+  "results": [],
+  "skipped": [
+    {
+      "fixtureId": "skip-only",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

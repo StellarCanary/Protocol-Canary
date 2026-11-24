@@ -1,3 +1,9 @@
+[build]
+# The bundle step in .github/workflows/docs.yml puts the viewer into
+# src/viewer/ before this build; fail loudly instead of stubbing a page
+# if it is ever missing.
+create-missing = false
+
 [book]
 title = "Protocol Canary"
 description = "Documentation for Protocol Canary, the Stellar protocol compatibility checker"

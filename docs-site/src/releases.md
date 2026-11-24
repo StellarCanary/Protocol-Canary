@@ -4,10 +4,36 @@
 
 | | |
 |---|---|
-| Current version | `v0.1.1` |
-| Distribution | A git tag (`v0.1.1`), installed via `cargo install --git ... --tag v0.1.1 --locked`. |
-| GitHub Release | [`v0.1.1`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.1.1) is published (target commit `919668859bc1bef3d58737f13695b486d67632ea`). It carries no prebuilt binary and no checksum artifact — installation still builds from source via the tag, exactly as before. If prebuilt binaries are ever added, this page and [Installation](./installation.md) will be updated to reflect it. |
-| What changed in `0.1.1` | `canary-xdr` gained support for the `"ContractExecutable"` XDR type (previously only `"StellarValue"`), needed to test CAP-0085's `CONTRACT_EXECUTABLE_EXTERNAL_REF` case. |
+| Current version | `v0.3.0` |
+| Distribution | A git tag (`v0.3.0`), installed via `cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.3.0 --locked`, or a prebuilt archive from the GitHub Release. |
+| GitHub Release | [`v0.3.0`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.3.0) is published (target commit `464c45d1bb100a009bb9dab9847c2c89ad033ab2`). It carries archives for Linux x86_64 (`stellar-canary-x86_64-unknown-linux-gnu.tar.gz`), macOS x86_64 (`stellar-canary-x86_64-apple-darwin.tar.gz`), macOS arm64 (`stellar-canary-aarch64-apple-darwin.tar.gz`) and Windows x86_64 (`stellar-canary-x86_64-pc-windows-msvc.zip`), the bare `stellar-canary-linux-x86_64` binary, a `.sha256` sidecar for every asset, and one `SHA256SUMS` manifest. |
+| What changed in `0.3.0` | RPC assertions are evaluated against the endpoint's raw JSON `result`, and `get-version-info` plus further read-only RPC methods are supported; XDR fixtures can compare a decoded value to expected JSON (`decode-json-equals`); `check --fixture/--surface` runs a targeted subset; `inspect --format json` publishes the versioned inspection document; CF-04 verification evidence renders as terminal badges; `--project-root` resolves config and fixture paths; `--output` writes atomically; JSON reports gain `run.toolBuildCommit` and `skipped[].code`. |
+
+### Installing `v0.3.0`
+
+The Unix archives contain a `stellar-canary` executable; the Windows archive
+contains `stellar-canary.exe`. Download the asset for your target, then verify
+it against `SHA256SUMS` before extracting:
+
+```bash
+curl -fsSLO https://github.com/StellarCanary/Protocol-Canary/releases/download/v0.3.0/stellar-canary-x86_64-unknown-linux-gnu.tar.gz
+curl -fsSLO https://github.com/StellarCanary/Protocol-Canary/releases/download/v0.3.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+tar -xzf stellar-canary-x86_64-unknown-linux-gnu.tar.gz
+```
+
+On macOS, `shasum -a 256 -c SHA256SUMS` verifies the same manifest. On
+Windows, `Get-FileHash -Algorithm SHA256` on the `.zip` must match its
+`.sha256` sidecar. See [Installation](./installation.md) for the full asset
+list. The release does not include a Linux arm64 archive.
+
+### Previous engine release: `v0.2.0`
+
+[`v0.2.0`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.2.0) is published (target commit `7e1eb63dd63be6aefcb9d248ae80afc66436c4c6`), preserved unchanged. It carries the Linux x86_64 prebuilt binary `stellar-canary-linux-x86_64` and `SHA256SUMS`, and no macOS or Windows assets; it installs from source via `--tag v0.2.0`. `check` failed by default when zero fixtures executed (exit code `2`, `--allow-empty` opts out), fixture directories containing symbolic links or unsafe payload paths were rejected, and results recorded `results[].source`.
+
+### Earlier engine release: `v0.1.1`
+
+[`v0.1.1`](https://github.com/StellarCanary/Protocol-Canary/releases/tag/v0.1.1) is published (target commit `919668859bc1bef3d58737f13695b486d67632ea`), preserved unchanged. It carries no prebuilt binary and installs from source via `--tag v0.1.1`. `ProtocolCanary-Action` keeps its default pinned to `0.1.1`.
 
 ## ProtocolCanary-Action
 
@@ -29,10 +55,15 @@
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.3.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | not yet verified with a published Action release (default input remains `0.1.1`) |
+| `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
-This is the only combination that has actually been run together and
-verified end-to-end (5/5 PASS against live Testnet). `v0.1.0` is
+`v0.3.0` is the current Engine release. No `ProtocolCanary-Action` release pins
+it yet — the Action's default `version` input is still `0.1.1` — so this table
+does not claim that combination. `v0.2.0` is verified against both the
+`protocol-28` pack and `ProtocolCanary-Action` (including `--allow-empty` and
+empty-run refusal handling). `v0.1.0` is
 installable but predates `ContractExecutable` XDR support (needed by two
 current Protocol 28 fixtures) and the `counts` field in its JSON report —
 the Action tolerates the missing field, but `v0.1.1` is the version this
@@ -42,10 +73,10 @@ table verifies against.
 
 | | Git tags | GitHub Releases | Prebuilt binaries |
 |---|---|---|---|
-| `Protocol-Canary` | Yes (`v0.1.0`, `v0.1.1`) | Yes (`v0.1.1`) | No |
+| `Protocol-Canary` | Yes (`v0.1.0`, `v0.1.1`, `v0.2.0`, `v0.3.0`) | Yes (`v0.1.1`, `v0.2.0`, `v0.3.0`) | Yes (Linux x86_64, macOS x86_64, macOS arm64, and Windows x86_64 for `v0.3.0`; Linux x86_64 only for `v0.2.0`) |
 | `ProtocolCanary-Action` | Yes (`v0.1.1`, `v1`) | Yes | N/A (a JS action; its "binary" is the committed `dist/index.js`) |
 | `ProtocolCanary-Fixtures` | Yes (`protocol-28`) | Yes (`protocol-28`) | N/A (not a distributable binary) |
 
-Do not assume a `Protocol-Canary` binary download exists anywhere — every
-documented install path in [Installation](./installation.md) builds from
-source.
+Prebuilt archives for all four targets are available for `v0.3.0` on GitHub
+Releases. Alternative install paths build from source via Cargo as documented
+in [Installation](./installation.md).

@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "from-error",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 6,
+    "passed": 0,
+    "failed": 0,
+    "warnings": 0,
+    "errors": 6,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "error-to-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-pass"
+    },
+    {
+      "testId": "error-to-warning",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-warning"
+    },
+    {
+      "testId": "error-to-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-fail"
+    },
+    {
+      "testId": "error-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-error"
+    },
+    {
+      "testId": "error-to-skipped",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-skipped"
+    },
+    {
+      "testId": "error-to-absent",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-to-absent"
+    }
+  ]
+}

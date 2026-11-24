@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "from-skipped",
+    "type": "unknown"
+  },
+  "status": "pass",
+  "counts": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 6
+  },
+  "results": [
+    {
+      "testId": "anchor",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "anchor"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "skipped-to-pass",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-to-warning",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-to-fail",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-to-error",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-to-skipped",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    },
+    {
+      "fixtureId": "skipped-to-absent",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

@@ -5,10 +5,12 @@ on:
     branches: [main]
     paths:
       - "docs-site/**"
+      - "viewer/**"
       - ".github/workflows/docs.yml"
   pull_request:
     paths:
       - "docs-site/**"
+      - "viewer/**"
       - ".github/workflows/docs.yml"
   workflow_dispatch:
 
@@ -17,18 +19,39 @@ permissions:
 
 env:
   MDBOOK_VERSION: "0.5.4"
+  MDBOOK_SHA256: "3f28de05dafca9d0f2eab99c662116b0e37b89b1d96a08f8f430b9eeae958cd7"
   LYCHEE_VERSION: "0.24.2"
+  LYCHEE_SHA256: "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a"
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
 
       - name: Install mdBook
         run: |
-          curl -sL "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /usr/local/bin
+          set -euo pipefail
+          archive="$RUNNER_TEMP/mdbook-${MDBOOK_VERSION}.tar.gz"
+          curl -fsSL \
+            "https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz" \
+            -o "$archive"
+          printf '%s  %s\n' "$MDBOOK_SHA256" "$archive" | sha256sum --check --strict -
+          tar -xzf "$archive" -C /usr/local/bin
+
+      # D-08b: the viewer is published beside the book at /viewer/. The
+      # copy goes into docs-site/src/viewer/ before the build, so mdbook
+      # transports the directory verbatim into book/viewer/ and the
+      # sidebar link resolves through the link check below. The viewer
+      # keeps its relative asset paths and CSP meta tag; nothing here
+      # rewrites viewer files.
+      - name: Bundle report viewer
+        run: |
+          rm -rf docs-site/src/viewer
+          cp -a viewer docs-site/src/viewer
+          test -f docs-site/src/viewer/index.html
 
       - name: Build book
         working-directory: docs-site
@@ -36,9 +59,16 @@ jobs:
 
       - name: Install lychee
         run: |
-          curl -sL "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz" \
-            | tar xz -C /tmp
-          install -m 755 /tmp/lychee-x86_64-unknown-linux-gnu/lychee /usr/local/bin/lychee
+          set -euo pipefail
+          archive="$RUNNER_TEMP/lychee-${LYCHEE_VERSION}.tar.gz"
+          curl -fsSL \
+            "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-x86_64-unknown-linux-gnu.tar.gz" \
+            -o "$archive"
+          printf '%s  %s\n' "$LYCHEE_SHA256" "$archive" | sha256sum --check --strict -
+          extraction="$RUNNER_TEMP/lychee"
+          mkdir -p "$extraction"
+          tar -xzf "$archive" -C "$extraction"
+          install -m 755 "$extraction/lychee-x86_64-unknown-linux-gnu/lychee" /usr/local/bin/lychee
 
       - name: Check internal links
         working-directory: docs-site
@@ -50,7 +80,7 @@ jobs:
 
       - name: Upload built site (pull requests only, for inspection)
         if: github.event_name == 'pull_request'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: docs-site-preview
           path: docs-site/book/
@@ -58,7 +88,7 @@ jobs:
 
       - name: Upload Pages artifact
         if: github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@v5
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5
         with:
           path: docs-site/book/
 
@@ -78,4 +108,4 @@ jobs:
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v5
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5

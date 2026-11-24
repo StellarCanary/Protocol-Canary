@@ -2,7 +2,7 @@
 //!
 //! [`Policy`] and [`PolicyDecision`] are defined here as part of the core
 //! domain model; the evaluation rules that turn a set of
-//! [`CompatibilityResult`](crate::model::CompatibilityResult)s into a
+//! [`CompatibilityResult`]s into a
 //! [`PolicyDecision`] are implemented by [`PolicyEvaluator`] and its
 //! default implementation.
 
@@ -106,6 +106,7 @@ mod tests {
             details: None,
             duration_ms: 0,
             fixture_id: None,
+            source: crate::model::ResultSource::Live,
         }
     }
 
@@ -177,6 +178,27 @@ mod tests {
     fn a_warning_decision_with_no_errors_still_exits_zero() {
         let results = vec![result(Status::Warning)];
         let exit_code = exit_code_for_run(&results, PolicyDecision::Warning);
+        assert_eq!(exit_code, ExitCode::Pass);
+    }
+
+    #[test]
+    fn an_empty_result_set_yields_a_pass_decision_under_the_default_policy() {
+        let decision = DefaultPolicyEvaluator.evaluate(&[], &Policy::default());
+        assert_eq!(decision, PolicyDecision::Pass);
+    }
+
+    #[test]
+    fn an_empty_result_set_still_passes_when_warnings_are_failures() {
+        let policy = Policy {
+            warnings_are_failures: true,
+        };
+        let decision = DefaultPolicyEvaluator.evaluate(&[], &policy);
+        assert_eq!(decision, PolicyDecision::Pass);
+    }
+
+    #[test]
+    fn an_empty_result_set_with_a_pass_decision_exits_zero() {
+        let exit_code = exit_code_for_run(&[], PolicyDecision::Pass);
         assert_eq!(exit_code, ExitCode::Pass);
     }
 

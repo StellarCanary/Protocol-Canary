@@ -1,0 +1,12 @@
+id = "conformance-invalid-rpc-unsupported-method"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "RPC fixture names a method unsupported by the fixture contract."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-balance"
+
+[[assert]]
+kind = "field-exists"
+field = "balance"

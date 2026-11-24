@@ -1,0 +1,60 @@
+{
+  "case": "empty-current",
+  "pair": "empty-current",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": true,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "was-fail",
+        "from": "fail",
+        "to": "absent",
+        "classification": "removed-failing",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "was-pass",
+        "from": "pass",
+        "to": "absent",
+        "classification": "removed",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [
+      {
+        "surface": "xdr",
+        "id": "was-pass"
+      }
+    ],
+    "summary": {
+      "regressed": 0,
+      "resolved": 0,
+      "added": 0,
+      "removed": 2,
+      "unchanged": 0,
+      "missing": 1
+    },
+    "verdict": "coverage-lost"
+  }
+}

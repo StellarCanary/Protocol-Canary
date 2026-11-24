@@ -3,3 +3,5 @@
 .stellar-canary-cache/
 *.pdb
 /docs-site/book/
+# Staged by .github/workflows/docs.yml from /viewer (not committed)
+/docs-site/src/viewer/

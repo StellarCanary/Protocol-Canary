@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "empty-current",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "was-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "was-fail"
+    },
+    {
+      "testId": "was-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "was-pass"
+    }
+  ]
+}

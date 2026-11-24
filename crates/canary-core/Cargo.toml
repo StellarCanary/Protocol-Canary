@@ -1,6 +1,6 @@
 [package]
 name = "canary-core"
-description = "Compatibility domain model, planning, and policy engine for Stellar Protocol Canary."
+description = "Compatibility domain model and policy engine for Stellar Protocol Canary."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -14,3 +14,4 @@ all = "warn"
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2 = "0.11"

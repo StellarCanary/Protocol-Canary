@@ -1,0 +1,46 @@
+{
+  "case": "observed-protocol-change",
+  "pair": "observed-protocol-change",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "pass"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": true,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "protocol-drift",
+        "from": "pass",
+        "to": "fail",
+        "classification": "regressed",
+        "regression": true,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 1,
+      "resolved": 0,
+      "added": 0,
+      "removed": 0,
+      "unchanged": 0,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

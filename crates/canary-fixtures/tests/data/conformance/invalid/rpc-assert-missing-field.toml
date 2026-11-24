@@ -1,0 +1,11 @@
+id = "conformance-invalid-rpc-assert-missing-field"
+protocol = 28
+surface = "rpc"
+category = "conformance"
+description = "RPC assertion omits its required field name."
+source_reference = "https://developers.stellar.org/docs/data/apis/rpc/api-reference/methods/getNetwork"
+
+method = "get-network"
+
+[[assert]]
+kind = "field-exists"

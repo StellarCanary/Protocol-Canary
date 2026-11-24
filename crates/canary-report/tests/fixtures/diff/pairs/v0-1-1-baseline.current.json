@@ -1,0 +1,47 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "v020_multi",
+    "type": "soroban"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 3,
+    "passed": 2,
+    "failed": 1,
+    "warnings": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "results": [
+    {
+      "testId": "p28-xdr-cap83",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "p28-xdr-cap83"
+    },
+    {
+      "testId": "p28-xdr-invalid",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "p28-xdr-invalid"
+    },
+    {
+      "testId": "p28-xdr-valid",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "p28-xdr-valid"
+    }
+  ]
+}

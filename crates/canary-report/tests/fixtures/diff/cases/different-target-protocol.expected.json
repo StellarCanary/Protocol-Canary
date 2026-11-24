@@ -1,0 +1,16 @@
+{
+  "case": "different-target-protocol",
+  "pair": "different-target-protocol",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expectedError": {
+    "variant": "TargetProtocolDiffers",
+    "side": null,
+    "contains": [
+      "baseline targets protocol 28",
+      "protocol 29",
+      "not comparable"
+    ]
+  }
+}

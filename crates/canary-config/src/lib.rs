@@ -3,8 +3,14 @@
 pub mod loader;
 pub mod schema;
 
-pub use loader::{load, load_from_root, ConfigError, CONFIG_FILE_NAME};
+pub use loader::{
+    load, load_from_root, load_lock, parse_config, parse_lock, resolve_settings, serialize_lock,
+    validate_report_against_lock, validate_stored_report_against_lock, write_lock, CliOverrides,
+    ConfigError, LockError, LockMismatchError, ResolvedSettings, CONFIG_FILE_NAME,
+    DEFAULT_FIXTURES_DIR, DEFAULT_NETWORK, LOCK_FILE_NAME, LOCK_TEMP_FILE_NAME,
+};
 pub use schema::{
-    ConfigFile, PolicySection, ProjectSection, ProjectTypeSetting, TestsSection, DEFAULT_PROTOCOL,
-    SUPPORTED_CONFIG_VERSION,
+    ConfigFile, LockFile, LockFixtures, LockSource, LockTool, PolicySection, ProjectSection,
+    ProjectTypeSetting, TestsSection, DEFAULT_PROTOCOL, MAX_LOCK_FILE_BYTES,
+    SUPPORTED_CONFIG_VERSION, SUPPORTED_LOCK_VERSION, SUPPORTED_REGISTRY_VERSION,
 };

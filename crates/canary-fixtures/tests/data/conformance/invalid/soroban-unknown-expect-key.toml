@@ -1,0 +1,15 @@
+id = "conformance-invalid-soroban-unknown-expect-key"
+protocol = 28
+surface = "soroban"
+category = "conformance"
+description = "Soroban expectation table contains an unknown misspelled key."
+source_reference = "https://developers.stellar.org/docs/tokens/stellar-asset-contract"
+
+source_account = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF"
+contract_id = "CDLZFC3SYJYDZT7K67VZ75HPJVIEUVNIXF47ZG2FB2RMQQVU2HHGCYSC"
+function = "missing"
+sequence_number = 1
+
+[expect]
+kind = "simulation-error"
+message_contain = "unknown function"

@@ -1,0 +1,91 @@
+{
+  "case": "from-fail",
+  "pair": "from-fail",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "fail"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "xdr",
+        "id": "fail-to-absent",
+        "from": "fail",
+        "to": "absent",
+        "classification": "removed-failing",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-error",
+        "from": "fail",
+        "to": "error",
+        "classification": "degraded",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-fail",
+        "from": "fail",
+        "to": "fail",
+        "classification": "unchanged",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-pass",
+        "from": "fail",
+        "to": "pass",
+        "classification": "resolved",
+        "regression": false,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-skipped",
+        "from": "fail",
+        "to": "skipped",
+        "classification": "skipped-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-warning",
+        "from": "fail",
+        "to": "warning",
+        "classification": "resolved",
+        "regression": false,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 2,
+      "resolved": 2,
+      "added": 0,
+      "removed": 1,
+      "unchanged": 1,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

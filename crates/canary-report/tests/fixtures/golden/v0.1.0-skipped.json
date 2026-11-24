@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.1.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "v010_skipped",
+    "type": "unknown"
+  },
+  "status": "pass",
+  "results": [
+    {
+      "testId": "p28-xdr-valid",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "decoded StellarValue successfully",
+      "durationMs": 0,
+      "fixtureId": "p28-xdr-valid"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "p27-xdr-skipped",
+      "surface": "xdr",
+      "reason": "fixture targets protocol 27, this run targets protocol 28"
+    }
+  ],
+  "git": {
+    "commit": "7cc5aad5b6c9100efad9847f879638193d4e9307",
+    "branch": "master",
+    "isDirty": false
+  }
+}

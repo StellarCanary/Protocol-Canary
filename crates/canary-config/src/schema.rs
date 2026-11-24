@@ -1,5 +1,7 @@
 //! Typed representation of `.stellar-canary.toml`.
 
+use std::path::PathBuf;
+
 use serde::{Deserialize, Serialize};
 
 use canary_core::ProjectType;
@@ -9,6 +11,10 @@ use canary_core::ProjectType;
 /// Bump this, and add explicit migration/rejection logic, before changing
 /// the shape of [`ConfigFile`] in a way that would silently misread an
 /// older file.
+///
+/// The current rejection logic lives in `crate::loader::validate`, which
+/// returns [`ConfigError::UnsupportedVersion`](crate::loader::ConfigError::UnsupportedVersion)
+/// for any other version. A version bump needs to extend that check.
 pub const SUPPORTED_CONFIG_VERSION: u32 = 1;
 
 /// The default target protocol used when a project does not pin one.
@@ -16,13 +22,50 @@ pub const DEFAULT_PROTOCOL: u32 = 28;
 
 /// The parsed, typed contents of `.stellar-canary.toml`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ConfigFile {
+    /// `version` — the configuration schema version this file is written
+    /// against. Required. Must equal [`SUPPORTED_CONFIG_VERSION`]: the loader
+    /// rejects any other value with
+    /// [`ConfigError::UnsupportedVersion`](crate::loader::ConfigError::UnsupportedVersion)
+    /// instead of guessing a migration. [`ConfigFile::default`] uses the
+    /// supported version.
     pub version: u32,
+    /// `protocol` — the target Stellar protocol version for this project.
+    /// Required and positive: the loader rejects `0` as an invalid
+    /// configuration. This value is the fallback when `--protocol` is not
+    /// passed, and an explicit `--protocol` overrides it.
+    /// [`ConfigFile::default`] uses [`DEFAULT_PROTOCOL`] (`28`).
     pub protocol: u32,
+    /// `network` — the network to run live checks against (`testnet`,
+    /// `mainnet`, `futurenet`, or a custom name). Optional: absent means
+    /// the CLI decides (its `--network`, else the built-in `testnet`
+    /// default; see `crate::loader::resolve_settings`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    /// `rpc_url` — the Stellar RPC endpoint for live checks. Optional:
+    /// absent means the CLI decides (its `--rpc-url`, else the network's
+    /// built-in default, if any).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_url: Option<String>,
+    /// `fixtures_dir` — the directory containing fixture files, relative to
+    /// the project root. Optional: absent means the CLI decides (its
+    /// `--fixtures-dir`, else the built-in `fixtures` default).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fixtures_dir: Option<PathBuf>,
+    /// `[project]` — how to classify the project under test. Optional and
+    /// defaulted: an absent table means `[project] type = "auto"`. See
+    /// [`ProjectSection`].
     #[serde(default)]
     pub project: ProjectSection,
+    /// `[tests]` — which compatibility surfaces are enabled. Optional;
+    /// every surface defaults to `true`, and the loader rejects a table that
+    /// turns all three off. See [`TestsSection`].
     #[serde(default)]
     pub tests: TestsSection,
+    /// `[policy]` — how results are turned into the overall pass/warn/fail
+    /// decision. Optional; every member defaults to `false`. See
+    /// [`PolicySection`].
     #[serde(default)]
     pub policy: PolicySection,
 }
@@ -32,6 +75,9 @@ impl Default for ConfigFile {
         ConfigFile {
             version: SUPPORTED_CONFIG_VERSION,
             protocol: DEFAULT_PROTOCOL,
+            network: None,
+            rpc_url: None,
+            fixtures_dir: None,
             project: ProjectSection::default(),
             tests: TestsSection::default(),
             policy: PolicySection::default(),
@@ -41,7 +87,13 @@ impl Default for ConfigFile {
 
 /// `[project]` — how to classify the project under test.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProjectSection {
+    /// `type` — how the project is classified. One of `"auto"` (run the
+    /// built-in detection), `"soroban"`, `"rpc-consumer"`, `"stellar-sdk"`,
+    /// `"generic-stellar"` or `"unknown"` (the five [`ProjectType`] names,
+    /// used as a user-declared override). Defaults to `"auto"`; any other
+    /// string is rejected at parse time.
     #[serde(rename = "type", default)]
     pub project_type: ProjectTypeSetting,
 }
@@ -105,12 +157,21 @@ impl<'de> Deserialize<'de> for ProjectTypeSetting {
 }
 
 /// `[tests]` — which surfaces are enabled for this project.
+///
+/// At least one surface must stay enabled: the loader rejects a configuration
+/// that turns all three off, because a run that executes nothing cannot claim
+/// to have checked anything.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct TestsSection {
+    /// `xdr` — enable the offline XDR surface. Defaults to `true`.
     #[serde(default = "default_true")]
     pub xdr: bool,
+    /// `rpc` — enable the live RPC surface. Defaults to `true`.
     #[serde(default = "default_true")]
     pub rpc: bool,
+    /// `soroban` — enable the Soroban simulation surface. Defaults to
+    /// `true`.
     #[serde(default = "default_true")]
     pub soroban: bool,
 }
@@ -131,9 +192,155 @@ impl Default for TestsSection {
 
 /// `[policy]` — how results are turned into a pass/warn/fail decision.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PolicySection {
+    /// `warnings_are_failures` — treat warning results as failures in the
+    /// overall decision and exit code. Defaults to `false`. The CLI's
+    /// `--fail-on-warning` flag enables the same promotion for one run, so
+    /// either source is enough.
     #[serde(default)]
     pub warnings_are_failures: bool,
+}
+
+/// The only `.stellar-canary.lock` version this build understands
+/// (CF-03 section 3, rule 1).
+pub const SUPPORTED_LOCK_VERSION: u32 = 1;
+
+/// The only fixture registry version this build can verify a pack against
+/// (CF-03 section 3, rule 5; the registry format is defined by CF-02).
+pub const SUPPORTED_REGISTRY_VERSION: u32 = 1;
+
+/// The largest lockfile that is read, in bytes: 64 KiB (CF-03 section 2).
+pub const MAX_LOCK_FILE_BYTES: u64 = 64 * 1024;
+
+/// The parsed, typed contents of `.stellar-canary.lock` (CF-03).
+///
+/// A lock pins what a run is checked against: the fixture pack and the
+/// protocol. Unknown keys and tables are rejected rather than ignored,
+/// because an ignored key could silently drop a pin.
+///
+/// This type has no `Serialize` implementation on purpose. The file format
+/// is defined byte for byte (key order, quoting, newlines), so writing goes
+/// through [`crate::loader::serialize_lock`] and nothing else.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockFile {
+    /// Always [`SUPPORTED_LOCK_VERSION`] in a value that passed validation.
+    #[serde(rename = "lockVersion")]
+    pub lock_version: u32,
+    /// `[tool]`: the engine version the lock was written with. Optional.
+    #[serde(default)]
+    pub tool: Option<LockTool>,
+    /// `[fixtures]`: the pinned fixture pack. Required.
+    pub fixtures: LockFixtures,
+}
+
+/// `[tool]` in a lockfile.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockTool {
+    /// `MAJOR.MINOR.PATCH`, with no leading `v`.
+    pub version: String,
+}
+
+/// `[fixtures]` in a lockfile.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LockFixtures {
+    /// The protocol the pack was pinned for. Zero is allowed: the contract
+    /// asks for a non-negative integer.
+    pub protocol: u32,
+    /// `sha256:` followed by 64 lowercase hex digits (CF-02).
+    #[serde(rename = "packDigest")]
+    pub pack_digest: String,
+    /// The registry format version of the pinned pack.
+    #[serde(rename = "registryVersion")]
+    pub registry_version: u32,
+    /// Where the pack came from. Informational.
+    #[serde(default)]
+    pub source: Option<LockSource>,
+    /// The pack's revision. Informational only, never compared.
+    #[serde(default)]
+    pub revision: Option<String>,
+}
+
+/// `fixtures.source` in a lockfile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LockSource {
+    Directory,
+    Release,
+}
+
+impl LockSource {
+    /// The spelling used in the file.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            LockSource::Directory => "directory",
+            LockSource::Release => "release",
+        }
+    }
+}
+
+impl LockFile {
+    /// Checks the rules a well-typed value can still break (CF-03 section 3,
+    /// rules 1, 4, 5 and 6). Returns the first violation as a message.
+    ///
+    /// Parsing runs this, and so does serialization, so a lock that would
+    /// not be accepted on read is never written.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.lock_version != SUPPORTED_LOCK_VERSION {
+            return Err(format!(
+                "lockVersion {} is not supported: this build supports version {SUPPORTED_LOCK_VERSION}",
+                self.lock_version
+            ));
+        }
+        if !is_pack_digest(&self.fixtures.pack_digest) {
+            return Err(format!(
+                "fixtures.packDigest {:?} is invalid: expected \"sha256:\" followed by 64 lowercase hex digits",
+                self.fixtures.pack_digest
+            ));
+        }
+        if self.fixtures.registry_version != SUPPORTED_REGISTRY_VERSION {
+            return Err(format!(
+                "fixtures.registryVersion {} is not supported: this build supports version {SUPPORTED_REGISTRY_VERSION}",
+                self.fixtures.registry_version
+            ));
+        }
+        if let Some(tool) = &self.tool {
+            if !is_release_version(&tool.version) {
+                return Err(format!(
+                    "tool.version {:?} is invalid: expected MAJOR.MINOR.PATCH with no leading \"v\"",
+                    tool.version
+                ));
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `^sha256:[0-9a-f]{64}$`, without a regular-expression dependency.
+fn is_pack_digest(value: &str) -> bool {
+    value.strip_prefix("sha256:").is_some_and(|hex| {
+        hex.len() == 64 && hex.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    })
+}
+
+/// `MAJOR.MINOR.PATCH`: three dot-separated decimal numbers, no leading
+/// zeros, no `v` prefix, no pre-release or build suffix.
+fn is_release_version(value: &str) -> bool {
+    let mut parts = value.split('.');
+    let numeric = |part: Option<&str>| {
+        part.is_some_and(|p| {
+            !p.is_empty()
+                && p.bytes().all(|b| b.is_ascii_digit())
+                && (p == "0" || !p.starts_with('0'))
+        })
+    };
+    numeric(parts.next())
+        && numeric(parts.next())
+        && numeric(parts.next())
+        && parts.next().is_none()
 }
 
 #[cfg(test)]
@@ -148,6 +355,11 @@ mod tests {
         assert_eq!(config.project.project_type, ProjectTypeSetting::Auto);
         assert!(config.tests.xdr && config.tests.rpc && config.tests.soroban);
         assert!(!config.policy.warnings_are_failures);
+        // The run settings are optional and unset by default so the CLI can
+        // cascade over them (issue #474).
+        assert_eq!(config.network, None);
+        assert_eq!(config.rpc_url, None);
+        assert_eq!(config.fixtures_dir, None);
     }
 
     #[test]
@@ -158,11 +370,25 @@ mod tests {
             ProjectTypeSetting::Explicit(ProjectType::RpcConsumer),
             ProjectTypeSetting::Explicit(ProjectType::StellarSdk),
             ProjectTypeSetting::Explicit(ProjectType::GenericStellar),
+            ProjectTypeSetting::Explicit(ProjectType::Unknown),
         ] {
             let json = serde_json::to_string(&setting).unwrap();
             let parsed: ProjectTypeSetting = serde_json::from_str(&json).unwrap();
             assert_eq!(setting, parsed);
         }
+    }
+
+    #[test]
+    fn explicit_unknown_project_type_uses_its_own_wire_string() {
+        // The round trip above cannot catch `Unknown` and `Auto` being
+        // cross-wired to the same string, since both mappings would agree.
+        let json =
+            serde_json::to_string(&ProjectTypeSetting::Explicit(ProjectType::Unknown)).unwrap();
+        assert_eq!(json, "\"unknown\"");
+        assert_eq!(
+            serde_json::from_str::<ProjectTypeSetting>("\"unknown\"").unwrap(),
+            ProjectTypeSetting::Explicit(ProjectType::Unknown)
+        );
     }
 
     #[test]

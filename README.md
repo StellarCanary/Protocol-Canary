@@ -1,5 +1,6 @@
 # Stellar Protocol Canary
 
+
 ![Protocol-Canary](assets/ProtocolCanary-banner.svg)
 
 Rehearse Stellar protocol upgrades before they reach your production stack.
@@ -38,10 +39,18 @@ endpoint, before the network moves.
 
 ## Quick start
 
-Install a released version from source:
+Download a prebuilt archive for Linux x86_64, macOS x86_64, macOS arm64, or
+Windows x86_64 from the [Releases](https://github.com/StellarCanary/Protocol-Canary/releases)
+page. Every asset has a `.sha256` sidecar and each release publishes a
+`SHA256SUMS` manifest: verify with `sha256sum -c SHA256SUMS` (or
+`shasum -a 256 -c SHA256SUMS`) on Linux and macOS, and with `Get-FileHash` on
+Windows. See [Installation](https://stellarcanary.github.io/Protocol-Canary/installation.html)
+for the exact archive names.
+
+Alternatively, install the current release from source:
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.1.1 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.3.0 --locked
 stellar-canary check
 ```
 
@@ -98,6 +107,8 @@ Status: PASS
 
 Protocol Canary reads `.stellar-canary.toml` from the project root:
 
+<!-- config-example: v1 -->
+
 ```toml
 version = 1
 protocol = 28
@@ -113,6 +124,36 @@ soroban = true
 [policy]
 warnings_are_failures = false
 ```
+
+Three run settings are optional and can be written anywhere before the first
+table, so a file can pin the network, endpoint or fixture directory a project
+always uses:
+
+<!-- config-example: v1 -->
+
+```toml
+version = 1
+protocol = 28
+network = "testnet"
+rpc_url = "https://soroban-testnet.stellar.org"
+fixtures_dir = "fixtures"
+```
+
+`network` is one token (`testnet`, `stg-2.canary.dev`), `rpc_url` is an absolute
+`http` or `https` endpoint, and `fixtures_dir` is a path relative to the project
+root. A CLI flag outranks the stored value, so `--network`, `--rpc-url` and
+`--fixtures-dir` still win over anything written here.
+
+From `0.2.0` an unknown section or key is an error (exit code `2`, naming the
+field), not ignored. Before, a misspelling such as `[test]` for `[tests]` left
+every surface enabled without a word.
+
+The shape of this file is published as
+[`docs/schemas/config-v1.schema.json`](docs/schemas/config-v1.schema.json), a
+draft 2020-12 JSON Schema you can point an editor at. Two suites keep it
+honest: `crates/canary-config/tests/schema.rs` checks the documented shapes and
+rejections, and `crates/canary-config/tests/schema_parity.rs` checks the schema
+against the loader itself.
 
 ## Protocol 28
 
@@ -140,7 +181,9 @@ rather than guessed at here.
 No database, no persistent server, no Docker, and no private key or
 seed phrase are required for either path. See
 [docs/architecture.md](docs/architecture.md) for the full execution
-topology, external dependencies, and failure behavior.
+topology, external dependencies, and failure behavior, and
+[docs/reproducibility.md](docs/reproducibility.md) for reproducing runs
+from lockfiles and fixture packs.
 
 ## Ecosystem
 
@@ -155,7 +198,9 @@ sibling repositories build on it:
   artifact from its JSON output.
 
 See [docs/architecture.md](docs/architecture.md) for how the three
-repositories fit together, [docs/json-report-contract.md](docs/json-report-contract.md)
+repositories fit together, [docs/reproducibility.md](docs/reproducibility.md)
+for step-by-step test run reproduction,
+[docs/json-report-contract.md](docs/json-report-contract.md)
 for the exact `--json` shape a consumer like the Action should parse, and
 [docs/fixture-contract.md](docs/fixture-contract.md) for how fixtures are
 supplied via `--fixtures-dir`.
@@ -164,9 +209,15 @@ supplied via `--fixtures-dir`.
 
 | `Protocol-Canary` | Fixture pack | Target protocol | `ProtocolCanary-Action` |
 |---|---|---|---|
+| `v0.3.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | not yet verified with a published Action release (default input is still `0.1.1`) |
+| `v0.2.0` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (explicit `version: "0.2.0"`) |
 | `v0.1.1` | `ProtocolCanary-Fixtures` `protocol-28/` | 28 | `v1` (default `version: "0.1.1"`) |
 
 Only combinations that have actually been run together are listed here.
+`v0.3.0` is the current Engine release, but no `ProtocolCanary-Action`
+release pins it yet: the Action's default `version` input is still `0.1.1`,
+so this table does not claim that combination.
+
 `v0.1.0` reports predate the `counts` field and predate `ContractExecutable`
 XDR support (needed by two of the current Protocol 28 fixtures); the Action
 tolerates the missing field but `v0.1.1` is the version this table
@@ -204,17 +255,19 @@ configured protocol passed. It is not a guarantee that an application
 cannot break in some other way, and it does not replace testing against a
 real testnet or mainnet deployment.
 
-The local result cache (`canary_core::CacheStore`) exists and is tested,
-but is not yet wired into `check`'s execution path — every run currently
-calls RPC/Soroban fresh rather than reusing a prior result. See
-[CHANGELOG.md](CHANGELOG.md) for the full known-gaps list.
+From `0.2.0`, `check` reuses results from a local cache (`canary_core::CacheStore`,
+written to `.stellar-canary-cache` in the project root). The cache key covers
+the fixture's contents, the network, the tool version and the project's
+detected shape, so editing a fixture cannot return an old result. Only offline
+XDR results are replayed by default; RPC and Soroban results are replayed only
+with `--live-cache-ttl <SECONDS>`, and any replayed result is marked
+`"source": "cache"` in the JSON report. `--no-cache` skips the cache. See
+[`docs/contracts/cf-01-report.md`](docs/contracts/cf-01-report.md#6-cached-results).
 
 ## Roadmap
 
 See [ROADMAP.md](ROADMAP.md) for planned work. Highlights: Protocol 29
-support once its CAPs are finalized upstream, wiring the existing
-`CacheStore` into `check`'s execution path, and additional RPC/Soroban
-compatibility assertions.
+support once evidence-backed fixtures exist, and additional RPC/Soroban compatibility assertions.
 
 ## Workspace layout
 

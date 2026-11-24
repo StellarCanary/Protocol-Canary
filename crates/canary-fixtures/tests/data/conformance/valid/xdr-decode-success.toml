@@ -1,0 +1,10 @@
+id = "conformance-valid-xdr-decode-success"
+protocol = 28
+surface = "xdr"
+category = "conformance"
+description = "Accepted XDR decode-success fixture shape."
+source_reference = "CAP-0083"
+
+type = "StellarValue"
+kind = "decode-success"
+value_base64 = "AAAAAA=="

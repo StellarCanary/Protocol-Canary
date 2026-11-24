@@ -1,0 +1,64 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "from-pass",
+    "type": "unknown"
+  },
+  "status": "error",
+  "counts": {
+    "total": 4,
+    "passed": 1,
+    "failed": 1,
+    "warnings": 1,
+    "errors": 1,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "pass-to-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "pass-to-pass"
+    },
+    {
+      "testId": "pass-to-warning",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "pass-to-warning"
+    },
+    {
+      "testId": "pass-to-fail",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "pass-to-fail"
+    },
+    {
+      "testId": "pass-to-error",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "error",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "pass-to-error"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "pass-to-skipped",
+      "surface": "xdr",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

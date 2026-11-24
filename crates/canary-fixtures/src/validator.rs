@@ -38,24 +38,26 @@ fn check_unique_ids(fixtures: &[LoadedFixture]) -> Result<(), FixtureError> {
 
 fn check_referenced_files_exist(fixtures: &[LoadedFixture]) -> Result<(), FixtureError> {
     for fixture in fixtures {
-        if let Some(input_file) = &fixture.input_file {
-            if !input_file.is_file() {
-                return Err(FixtureError::MissingReferencedFile {
-                    id: fixture.metadata.id.clone(),
-                    source_path: fixture.source_path.clone(),
-                    kind: "input",
-                    referenced: input_file.clone(),
-                });
-            }
-        }
-        if let Some(expected_file) = &fixture.expected_file {
-            if !expected_file.is_file() {
-                return Err(FixtureError::MissingReferencedFile {
-                    id: fixture.metadata.id.clone(),
-                    source_path: fixture.source_path.clone(),
-                    kind: "expected",
-                    referenced: expected_file.clone(),
-                });
+        for (kind, reference) in [
+            ("input", &fixture.input_file),
+            ("expected", &fixture.expected_file),
+        ] {
+            let Some(path) = reference else { continue };
+            // `symlink_metadata` does not follow links, so a link in place of
+            // a payload is reported as such instead of being read through.
+            match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.file_type().is_symlink() => {
+                    return Err(FixtureError::SymbolicLink { path: path.clone() });
+                }
+                Ok(meta) if meta.file_type().is_file() => {}
+                _ => {
+                    return Err(FixtureError::MissingReferencedFile {
+                        id: fixture.metadata.id.clone(),
+                        source_path: fixture.source_path.clone(),
+                        kind,
+                        referenced: path.clone(),
+                    });
+                }
             }
         }
     }
@@ -78,11 +80,13 @@ mod tests {
                 description: "test".into(),
                 source_reference: None,
                 required_capabilities: vec![],
+                content_digest: String::new(),
             },
             source_path: PathBuf::from(source_path),
             input_file: None,
             expected_file: None,
             body: toml::Value::Table(Default::default()),
+            verification: None,
         }
     }
 
@@ -117,5 +121,104 @@ mod tests {
         let mut f = fixture("a", "a.toml");
         f.input_file = Some(file_path);
         assert!(validate(&[f]).is_ok());
+    }
+
+    /// Creates `link` pointing at `target`. Returns `false` when the platform
+    /// refuses (Windows without the symlink privilege), so the caller can skip
+    /// instead of failing for a reason unrelated to the validator.
+    fn try_symlink(target: &std::path::Path, link: &std::path::Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            std::os::windows::fs::symlink_file(target, link).is_ok()
+        }
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = (target, link);
+            false
+        }
+    }
+
+    #[test]
+    fn rejects_symbolic_link_referenced_payload() {
+        let dir = crate::test_support::temp_dir("validator-symlink-input");
+        let target = dir.path.join("target.bin");
+        std::fs::write(&target, b"data").unwrap();
+        let link = dir.path.join("link.bin");
+        if !try_symlink(&target, &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.input_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        match err {
+            FixtureError::SymbolicLink { path } => assert_eq!(path, link),
+            other => panic!("expected SymbolicLink naming the link, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn rejects_symbolic_link_referenced_expected_payload() {
+        let dir = crate::test_support::temp_dir("validator-symlink-expected");
+        let target = dir.path.join("target.bin");
+        std::fs::write(&target, b"data").unwrap();
+        let link = dir.path.join("link.bin");
+        if !try_symlink(&target, &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.expected_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        match err {
+            FixtureError::SymbolicLink { path } => assert_eq!(path, link),
+            other => panic!("expected SymbolicLink naming the link, got: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_dangling_symbolic_link_is_reported_as_a_link_not_a_missing_file() {
+        let dir = crate::test_support::temp_dir("validator-symlink-dangling");
+        let link = dir.path.join("dangling.bin");
+        if !try_symlink(&dir.path.join("never-created.bin"), &link) {
+            eprintln!("skipping: this platform cannot create symbolic links");
+            return;
+        }
+        let mut f = fixture("a", "a.toml");
+        f.input_file = Some(link.clone());
+
+        let err = validate(&[f]).unwrap_err();
+
+        assert!(
+            matches!(&err, FixtureError::SymbolicLink { path } if *path == link),
+            "expected SymbolicLink for a dangling link, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_missing_referenced_expected_file() {
+        let dir = crate::test_support::temp_dir("validator-missing-expected-file");
+        let mut f = fixture("a", "a.toml");
+        f.input_file = None;
+        f.expected_file = Some(dir.path.join("does-not-exist.bin"));
+        let err = validate(&[f]).unwrap_err();
+        assert!(
+            matches!(
+                err,
+                FixtureError::MissingReferencedFile {
+                    kind: "expected",
+                    ..
+                }
+            ),
+            "expected MissingReferencedFile with kind \"expected\", got: {err:?}"
+        );
     }
 }

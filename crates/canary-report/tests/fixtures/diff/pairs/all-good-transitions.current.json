@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "toolVersion": "0.2.0",
+  "targetProtocol": 28,
+  "project": {
+    "name": "all-good-transitions",
+    "type": "unknown"
+  },
+  "status": "fail",
+  "counts": {
+    "total": 8,
+    "passed": 5,
+    "failed": 1,
+    "warnings": 2,
+    "errors": 0,
+    "skipped": 1
+  },
+  "results": [
+    {
+      "testId": "added",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "added"
+    },
+    {
+      "testId": "degraded",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "degraded"
+    },
+    {
+      "testId": "improved",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "improved"
+    },
+    {
+      "testId": "resolved",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "resolved"
+    },
+    {
+      "testId": "unchanged-pass",
+      "protocol": 28,
+      "surface": "xdr",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "unchanged-pass"
+    },
+    {
+      "testId": "error-resolved",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "warning",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "error-resolved"
+    },
+    {
+      "testId": "skip-to-pass",
+      "protocol": 28,
+      "surface": "rpc",
+      "status": "pass",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "skip-to-pass"
+    },
+    {
+      "testId": "improved-error",
+      "protocol": 28,
+      "surface": "soroban",
+      "status": "fail",
+      "summary": "golden corpus transition",
+      "durationMs": 1,
+      "fixtureId": "improved-error"
+    }
+  ],
+  "skipped": [
+    {
+      "fixtureId": "absent-to-skipped",
+      "surface": "rpc",
+      "reason": "requires a capability not declared by this project",
+      "code": "MISSING_CAPABILITY"
+    }
+  ]
+}

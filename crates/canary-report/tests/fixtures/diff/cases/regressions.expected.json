@@ -1,0 +1,109 @@
+{
+  "case": "regressions",
+  "pair": "regressions",
+  "options": {
+    "warningsAreFailures": false
+  },
+  "expected": {
+    "diffVersion": 1,
+    "comparable": true,
+    "baseline": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "current": {
+      "toolVersion": "0.2.0",
+      "targetProtocol": 28,
+      "status": "error"
+    },
+    "fixturePackChanged": null,
+    "observedProtocolChanged": false,
+    "emptyBaseline": false,
+    "emptyCurrent": false,
+    "entries": [
+      {
+        "surface": "rpc",
+        "id": "absent-to-warning",
+        "from": "absent",
+        "to": "warning",
+        "classification": "added-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "fail-to-skipped",
+        "from": "fail",
+        "to": "skipped",
+        "classification": "skipped-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "rpc",
+        "id": "warn-to-error",
+        "from": "warning",
+        "to": "error",
+        "classification": "regressed",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "absent-to-fail",
+        "from": "absent",
+        "to": "fail",
+        "classification": "added-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "soroban",
+        "id": "error-to-skipped",
+        "from": "error",
+        "to": "skipped",
+        "classification": "skipped-failing",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "fail-to-error",
+        "from": "fail",
+        "to": "error",
+        "classification": "degraded",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "regressed",
+        "from": "pass",
+        "to": "fail",
+        "classification": "regressed",
+        "regression": true,
+        "sourceChanged": null
+      },
+      {
+        "surface": "xdr",
+        "id": "skip-to-error",
+        "from": "skipped",
+        "to": "error",
+        "classification": "added-failing",
+        "regression": true,
+        "sourceChanged": null
+      }
+    ],
+    "missing": [],
+    "summary": {
+      "regressed": 8,
+      "resolved": 0,
+      "added": 3,
+      "removed": 0,
+      "unchanged": 0,
+      "missing": 0
+    },
+    "verdict": "regression"
+  }
+}

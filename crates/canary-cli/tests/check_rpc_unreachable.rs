@@ -1,87 +1,107 @@
+//! Issue #274: no test drove `check` against an endpoint that is simply not
+//! there. Every existing RPC integration test points at a live `wiremock`
+//! server, so the whole unreachable-network branch was unexercised:
+//!
+//! - the network probe in `commands.rs` treats a transport failure as
+//!   "protocol not observed" and deliberately does *not* abort the run,
+//! - each fixture then surfaces the outage as `Status::Error`,
+//! - and `exit_code_for_run` turns any `Status::Error` into
+//!   `ExitCode::ExecutionError` (exit 3) — a code no CLI test had ever
+//!   asserted.
+//!
+//! This test pins that contract: a dead endpoint fails loudly and
+//! distinctly from a compatibility failure (1) or a configuration error (2).
+
 mod support;
 
-use std::net::TcpListener;
-use support::{run_in, stdout, TempProject};
+use support::{run_in, stderr, stdout, TempProject};
 
-const RPC_FIXTURE: &str = r#"
-id = "p28-rpc-get-network"
+const UNREACHABLE_CONFIG: &str = r#"
+version = 1
 protocol = 28
-surface = "rpc"
-category = "network"
-description = "getNetwork reports protocol 28 and a passphrase"
 
-method = "get-network"
-
-[[assert]]
-kind = "field-exists"
-field = "passphrase"
+[tests]
+xdr = false
+rpc = true
+soroban = false
 "#;
 
-#[test]
-fn check_json_with_unreachable_rpc_url_exits_code_3_and_reports_error() {
-    let dir = TempProject::new("check-rpc-unreachable");
-    dir.write("fixtures/p28-rpc-get-network.toml", RPC_FIXTURE);
-
-    // Bind and drop an ephemeral TCP listener to obtain a port that is guaranteed closed.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
-    let port = listener.local_addr().expect("local addr").port();
+/// The URI of a TCP port nothing is listening on.
+///
+/// Binding an ephemeral listener and dropping it hands back a port that is
+/// almost certainly free; a stray process claiming it in between would only
+/// turn connection-refused into a different transport error, and the run
+/// still ends in `Status::Error`.
+fn closed_port_uri() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("an ephemeral port must be bindable on loopback");
+    let port = listener
+        .local_addr()
+        .expect("a bound listener has a local address")
+        .port();
     drop(listener);
-    let rpc_url = format!("http://127.0.0.1:{port}");
+    format!("http://127.0.0.1:{port}")
+}
 
-    let output = run_in(&dir.path, &["check", "--json", "--rpc-url", &rpc_url]);
+/// The acceptance case for #274: an unreachable endpoint must be reported as
+/// an execution error, not silently treated as a passing or skipped run.
+#[test]
+fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
+    let dir = TempProject::new("check-rpc-unreachable");
+    dir.write(".stellar-canary.toml", UNREACHABLE_CONFIG);
+    dir.write(
+        "fixtures/p28-rpc-1.toml",
+        "id = \"p28-rpc-1\"\n\
+         protocol = 28\n\
+         surface = \"rpc\"\n\
+         category = \"network\"\n\
+         description = \"test\"\n\
+         method = \"get-network\"\n\
+         \n\
+         [[assert]]\n\
+         kind = \"field-type\"\n\
+         field = \"passphrase\"\n\
+         expected_type = \"string\"\n",
+    );
 
+    let output = run_in(&dir.path, &["check", "--rpc-url", &closed_port_uri()]);
+
+    // 3 == ExitCode::ExecutionError: the run happened, the network did not.
     assert_eq!(
         output.status.code(),
         Some(3),
-        "unreachable RPC should map to exit code 3 (ExecutionError)"
+        "an unreachable endpoint must exit with the execution-error code; \
+         stdout: {} | stderr: {}",
+        stdout(&output),
+        stderr(&output)
     );
 
-    let stdout_text = stdout(&output);
-    let value: serde_json::Value = serde_json::from_str(&stdout_text)
-        .expect("stdout must parse as valid JSON conforming to CF-01 report structure");
-
-    // Top-level schema conformance checks
-    assert_eq!(value["schemaVersion"], 1);
-    assert!(value["toolVersion"].is_string());
-    assert_eq!(value["targetProtocol"], 28);
-    assert!(value["project"]["name"].is_string());
-    assert!(value["project"]["type"].is_string());
-
-    // Acceptance criteria assertions
-    assert_eq!(value["status"], "error", "top-level status must be error");
-    assert_eq!(value["counts"]["errors"], 1, "counts.errors must be 1");
-    assert_eq!(value["counts"]["passed"], 0, "counts.passed must be 0");
-    assert_eq!(value["counts"]["total"], 1, "counts.total must be 1");
-
-    let results = value["results"]
-        .as_array()
-        .expect("results must be an array");
-    assert_eq!(results.len(), 1, "results must contain 1 entry");
-
-    let fixture_result = &results[0];
-    assert_eq!(fixture_result["testId"], "p28-rpc-get-network");
-    assert_eq!(fixture_result["surface"], "rpc");
-    assert_eq!(
-        fixture_result["status"], "error",
-        "fixture result status must be error"
-    );
-
-    let summary = fixture_result["summary"]
-        .as_str()
-        .unwrap_or_default()
-        .to_lowercase();
-    let details = fixture_result["details"]
-        .as_str()
-        .unwrap_or_default()
-        .to_lowercase();
-    let combined_message = format!("{summary} {details}");
-
+    let text = stdout(&output);
     assert!(
-        combined_message.contains("connection refused")
-            || combined_message.contains("transport failure")
-            || combined_message.contains("transport"),
-        "fixture result must reference connection refusal or transport failure in summary/details, got: summary={:?}, details={:?}",
-        fixture_result["summary"],
-        fixture_result["details"]
+        text.contains("protocol not observed"),
+        "the probe's transport failure must be recorded as an unobserved \
+         protocol rather than hiding the network line; stdout: {text}"
     );
+    assert!(
+        text.contains("‼ ERROR"),
+        "the fixture must be reported as an error, not a pass or a skip; \
+         stdout: {text}"
+    );
+    assert!(
+        text.contains("Status: ERROR"),
+        "the terminal verdict must be ERROR for an execution failure; \
+         stdout: {text}"
+    );
+    assert!(
+        text.contains("0/1 applicable checks passed."),
+        "stdout: {text}"
+    );
+
+    // The unreachable endpoint is the most common first stumble, so the
+    // stderr output says what to check next — as an extra `Hint:` line,
+    // never instead of the exit-code and report contract above.
+    let err = stderr(&output);
+    assert!(err.contains("Hint:"), "stderr: {err}");
+    assert!(err.contains("standalone node"), "stderr: {err}");
+    assert!(err.contains("reachable"), "stderr: {err}");
 }

@@ -19,6 +19,37 @@ fn surface_cell(results: &[&canary_core::CompatibilityResult]) -> &'static str {
     }
 }
 
+/// Renders report-supplied text as literal Markdown text.
+///
+/// Result ids, summaries, diagnostic lines and skip reasons are data, not
+/// formatting: Markdown syntax inside them must not turn into emphasis, a
+/// link or raw HTML, and a line break must not be able to end the bullet it
+/// belongs to and start a new section. Every character that can open an
+/// inline construct is backslash-escaped, the three HTML-significant
+/// characters become entities (a backslash does not neutralise them in
+/// every renderer), and CR/LF collapse to a single space so the surrounding
+/// report layout is unchanged. Backslash is handled first, so an escape a
+/// report value already carried stays literal text instead of becoming an
+/// escape introducer.
+fn markdown_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '\\' => out.push_str("\\\\"),
+            '`' | '*' | '_' | '[' | ']' | '~' => {
+                out.push('\\');
+                out.push(character);
+            }
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '&' => out.push_str("&amp;"),
+            '\n' | '\r' => out.push(' '),
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 /// Renders a [`ReportInput`] as Markdown suitable for a GitHub job
 /// summary.
 pub struct MarkdownReporter;
@@ -36,6 +67,11 @@ impl MarkdownReporter {
     /// # Arguments
     ///
     /// * `input` - Reference to the [`ReportInput`] containing test outcomes and policy decision.
+    ///
+    /// Report-supplied strings (result ids, summaries, diagnostic lines and
+    /// verbose skip reasons) are written as literal text through
+    /// [`markdown_text`], so their content cannot alter the report's
+    /// structure.
     ///
     /// # Returns
     ///
@@ -84,10 +120,15 @@ impl MarkdownReporter {
             let _ = writeln!(out, "### Failures");
             for failure in failures {
                 let _ = writeln!(out);
-                let _ = writeln!(out, "- **{}**: {}", failure.test_id, failure.summary);
+                let _ = writeln!(
+                    out,
+                    "- **{}**: {}",
+                    markdown_text(&failure.test_id),
+                    markdown_text(&failure.summary)
+                );
                 if let Some(details) = &failure.details {
                     for line in details.lines() {
-                        let _ = writeln!(out, "  - {line}");
+                        let _ = writeln!(out, "  - {}", markdown_text(line));
                     }
                 }
             }
@@ -98,7 +139,12 @@ impl MarkdownReporter {
             let _ = writeln!(out, "Skipped {} fixture(s).", input.skipped.len());
             if input.verbose {
                 for skip in &input.skipped {
-                    let _ = writeln!(out, "- **{}**: {}", skip.fixture_id, skip.reason);
+                    let _ = writeln!(
+                        out,
+                        "- **{}**: {}",
+                        markdown_text(&skip.fixture_id),
+                        markdown_text(&skip.reason)
+                    );
                 }
             }
         }
@@ -419,6 +465,76 @@ mod tests {
         let text = MarkdownReporter::render(&input);
         let expected = "- **p28-xdr-2**: p28-xdr-2 summary\n  - error summary\n  - byte offset: 12\n  - expected something else\n";
         assert!(text.contains(expected));
+    }
+
+    /// Report text is data: markup inside a result id, summary or diagnostic
+    /// line must stay visible as text instead of becoming emphasis, a link
+    /// or raw HTML in the job summary.
+    #[test]
+    fn markdown_syntax_in_report_text_renders_as_literal_text() {
+        let mut failing = result("p28-`xdr`-1", Surface::Xdr, Status::Fail);
+        failing.summary =
+            "**bold** _em_ [link](https://example.invalid) <b>html</b> & ~del~".into();
+        failing.details = Some("`code` and <details>open</details>\n* second line".into());
+        let input = base_input(vec![failing], PolicyDecision::Fail);
+        let text = MarkdownReporter::render(&input);
+
+        assert!(
+            text.contains(
+                "- **p28-\\`xdr\\`-1**: \\*\\*bold\\*\\* \\_em\\_ \\[link\\](https://example.invalid) &lt;b&gt;html&lt;/b&gt; &amp; \\~del\\~"
+            ),
+            "{text}"
+        );
+        assert!(
+            text.contains("  - \\`code\\` and &lt;details&gt;open&lt;/details&gt;"),
+            "{text}"
+        );
+        // A leading `*` would otherwise open emphasis inside the bullet.
+        assert!(text.contains("  - \\* second line"), "{text}");
+        assert!(
+            !text.contains("<details>open"),
+            "raw HTML must not survive escaping: {text}"
+        );
+    }
+
+    /// A diagnostic can carry line breaks; they must not be able to end the
+    /// failure bullet and start a heading or a new top-level list.
+    #[test]
+    fn line_breaks_in_ids_and_summaries_stay_inside_their_bullet() {
+        let mut failing = result(
+            "p28-xdr-1\n### Injected heading",
+            Surface::Xdr,
+            Status::Fail,
+        );
+        failing.summary = "first line\n- injected top-level bullet".into();
+        let input = base_input(vec![failing], PolicyDecision::Fail);
+        let text = MarkdownReporter::render(&input);
+
+        assert!(!text.contains("\n### Injected"), "{text}");
+        assert!(!text.contains("\n- injected"), "{text}");
+        assert!(
+            text.contains(
+                "- **p28-xdr-1 ### Injected heading**: first line - injected top-level bullet\n"
+            ),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn verbose_skip_reasons_are_escaped_too() {
+        let mut input = base_input(vec![], PolicyDecision::Pass);
+        input.verbose = true;
+        input.skipped.push(SkipSummary {
+            fixture_id: "p28-soroban-<1>".into(),
+            surface: Surface::Soroban,
+            reason: "needs `x` & *y*\nsecond line".into(),
+            code: canary_core::SkipCode::MissingCapability,
+        });
+        let text = MarkdownReporter::render(&input);
+        assert!(
+            text.contains("- **p28-soroban-&lt;1&gt;**: needs \\`x\\` &amp; \\*y\\* second line"),
+            "{text}"
+        );
     }
 
     #[test]

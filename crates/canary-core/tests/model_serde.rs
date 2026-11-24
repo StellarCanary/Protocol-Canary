@@ -390,6 +390,102 @@ fn run_options_roundtrip_and_keep_documented_defaults_for_legacy_payloads() {
 }
 
 #[test]
+fn run_options_with_non_default_values_roundtrip_under_their_serialized_keys() {
+    let options = RunOptions {
+        verbose: true,
+        quiet: false,
+        max_concurrency: 16,
+        rpc_timeout: 120,
+        rpc_max_retries: 7,
+        rpc_retry_delay_ms: 2_500,
+    };
+
+    // The wire keys are snake_case, matching the struct field names.
+    assert_eq!(
+        serde_json::to_value(&options).unwrap(),
+        json!({
+            "verbose": true,
+            "quiet": false,
+            "max_concurrency": 16,
+            "rpc_timeout": 120,
+            "rpc_max_retries": 7,
+            "rpc_retry_delay_ms": 2500
+        })
+    );
+
+    let back = roundtrip(&options);
+    assert_eq!(back.max_concurrency, 16);
+    assert_eq!(back.rpc_timeout, 120);
+    assert_eq!(back.rpc_max_retries, 7);
+    assert_eq!(back.rpc_retry_delay_ms, 2_500);
+    assert!(back.verbose);
+    assert!(!back.quiet);
+}
+
+#[test]
+fn run_options_roundtrip_across_flag_and_numeric_combinations() {
+    let combinations = [
+        // Both flags on, retries disabled.
+        (true, true, 1, 1, 0, 0),
+        // Only quiet, a long timeout and many retries.
+        (false, true, 64, 600, 10, 30_000),
+        // Largest values of each numeric field.
+        (true, false, u32::MAX, u64::MAX, u32::MAX, u64::MAX),
+        // Smallest values of each numeric field.
+        (false, false, 0, 0, 0, 0),
+    ];
+
+    for (verbose, quiet, max_concurrency, rpc_timeout, rpc_max_retries, rpc_retry_delay_ms) in
+        combinations
+    {
+        let options = RunOptions {
+            verbose,
+            quiet,
+            max_concurrency,
+            rpc_timeout,
+            rpc_max_retries,
+            rpc_retry_delay_ms,
+        };
+        let value = serde_json::to_value(&options).unwrap();
+
+        let mut keys: Vec<&str> = value
+            .as_object()
+            .expect("RunOptions serializes to an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            [
+                "max_concurrency",
+                "quiet",
+                "rpc_max_retries",
+                "rpc_retry_delay_ms",
+                "rpc_timeout",
+                "verbose"
+            ],
+            "unexpected keys for {options:?}"
+        );
+
+        assert_eq!(roundtrip(&options), options);
+    }
+}
+
+#[test]
+fn run_options_do_not_accept_camel_case_keys() {
+    // The wire format is snake_case only: a camelCase payload is missing the
+    // required fields rather than silently mapped.
+    let camel = json!({
+        "verbose": false,
+        "quiet": false,
+        "maxConcurrency": 2,
+        "rpcTimeout": 5
+    });
+    assert!(serde_json::from_value::<RunOptions>(camel).is_err());
+}
+
+#[test]
 fn fixture_metadata_roundtrips_and_defaults_a_missing_digest() {
     let metadata = fixture("p28-rpc-001", 28, Surface::Rpc);
     assert_eq!(roundtrip(&metadata), metadata);

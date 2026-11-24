@@ -86,6 +86,11 @@ pub enum FixtureError {
         reason: String,
     },
 
+    /// A fixture's `id` is empty or only whitespace, so reports and the result
+    /// cache could not tell it apart from another fixture.
+    #[error("fixture file {path} has an empty id; the id must contain at least one non-whitespace character")]
+    EmptyId { path: PathBuf },
+
     #[error("duplicate fixture id {id:?}: defined in both {first} and {second}")]
     DuplicateId {
         id: String,

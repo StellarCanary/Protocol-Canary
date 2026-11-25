@@ -1,5 +1,6 @@
 mod support;
 
+use canary_fixtures::digest::{pack_digest, sha256_hex};
 use support::{
     run_in, stderr, stdout, TempProject, DECODE_FAILURE_BASE64, VALID_STELLAR_VALUE_BASE64,
 };
@@ -508,6 +509,109 @@ fn protocol_flag_zero_is_rejected_as_a_configuration_error() {
     // Negative case for the `Hint:` line: an error with no advice to give
     // prints exactly one clean error line, with no hint boilerplate.
     assert!(!err.contains("Hint:"), "stderr: {err}");
+}
+
+// ---------------------------------------------------------------------------
+// Offline fixture-pack verification: the exit code 6 path.
+// ---------------------------------------------------------------------------
+
+/// Protocol-Canary 0.3.0 added `ExitCode::VerificationFailure` (code 6) for a
+/// fixture pack that does not match its registry manifest. That check is an
+/// offline one — `fixture-pack verify` reads the pack directory and the
+/// registry and opens no socket — and it is the only command that reports 6:
+/// `check` has no verification gate of its own, so its offline run over the
+/// same bytes is asserted to stay green below.
+#[test]
+fn an_unverified_fixture_fails_offline_pack_verification_with_exit_six() {
+    let dir = TempProject::new("check-offline-verification-failure");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    let pack = dir.path.join("pack");
+    let fixture = xdr_fixture(
+        "p28-xdr-unverified",
+        "decode-success",
+        VALID_STELLAR_VALUE_BASE64,
+    );
+    dir.write("pack/fixtures/p28-xdr-unverified.toml", &fixture);
+
+    // The manifest records a checksum for a different copy of the fixture, so
+    // the file on disk is unverified: present, parseable, but not the bytes
+    // the registry vouches for. The registry lives outside the pack so the
+    // pack digest computed here is the one the manifest pins.
+    let digest = pack_digest(&pack)
+        .expect("the prepared pack digests")
+        .digest;
+    let registry = serde_json::json!({
+        "registryVersion": 1,
+        "protocol": 28,
+        "fixtures": [{
+            "id": "p28-xdr-unverified",
+            "path": "fixtures/p28-xdr-unverified.toml",
+            "sha256": "0".repeat(64),
+            "surface": "xdr",
+            "category": "test",
+            "description": "test",
+            "payloads": [],
+            "requiredCapabilities": []
+        }],
+        "packDigest": digest
+    });
+    let registry_path = dir.path.join("registry.json");
+    std::fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).expect("the registry serializes"),
+    )
+    .unwrap();
+
+    // `check --offline` is unaffected by the registry: the same fixture runs
+    // and passes, which is why the verification failure needs its own gate.
+    let check = run_in(
+        &dir.path,
+        &["check", "--offline", "--fixtures-dir", "pack/fixtures"],
+    );
+    assert_eq!(
+        check.status.code(),
+        Some(0),
+        "the offline check itself still runs: {}",
+        stderr(&check)
+    );
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "fixture-pack",
+            "verify",
+            pack.to_str().unwrap(),
+            "--registry",
+            registry_path.to_str().unwrap(),
+        ],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(6),
+        "an unverified fixture must fail with the verification-failure code: {}",
+        stderr(&output)
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "a failed verification prints no success summary: {}",
+        stdout(&output)
+    );
+
+    let err = stderr(&output);
+    assert!(
+        err.contains("fixture checksum mismatch"),
+        "the diagnostic must describe the verification failure: {err}"
+    );
+    assert!(
+        err.contains("p28-xdr-unverified"),
+        "the diagnostic must name the unverified fixture id: {err}"
+    );
+    assert!(
+        err.contains(&sha256_hex(fixture.as_bytes())),
+        "the diagnostic must show the fixture's actual checksum: {err}"
+    );
+    assert!(!err.contains("panicked"), "no panic: {err}");
 }
 
 #[test]

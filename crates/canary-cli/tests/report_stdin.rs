@@ -104,6 +104,83 @@ fn report_chains_after_check_json_on_a_pipe() {
     assert_eq!(parsed["schemaVersion"], 1);
 }
 
+/// An empty stream is the most common pipeline accident (`check` produced
+/// nothing, or the pipe closed early). It must be refused as a configuration
+/// error that names both the stream and the fact that there was no report in
+/// it — not an opaque parse failure or a panic.
+#[test]
+fn report_rejects_empty_stdin_with_a_diagnostic_naming_standard_input() {
+    let dir = TempProject::new("report-stdin-empty");
+
+    // Zero bytes, and a stream that only carried whitespace: neither holds a
+    // report, so both are the same condition.
+    for (case, input) in [
+        ("zero bytes", &b""[..]),
+        ("whitespace only", &b"  \n\t\n"[..]),
+    ] {
+        let output = run_in_with_stdin(&dir.path, &["report", "-"], input);
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "{case}: an empty stdin must exit with a configuration error"
+        );
+        assert!(
+            stdout(&output).is_empty(),
+            "{case}: nothing may render from empty input"
+        );
+        let err = stderr(&output);
+        assert!(
+            err.contains("standard input"),
+            "{case}: the diagnostic must name the stream, got: {err}"
+        );
+        assert!(
+            err.contains("no report data"),
+            "{case}: the diagnostic must say the input held no report data, got: {err}"
+        );
+        assert!(
+            !err.contains("panicked"),
+            "{case}: empty input must not panic, got: {err}"
+        );
+    }
+}
+
+/// A truncated JSON document (the classic half-written pipe) must produce a
+/// descriptive parse error that names standard input, so the failure is
+/// attributable to the stream rather than to a file or the tool itself.
+#[test]
+fn report_reports_a_truncated_stdin_document_as_a_parse_error_naming_stdin() {
+    let dir = TempProject::new("report-stdin-truncated");
+
+    let output = run_in_with_stdin(&dir.path, &["report", "-"], br#"{"schemaVersion": 1, "#);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "truncated stdin must exit with a configuration error"
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "a truncated report must not render partial output"
+    );
+
+    let err = stderr(&output);
+    assert!(
+        err.contains("invalid report file"),
+        "the diagnostic keeps the report-input wording, got: {err}"
+    );
+    assert!(
+        err.contains("standard input"),
+        "the parse failure must name stdin, got: {err}"
+    );
+    assert!(
+        err.contains("failed to parse") && err.contains("JSON"),
+        "the diagnostic must describe the JSON parse failure, got: {err}"
+    );
+    assert!(
+        !err.contains("panicked"),
+        "truncated input must not panic, got: {err}"
+    );
+}
+
 #[test]
 fn report_rejects_malformed_stdin_json_with_a_configuration_error() {
     let dir = TempProject::new("report-stdin-malformed");

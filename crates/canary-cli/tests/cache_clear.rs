@@ -79,3 +79,85 @@ fn cache_clear_on_nonexistent_cache_directory_reports_zero_bytes() {
         "cache clear must not create a missing directory"
     );
 }
+
+/// Tests that `cache clear` fails when the default cache path
+/// (`.stellar-canary-cache`) is a regular file instead of a directory.
+#[test]
+fn cache_clear_fails_when_cache_target_is_a_file() {
+    let dir = TempProject::new("cache-clear-file");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    // Create a regular file at the default cache path.
+    let cache_path = dir.path.join(".stellar-canary-cache");
+    std::fs::write(&cache_path, "this is not a cache directory").unwrap();
+    assert!(cache_path.is_file(), "setup: cache path should be a file");
+
+    // Run cache clear and verify it fails.
+    let output = run_in(&dir.path, &["cache", "clear"]);
+    assert!(
+        !output.status.success(),
+        "cache clear should fail when cache path is a regular file; stdout: {}, stderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    // Verify the error message is informative.
+    let err = stderr(&output);
+    assert!(
+        err.contains("failed to read cache directory") || err.contains("failed to clear cache"),
+        "stderr should contain an informative error message; stderr: {err}"
+    );
+
+    // Verify the original file still exists and its contents are intact.
+    assert!(cache_path.exists(), "original file should still exist");
+    let contents = std::fs::read_to_string(&cache_path).unwrap();
+    assert_eq!(
+        contents, "this is not a cache directory",
+        "file contents should be preserved"
+    );
+}
+
+/// Tests that `cache clear` fails when `--cache-dir` points to a regular
+/// file instead of a directory.
+#[test]
+fn cache_clear_fails_with_explicit_file_cache_dir() {
+    let dir = TempProject::new("cache-clear-explicit-file");
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+
+    // Create a regular file at an explicit cache directory path.
+    let custom_cache = dir.path.join("custom-cache-file");
+    std::fs::write(&custom_cache, "this is not a cache directory either").unwrap();
+    assert!(
+        custom_cache.is_file(),
+        "setup: custom cache path should be a file"
+    );
+
+    // Run cache clear with --cache-dir pointing to the file.
+    let output = run_in(
+        &dir.path,
+        &["cache", "clear", "--cache-dir", "custom-cache-file"],
+    );
+    assert!(
+        !output.status.success(),
+        "cache clear should fail when --cache-dir points to a regular file; stdout: {}, stderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    // Verify the error message is informative.
+    let err = stderr(&output);
+    assert!(
+        err.contains("failed to read cache directory")
+            || err.contains("failed to clear cache")
+            || err.contains("could not be created"),
+        "stderr should contain an informative error message; stderr: {err}"
+    );
+
+    // Verify the original file still exists and its contents are intact.
+    assert!(custom_cache.exists(), "original file should still exist");
+    let contents = std::fs::read_to_string(&custom_cache).unwrap();
+    assert_eq!(
+        contents, "this is not a cache directory either",
+        "file contents should be preserved"
+    );
+}

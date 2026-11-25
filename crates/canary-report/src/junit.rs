@@ -368,6 +368,34 @@ mod tests {
         assert!(xml.contains("message=\"a &lt; b &amp; c &gt; d\""));
     }
 
+    /// Result ids and skip metadata reach the document as attribute values,
+    /// and the existing coverage only exercises summaries and diagnostic
+    /// bodies. One forbidden byte in an id or a skip reason is enough to make
+    /// the whole document invalid, so both are asserted here, along with the
+    /// document-wide character invariant.
+    #[test]
+    fn forbidden_characters_in_ids_and_skip_reasons_are_encoded() {
+        let mut failing = result("p28-\u{001b}[31m-xdr", Surface::Xdr, Status::Fail);
+        failing.details = Some("detail: \0".into());
+        let xml = JUnitReporter::render(&input(
+            vec![failing],
+            vec![SkipSummary {
+                fixture_id: "p28-rpc-\u{0007}".into(),
+                surface: Surface::Rpc,
+                reason: "requires \u{fffe}".into(),
+                code: canary_core::SkipCode::Unknown,
+            }],
+        ));
+
+        assert!(xml.contains("name=\"p28-\\u{001B}[31m-xdr\""), "{xml}");
+        assert!(xml.contains("name=\"p28-rpc-\\u{0007}\""), "{xml}");
+        assert!(xml.contains("message=\"requires \\u{FFFE}\""), "{xml}");
+        assert!(
+            xml.chars().all(is_xml_10_char),
+            "every emitted character must be legal under XML 1.0: {xml}"
+        );
+    }
+
     #[test]
     fn output_is_deterministic_for_the_same_input() {
         let report = input(

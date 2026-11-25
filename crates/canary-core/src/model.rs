@@ -340,8 +340,8 @@ pub struct RunOptions {
     /// that documented value.
     #[serde(default = "default_rpc_max_retries")]
     pub rpc_max_retries: u32,
-    /// Base delay between RPC retry attempts, in milliseconds (linear
-    /// backoff: attempt *n* waits `n * base_delay`).
+    /// Base delay between RPC retry attempts, in milliseconds (exponential
+    /// backoff: the wait after attempt *n* is `base_delay * 2^(n-1)`).
     #[serde(default = "default_rpc_retry_delay_ms")]
     pub rpc_retry_delay_ms: u64,
 }

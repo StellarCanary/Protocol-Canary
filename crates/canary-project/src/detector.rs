@@ -68,7 +68,9 @@ impl DetectionEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityEvidence {
+    /// Capability produced by the associated detection evidence.
     pub capability: Capability,
+    /// Evidence records supporting detection of `capability`.
     pub evidence: Vec<DetectionEvidence>,
 }
 
@@ -90,12 +92,17 @@ impl CapabilityEvidence {
 /// and diagnostics per CF-07 and CA-03.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetailedDetection {
+    /// Final project context returned by detection (after any caller-applied override).
     pub context: ProjectContext,
-    /// The auto-detected project type before any configuration override is applied.
+    /// Auto-detected project type before any configuration override is applied.
     pub detected_type: ProjectType,
+    /// Root-relative manifest/artifact paths inspected during detection.
     pub inspected: Vec<String>,
+    /// Root-relative workspace member paths discovered during scanning.
     pub workspace_members: Vec<String>,
+    /// Diagnostics collected while scanning manifests/workspace members.
     pub diagnostics: Vec<crate::workspace::Diagnostic>,
+    /// Detected capabilities with the evidence records that produced them.
     pub capability_evidence: Vec<CapabilityEvidence>,
 }
 

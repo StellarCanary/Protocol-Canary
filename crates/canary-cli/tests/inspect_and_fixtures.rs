@@ -138,3 +138,47 @@ fn fixtures_command_reports_when_none_are_found() {
     assert!(output.status.success());
     assert!(stdout(&output).contains("no fixtures found"));
 }
+
+/// Tests the protocol fallback chain for `inspect`: when neither
+/// `--protocol` nor a configuration file is supplied, the command must
+/// fall back to the built-in default protocol (28).
+///
+/// This verifies the full fallback chain: flag -> config file -> default.
+/// Protocol 28 fixtures should be included in the execution plan, while
+/// protocol 27 fixtures should be skipped due to protocol mismatch.
+#[test]
+fn inspect_falls_back_to_default_protocol_with_no_flag_and_no_config() {
+    let dir = TempProject::new("inspect-protocol-fallback");
+    // Deliberately no `.stellar-canary.toml`: the chain under test is
+    // flag -> config file -> built-in default.
+    dir.write(
+        "fixtures/xdr/p28-xdr-1.toml",
+        &format!(
+            "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+    dir.write(
+        "fixtures/xdr/p27-xdr-1.toml",
+        &format!(
+            "id = \"p27-xdr-1\"\nprotocol = 27\nsurface = \"xdr\"\ncategory = \"test\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"{VALID_STELLAR_VALUE_BASE64}\"\n"
+        ),
+    );
+
+    // Run inspect without --protocol flag and without config file.
+    // The command should fall back to the default protocol 28.
+    let output = run_in(&dir.path, &["inspect", "--fixtures-dir", "fixtures"]);
+    assert!(output.status.success(), "stderr: {}", stderr(&output));
+    let text = stdout(&output);
+
+    // Protocol 28 fixture should be in the execution plan.
+    assert!(
+        text.contains("xdr: p28-xdr-1"),
+        "protocol 28 fixture should be in the execution plan; stdout: {text}"
+    );
+
+    // Protocol 27 fixture should be skipped due to protocol mismatch.
+    assert!(
+        text.contains("p27-xdr-1 [xdr]: fixture targets protocol 27"),
+        "protocol 27 fixture should be skipped with protocol mismatch; stdout: {text}"
+    );
+}

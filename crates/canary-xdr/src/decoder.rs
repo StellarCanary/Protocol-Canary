@@ -87,9 +87,13 @@ impl DecodedValue {
     /// The [`XdrTypeName`] of the concrete variant this value holds.
     ///
     /// `DecodedValue` is a tagged enum: whichever variant was produced by
-    /// [`decode`] (`StellarValue`, `ContractExecutable`, or `ScVal`), this
-    /// reports the matching [`XdrTypeName`] without inspecting the payload.
-    /// The input is simply the decoded value itself (`&self`).
+    /// [`decode`] or one of the typed helpers ([`decode_transaction_envelope`],
+    /// [`decode_ledger_entry`], [`decode_ledger_header`],
+    /// [`decode_ledger_close_meta`]) — `StellarValue`,
+    /// `ContractExecutable`, `ScVal`, `TransactionEnvelope`, `LedgerEntry`,
+    /// `LedgerHeader`, or `LedgerCloseMeta` — this reports the matching
+    /// [`XdrTypeName`] without inspecting the payload. The input is simply
+    /// the decoded value itself (`&self`).
     ///
     /// This is infallible: it cannot fail and never panics, because every
     /// variant maps to exactly one type name.

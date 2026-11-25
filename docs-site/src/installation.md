@@ -1,6 +1,44 @@
 # Installation
 
-Prebuilt binaries and checksum manifests for Linux x86_64 are published on GitHub [Releases](./releases.md). Checksums are verified via `sha256sum -c SHA256SUMS`. Alternatively, install the current release from source using `cargo install` against the pinned release tag.
+Prebuilt archives and checksum manifests for the current release, Engine
+`v0.3.0`, are published on GitHub [Releases](./releases.md). Alternatively,
+install the current release from source using `cargo install` against the
+pinned release tag.
+
+## Prebuilt archives
+
+| Target | Asset |
+|---|---|
+| Linux x86_64 | `stellar-canary-x86_64-unknown-linux-gnu.tar.gz` (the bare `stellar-canary-linux-x86_64` binary is published too) |
+| macOS x86_64 | `stellar-canary-x86_64-apple-darwin.tar.gz` |
+| macOS arm64 | `stellar-canary-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `stellar-canary-x86_64-pc-windows-msvc.zip` |
+
+Each archive contains the `stellar-canary` executable (`stellar-canary.exe`
+on Windows). No Linux arm64 archive is published for `v0.3.0`.
+
+Every asset has its own `.sha256` file, and the release also publishes one
+`SHA256SUMS` manifest covering all of them. Verify the download before
+extracting it:
+
+```bash
+# Linux (and macOS with sha256sum installed)
+curl -fsSLO https://github.com/StellarCanary/Protocol-Canary/releases/download/v0.3.0/SHA256SUMS
+sha256sum -c SHA256SUMS --ignore-missing
+```
+
+On macOS without `sha256sum`, use the same manifest with
+`shasum -a 256 -c SHA256SUMS`. On Windows, compare the archive against its
+sidecar:
+
+```powershell
+$actual = (Get-FileHash -Algorithm SHA256 stellar-canary-x86_64-pc-windows-msvc.zip).Hash
+$expected = ((Get-Content stellar-canary-x86_64-pc-windows-msvc.zip.sha256) -split '\s+')[0]
+$actual -eq $expected
+```
+
+The last line must print `True`; `--ignore-missing` on Unix only skips assets
+you did not download, and never turns a mismatch into a pass.
 
 ## Prerequisites
 
@@ -19,10 +57,10 @@ what the Rust toolchain itself supports.
 ## Install the current release
 
 ```bash
-cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.2.0 --locked
+cargo install --git https://github.com/StellarCanary/Protocol-Canary --tag v0.3.0 --locked
 ```
 
-- `--tag v0.2.0` pins the exact, currently verified release — never
+- `--tag v0.3.0` pins the exact, currently verified release — never
   `main`, and never an unpinned "latest".
 - `--locked` uses the exact dependency versions in the repository's own
   committed `Cargo.lock`, rather than whatever the latest compatible
@@ -35,7 +73,7 @@ stellar-canary version
 ```
 
 ```text
-stellar-canary 0.2.0
+stellar-canary 0.3.0
 ```
 
 ## Alternative: build from a local checkout

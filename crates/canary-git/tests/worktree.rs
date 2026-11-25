@@ -168,6 +168,86 @@ fn worktree_resolves_head_commit_and_active_branch() {
     assert!(!cli_repo.is_dirty().unwrap());
 }
 
+/// Renders `to` relative to the directory `from`, both absolute, using `..`
+/// segments for the parent hops needed to reach a common ancestor.
+fn relative_path(from: &Path, to: &Path) -> PathBuf {
+    let from_components: Vec<_> = from.components().collect();
+    let to_components: Vec<_> = to.components().collect();
+    let common = from_components
+        .iter()
+        .zip(to_components.iter())
+        .take_while(|(a, b)| a == b)
+        .count();
+
+    let mut relative = PathBuf::new();
+    for component in &from_components[common..] {
+        assert!(
+            matches!(component, std::path::Component::Normal(_)),
+            "unexpected component in scratch path: {component:?}"
+        );
+        relative.push("..");
+    }
+    for component in &to_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    relative
+}
+
+/// A worktree can be relocated with a `.git` pointer that uses a relative
+/// `gitdir:` path (e.g. `gitdir: ../../.git/worktrees/wt`). Resolution must
+/// work from that relative pointer exactly as it does from the absolute one
+/// Git writes by default.
+#[test]
+fn worktree_resolves_relative_gitdir_pointer() {
+    let repo = TestRepo::new("wt-relative");
+    let (_wt_scratch, wt_path) = repo.create_worktree("wt-relative-branch", "feature-relative");
+
+    // Read the absolute target Git wrote, then rewrite the pointer relative
+    // to the worktree root, as a relocated worktree would carry it.
+    let dot_git = wt_path.join(".git");
+    let pointer_content = std::fs::read_to_string(&dot_git).unwrap();
+    let absolute_target = pointer_content
+        .strip_prefix("gitdir:")
+        .expect("worktree pointer starts with gitdir:")
+        .trim();
+    let absolute_target = PathBuf::from(absolute_target);
+    assert!(
+        absolute_target.is_absolute(),
+        "git writes an absolute gitdir"
+    );
+
+    // macOS exposes the temp directory through `/var`, while Git may write
+    // the same target under its canonical `/private/var` path.
+    let relative_target = relative_path(
+        &wt_path.canonicalize().unwrap(),
+        &absolute_target.canonicalize().unwrap(),
+    );
+    assert!(
+        relative_target.is_relative(),
+        "the rewritten pointer must be relative"
+    );
+    std::fs::write(&dot_git, format!("gitdir: {}\n", relative_target.display())).unwrap();
+
+    // resolve_head follows the relative pointer to the same commit and branch.
+    let head =
+        resolve_head(&wt_path).expect("resolve_head should follow a relative gitdir pointer");
+    assert_eq!(head.commit(), repo.initial_commit);
+    assert_eq!(head.branch(), Some("feature-relative"));
+    assert!(!head.is_detached());
+
+    // The CLI-backed repository resolves identically from the relative pointer.
+    let cli_repo = CliGitRepository::new(&wt_path);
+    assert_eq!(
+        cli_repo.current_commit().unwrap().as_deref(),
+        Some(repo.initial_commit.as_str())
+    );
+    assert_eq!(
+        cli_repo.current_branch().unwrap().as_deref(),
+        Some("feature-relative")
+    );
+    assert!(!cli_repo.is_dirty().unwrap());
+}
+
 #[test]
 fn worktree_resolves_detached_head() {
     let repo = TestRepo::new("wt-detach");

@@ -37,12 +37,19 @@ code `3`), not a compatibility failure. Offline (XDR) checks in the same
 run are unaffected and still report their real result. See
 [Network Troubleshooting](./troubleshooting.md#network-troubleshooting).
 
-## Does 5/5 mean full Protocol 28 support?
+## Does a passing run mean full Protocol 28 support?
 
-**No.** It means the five fixtures currently implemented for Protocol 28
-passed. CAP-0086 has no fixture yet, and CAP-0085's fixtures test wire
-encoding, not a full deployed contract fleet. See
-[Protocol 28](./protocol-28.md) for exactly what is and isn't covered.
+**No.** It means the fixtures applicable to your project passed. The
+`protocol-28` pack at revision
+[`e9d098d`](https://github.com/StellarCanary/ProtocolCanary-Fixtures/tree/e9d098df7931a9b94b183c6af807a58336b7b322/protocol-28)
+contains 93 fixture definitions (86 XDR, 2 RPC, 5 Soroban), but a run only
+executes the ones its target protocol, configured surfaces and project
+capabilities select — a pack file count is not the number of checks run,
+and neither is a network observation. The old "5/5 PASS" transcript is a
+historical five-fixture subset, not the current inventory. CAP-0086 has no
+fixture yet, and CAP-0085's fixtures test wire encoding, not a full
+deployed contract fleet. See [Protocol 28](./protocol-28.md) for exactly
+what is and isn't covered.
 
 ## Why are fixtures separate from the engine?
 

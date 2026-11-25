@@ -311,6 +311,46 @@ fn trailing_bytes_after_a_complete_value_are_rejected() {
         generic_meta_err.is_err(),
         "generic decode of LedgerCloseMeta with trailing bytes must fail"
     );
+
+    // The remaining supported types have no typed entry point, so they go
+    // through the generic decoder; it must reject the suffix for every one of
+    // them rather than accepting the complete prefix and ignoring the rest.
+    let samples = [
+        (
+            XdrTypeName::ScVal,
+            ScVal::Bool(true)
+                .to_xdr(Limits::none())
+                .expect("the sample ScVal encodes"),
+        ),
+        (XdrTypeName::StellarValue, stellar_value_bytes()),
+        (
+            XdrTypeName::ContractExecutable,
+            ContractExecutable::Wasm(Hash([2; 32]))
+                .to_xdr(Limits::none())
+                .expect("the sample ContractExecutable encodes"),
+        ),
+    ];
+    for (type_name, bytes) in samples {
+        for extra in [1usize, 4, 64] {
+            let mut oversized = bytes.clone();
+            oversized.extend(std::iter::repeat_n(0u8, extra));
+            let err = match decode(type_name, &to_base64(&oversized)) {
+                Ok(_) => panic!(
+                    "{type_name} with {extra} trailing byte(s) must be rejected, not \
+                     decoded from the complete prefix"
+                ),
+                Err(error) => error,
+            };
+            // The generic decoder returns `stellar_xdr::Error`, which carries
+            // no byte offset (only the typed `XdrDecodeError` does), so these
+            // three types are pinned by rejection and variant here.
+            assert!(
+                matches!(err, stellar_xdr::Error::Invalid),
+                "{type_name} with {extra} trailing byte(s) must be rejected as \
+                 invalid XDR, got {err:?}"
+            );
+        }
+    }
 }
 
 fn err_message(err: &XdrDecodeError) -> String {

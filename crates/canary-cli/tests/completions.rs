@@ -26,6 +26,57 @@ const SUPPORTED_SHELLS: &[(&str, &str)] = &[
 /// and an actual option.
 const REAL_CLI_FRAGMENTS: &[&str] = &["stellar-canary", "check", "fixtures-dir"];
 
+/// Every subcommand this build actually exposes. A generated script that
+/// omits one of these would silently leave that subcommand uncompletable, so
+/// the script content is checked against this list rather than only against
+/// "some subcommand appears".
+const ACTIVE_SUBCOMMANDS: &[&str] = &["check", "diff", "inspect", "lock", "fixtures"];
+
+/// The token each generator emits when it introduces a subcommand, borrowed
+/// from the real scripts. Asserting on the whole token keeps `fixtures` from
+/// matching the `--fixtures-dir` option of an unrelated command.
+fn subcommand_token(shell: &str, subcommand: &str) -> String {
+    match shell {
+        // bash dispatches on the word it has already seen:
+        // `stellar__canary,check)`.
+        "bash" => format!("stellar__canary,{subcommand})"),
+        // zsh lists the command tree as `'check:Run compatibility checks ...'`.
+        "zsh" => format!("'{subcommand}:"),
+        other => panic!("no subcommand token is defined for {other}"),
+    }
+}
+
+/// The generated scripts are derived from the real clap command tree, so a
+/// missing subcommand means the definitions drifted from the CLI. bash and
+/// zsh are the shells whose scripts enumerate the full command tree by name.
+#[test]
+fn bash_and_zsh_scripts_reference_every_active_subcommand() {
+    let dir = TempProject::new("completions-subcommands");
+
+    for shell in ["bash", "zsh"] {
+        let output = run_in(&dir.path, &["completions", shell]);
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "completions {shell} should succeed: {}",
+            stderr(&output)
+        );
+
+        let script = stdout(&output);
+        assert!(
+            !script.is_empty(),
+            "{shell}: stdout should carry the completion script"
+        );
+        for subcommand in ACTIVE_SUBCOMMANDS {
+            let token = subcommand_token(shell, subcommand);
+            assert!(
+                script.contains(&token),
+                "{shell}: the script should reference the {subcommand:?} subcommand as {token:?}:\n{script}"
+            );
+        }
+    }
+}
+
 #[test]
 fn completions_prints_a_script_for_every_supported_shell() {
     let dir = TempProject::new("completions-supported");

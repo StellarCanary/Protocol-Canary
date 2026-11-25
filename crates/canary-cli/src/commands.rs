@@ -441,12 +441,22 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     let results = canary_runner::execute(&plan, &context, &context.network.rpc_url).await;
 
     let has_warnings = canary_runner::summarize(&results).has_warnings();
+    // The report describes the run's own outcome, so `--fail-on-warning` does
+    // not rewrite it: a run whose only problems are warnings still reports
+    // `status: "warning"`. The flag is a CI gate, so it only promotes the
+    // decision used for the exit code (see `policy.rs` in `canary-core`). A
+    // configured `warnings_are_failures` remains a policy decision and does
+    // promote the report status to `fail`, as before.
     let policy = Policy {
-        warnings_are_failures: config.policy.warnings_are_failures
-            || (args.fail_on_warning && has_warnings),
+        warnings_are_failures: config.policy.warnings_are_failures,
     };
     let decision = DefaultPolicyEvaluator.evaluate(&results, &policy);
-    let exit_code = canary_core::exit_code_for_run(&results, decision);
+    let gate = if args.fail_on_warning && has_warnings {
+        canary_core::PolicyDecision::Fail
+    } else {
+        decision
+    };
+    let exit_code = canary_core::exit_code_for_run(&results, gate);
 
     // The fixtures' own CF-04 evidence, so the terminal report can show
     // which results are backed by a verification record. A fixture with
@@ -1267,10 +1277,21 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
     // `report -` reads the report from standard input until EOF (E-053),
     // so a report can be piped straight through without a temporary file.
-    let json_text = if args.path == Path::new("-") {
-        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+    let from_stdin = args.path == Path::new("-");
+    let json_text = if from_stdin {
+        let text = canary_report::read_report_json(std::io::stdin()).map_err(|e| {
             CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
-        })?
+        })?;
+        // An empty pipeline (or one that only wrote whitespace) is not a
+        // report. Saying so names the actual problem instead of leaving
+        // serde's "EOF while parsing a value" as the whole explanation.
+        if text.trim().is_empty() {
+            return Err(CanaryError::Configuration(
+                "failed to read report from standard input: the input contains no report data"
+                    .to_string(),
+            ));
+        }
+        text
     } else {
         std::fs::read_to_string(&args.path).map_err(|e| {
             CanaryError::Configuration(format!(
@@ -1279,8 +1300,16 @@ fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
             ))
         })?
     };
-    let report_input = canary_report::JsonReporter::parse(&json_text)
-        .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
+    let report_input = canary_report::JsonReporter::parse(&json_text).map_err(|e| {
+        // Name the stream the broken JSON came from, so a truncated pipe is
+        // told apart from a bad file without guessing.
+        let message = if from_stdin {
+            format!("invalid report file: failed to parse report from standard input: {e}")
+        } else {
+            format!("invalid report file: {e}")
+        };
+        CanaryError::Configuration(message)
+    })?;
 
     let rendered = match args.format {
         OutputFormat::Terminal => TerminalReporter::render(&report_input),

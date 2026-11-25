@@ -485,6 +485,145 @@ fn cargo_and_npm_members_share_the_64_member_detection_limit() {
         .any(|diagnostic| diagnostic.code == DiagnosticCode::ScanBoundReached));
 }
 
+// ---------------------------------------------------------------------------
+// Nested member paths and glob patterns
+// ---------------------------------------------------------------------------
+
+/// Writes `<dir>/Cargo.toml` with a real package name, so the fixture's
+/// package names can be checked against the discovered member paths.
+fn nested_member(dir: &Scratch, path: &str, name: &str, dependencies: &[&str]) {
+    let mut text = format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\n");
+    if !dependencies.is_empty() {
+        text.push_str("\n[dependencies]\n");
+        for dependency in dependencies {
+            text.push_str(&format!("{dependency} = \"1\"\n"));
+        }
+    }
+    dir.write(&format!("{path}/Cargo.toml"), &text);
+}
+
+#[test]
+fn nested_workspace_members_and_globs_are_discovered_completely() {
+    let dir = Scratch::new("nested-members");
+    // A literal nested member and two glob patterns at different depths.
+    dir.workspace(&[
+        "contracts/tokens/token_a",
+        "contracts/*/token_*",
+        "contracts/*/*/token_*",
+        "packages/*",
+    ]);
+    nested_member(
+        &dir,
+        "contracts/tokens/token_a",
+        "token_a",
+        &["soroban-sdk"],
+    );
+    nested_member(&dir, "contracts/tokens/token_b", "token_b", &["serde"]);
+    nested_member(
+        &dir,
+        "contracts/tokens/defi/token_c",
+        "token_c",
+        &["stellar-sdk"],
+    );
+    nested_member(&dir, "packages/sdk", "sdk", &["stellar-sdk"]);
+
+    let scan = scan_cargo_workspace(dir.path());
+
+    // `contracts/tokens/token_a` is listed literally and reached again by
+    // the glob; the set must not duplicate it. Nested members sort by
+    // their full root-relative path.
+    assert_eq!(
+        member_paths(&scan),
+        [
+            "contracts/tokens/defi/token_c",
+            "contracts/tokens/token_a",
+            "contracts/tokens/token_b",
+            "packages/sdk",
+        ]
+    );
+    assert!(scan.diagnostics.is_empty(), "{:?}", scan.diagnostics);
+
+    // Every member path resolves to a real directory below the workspace
+    // root, and that directory holds the manifest the scan read.
+    for member in &scan.members {
+        let absolute = dir.path().join(&member.path);
+        assert!(absolute.is_dir(), "{} must be a directory", member.path);
+        assert!(
+            absolute.join("Cargo.toml").is_file(),
+            "{} must hold a Cargo.toml",
+            member.path
+        );
+        let manifest = std::fs::read_to_string(absolute.join("Cargo.toml")).unwrap();
+        let expected_name = member.path.rsplit('/').next().unwrap();
+        assert!(
+            manifest.contains(&format!("name = \"{expected_name}\"")),
+            "{} must declare package name {expected_name}",
+            member.path
+        );
+    }
+
+    assert_eq!(
+        scan.dependency_names(),
+        ["serde", "soroban-sdk", "stellar-sdk"]
+    );
+    assert!(scan.has_dependency("soroban-sdk"));
+    assert_eq!(detect(dir.path()).project_type, ProjectType::Soroban);
+}
+
+#[test]
+fn workspace_glob_patterns_expand_nested_directories_at_each_level() {
+    let dir = Scratch::new("nested-glob");
+    dir.workspace(&["contracts/*/*"]);
+    nested_member(
+        &dir,
+        "contracts/tokens/token_a",
+        "token_a",
+        &["soroban-sdk"],
+    );
+    nested_member(&dir, "contracts/util/tool", "tool", &["serde"]);
+
+    let scan = scan_cargo_workspace(dir.path());
+    assert_eq!(
+        member_paths(&scan),
+        ["contracts/tokens/token_a", "contracts/util/tool"]
+    );
+    assert!(scan.diagnostics.is_empty(), "{:?}", scan.diagnostics);
+    assert_eq!(scan.dependency_names(), ["serde", "soroban-sdk"]);
+}
+
+#[test]
+fn the_workspace_root_is_the_directory_holding_the_top_level_manifest() {
+    let dir = Scratch::new("workspace-root");
+    dir.workspace(&["contracts/tokens/token_a"]);
+    nested_member(
+        &dir,
+        "contracts/tokens/token_a",
+        "token_a",
+        &["soroban-sdk"],
+    );
+    // A nested manifest must not turn into a second workspace root.
+    dir.write(
+        "contracts/Cargo.toml",
+        "[workspace]\nmembers = [\"tokens/token_b\"]\n",
+    );
+    nested_member(&dir, "contracts/tokens/token_b", "token_b", &["serde"]);
+
+    assert!(dir.path().join("Cargo.toml").is_file());
+    let scan = scan_cargo_workspace(dir.path());
+    assert_eq!(member_paths(&scan), ["contracts/tokens/token_a"]);
+    assert!(dir
+        .path()
+        .join(&scan.members[0].path)
+        .join("Cargo.toml")
+        .is_file());
+
+    // Scanning the member directory alone finds no workspace members: the
+    // root of a scan is the directory whose `Cargo.toml` was read, and the
+    // nested `contracts/Cargo.toml` was not one of them.
+    let member_scan = scan_cargo_workspace(&dir.path().join("contracts/tokens/token_a"));
+    assert!(member_scan.members.is_empty());
+}
+
 #[cfg(unix)]
 #[test]
 fn npm_scan_ignores_circular_symlinks_inside_node_modules() {

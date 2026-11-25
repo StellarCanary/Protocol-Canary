@@ -15,8 +15,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use canary_core::{Capability, ProjectType};
 use canary_project::{
-    detect, detect_details, parse_pyproject_dependencies, parse_pyproject_manifest,
-    read_pyproject_manifest, read_pyproject_toml, DiagnosticCode,
+    detect, detect_details, parse_cargo_dependencies, parse_pyproject_dependencies,
+    parse_pyproject_manifest, read_cargo_manifest, read_pyproject_manifest, read_pyproject_toml,
+    DiagnosticCode,
 };
 
 static COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -307,6 +308,171 @@ dependencies = [ invalid toml syntax ]]]
         "diagnostic detail should mention pyproject.toml: {}",
         diag.detail
     );
+}
+
+// ---------------------------------------------------------------------------
+// Bare-minimum Cargo manifests (optional metadata omitted)
+// ---------------------------------------------------------------------------
+
+/// A minimal contract manifest: no `authors`, `description`, `repository`,
+/// `license` or `edition`.
+const MINIMAL_CONTRACT_MANIFEST: &str = r#"[package]
+name = "token"
+version = "0.1.0"
+
+[dependencies]
+soroban-sdk = "22"
+"#;
+
+#[test]
+fn minimal_cargo_manifest_without_optional_metadata_parses() {
+    let scratch = Scratch::new("cargo-minimal");
+    scratch.write("Cargo.toml", MINIMAL_CONTRACT_MANIFEST);
+
+    let manifest = read_cargo_manifest(scratch.path()).expect("a minimal manifest parses");
+    assert_eq!(manifest.dependency_names, ["soroban-sdk"]);
+
+    let dependencies = parse_cargo_dependencies(MINIMAL_CONTRACT_MANIFEST)
+        .expect("the same manifest parses into dependencies");
+    assert_eq!(dependencies.len(), 1);
+    assert_eq!(dependencies[0].name, "soroban-sdk");
+    assert_eq!(dependencies[0].section, "dependencies");
+
+    let details = detect_details(scratch.path());
+    assert_eq!(details.context.project_type, ProjectType::Soroban);
+    assert!(details
+        .context
+        .capabilities
+        .contains(&Capability::SorobanContract));
+    assert!(details.diagnostics.is_empty(), "{:?}", details.diagnostics);
+
+    // The contract capability is extracted from the minimal manifest, with
+    // evidence naming the manifest and section it came from.
+    let evidence = details
+        .capability_evidence
+        .iter()
+        .find(|entry| entry.capability == Capability::SorobanContract)
+        .expect("SorobanContract evidence");
+    assert_eq!(evidence.evidence.len(), 1);
+    assert_eq!(evidence.evidence[0].manifest, "Cargo.toml");
+    assert_eq!(evidence.evidence[0].ecosystem, "cargo");
+    assert_eq!(
+        evidence.evidence[0].dependency.as_deref(),
+        Some("soroban-sdk")
+    );
+    assert_eq!(
+        evidence.evidence[0].section.as_deref(),
+        Some("dependencies")
+    );
+}
+
+#[test]
+fn omitted_edition_and_explicit_2015_or_2021_editions_extract_the_same_dependencies() {
+    // Cargo treats a missing `edition` as 2015, and both 2015 and 2021 are
+    // still valid for contracts. The parser does not require the optional
+    // field, so all three spellings must yield the same dependencies.
+    for (label, edition_line) in [
+        ("omitted", ""),
+        ("edition-2015", "edition = \"2015\"\n"),
+        ("edition-2021", "edition = \"2021\"\n"),
+    ] {
+        let scratch = Scratch::new(&format!("cargo-{label}"));
+        scratch.write(
+            "Cargo.toml",
+            &format!(
+                "[package]\nname = \"token\"\nversion = \"0.1.0\"\n{edition_line}\n\
+                 [dependencies]\nsoroban-sdk = \"22\"\nstellar-sdk = \"12\"\n"
+            ),
+        );
+
+        let manifest =
+            read_cargo_manifest(scratch.path()).unwrap_or_else(|| panic!("{label} parses"));
+        assert_eq!(
+            manifest.dependency_names,
+            ["soroban-sdk", "stellar-sdk"],
+            "{label}"
+        );
+        assert_eq!(detect(scratch.path()).project_type, ProjectType::Soroban);
+    }
+}
+
+#[test]
+fn a_minimal_manifest_without_dependencies_parses_to_an_empty_manifest() {
+    let scratch = Scratch::new("cargo-no-deps");
+    scratch.write(
+        "Cargo.toml",
+        "[package]\nname = \"bare\"\nversion = \"0.1.0\"\n",
+    );
+
+    let manifest = read_cargo_manifest(scratch.path()).expect("a package-only manifest parses");
+    assert!(manifest.dependency_names.is_empty());
+    assert!(!manifest.has_dependency("soroban-sdk"));
+
+    let details = detect_details(scratch.path());
+    assert_eq!(details.context.project_type, ProjectType::Unknown);
+    assert!(details.diagnostics.is_empty(), "{:?}", details.diagnostics);
+}
+
+#[test]
+fn optional_dev_and_build_sections_parse_from_a_minimal_manifest() {
+    let scratch = Scratch::new("cargo-sections");
+    scratch.write(
+        "Cargo.toml",
+        "[package]\nname = \"tooling\"\nversion = \"0.1.0\"\n\n\
+         [dev-dependencies]\nsoroban-sdk = \"22\"\n\n\
+         [build-dependencies]\nstellar-xdr = \"30\"\n",
+    );
+
+    let manifest = read_cargo_manifest(scratch.path()).expect("manifest parses");
+    assert_eq!(manifest.dependency_names, ["soroban-sdk", "stellar-xdr"]);
+
+    let mut sections: Vec<(String, String)> = parse_cargo_dependencies(
+        "[package]\nname = \"tooling\"\n\n\
+         [dev-dependencies]\nsoroban-sdk = \"22\"\n\n\
+         [build-dependencies]\nstellar-xdr = \"30\"\n",
+    )
+    .expect("sections parse")
+    .into_iter()
+    .map(|dependency| (dependency.name, dependency.section))
+    .collect();
+    sections.sort();
+    assert_eq!(
+        sections,
+        [
+            ("soroban-sdk".to_string(), "dev-dependencies".to_string()),
+            ("stellar-xdr".to_string(), "build-dependencies".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn a_minimal_manifest_still_yields_a_contract_target_artifact() {
+    let scratch = Scratch::new("cargo-target");
+    scratch.write("Cargo.toml", MINIMAL_CONTRACT_MANIFEST);
+    scratch.write(
+        "target/wasm32-unknown-unknown/release/token.wasm",
+        "\0asm\x01\x00\x00\x00",
+    );
+
+    let details = detect_details(scratch.path());
+    assert_eq!(details.context.project_type, ProjectType::Soroban);
+    assert!(details
+        .context
+        .capabilities
+        .contains(&Capability::WasmArtifact));
+    assert!(details.inspected.contains(&"Cargo.toml".to_string()));
+
+    let evidence = details
+        .capability_evidence
+        .iter()
+        .find(|entry| entry.capability == Capability::WasmArtifact)
+        .expect("WasmArtifact evidence");
+    assert_eq!(
+        evidence.evidence[0].manifest,
+        "target/wasm32-unknown-unknown/release/token.wasm"
+    );
+    assert_eq!(evidence.evidence[0].ecosystem, "wasm");
+    assert_eq!(evidence.evidence[0].dependency, None);
 }
 
 #[test]

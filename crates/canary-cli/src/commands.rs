@@ -1277,10 +1277,21 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
     // `report -` reads the report from standard input until EOF (E-053),
     // so a report can be piped straight through without a temporary file.
-    let json_text = if args.path == Path::new("-") {
-        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+    let from_stdin = args.path == Path::new("-");
+    let json_text = if from_stdin {
+        let text = canary_report::read_report_json(std::io::stdin()).map_err(|e| {
             CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
-        })?
+        })?;
+        // An empty pipeline (or one that only wrote whitespace) is not a
+        // report. Saying so names the actual problem instead of leaving
+        // serde's "EOF while parsing a value" as the whole explanation.
+        if text.trim().is_empty() {
+            return Err(CanaryError::Configuration(
+                "failed to read report from standard input: the input contains no report data"
+                    .to_string(),
+            ));
+        }
+        text
     } else {
         std::fs::read_to_string(&args.path).map_err(|e| {
             CanaryError::Configuration(format!(
@@ -1289,8 +1300,16 @@ fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
             ))
         })?
     };
-    let report_input = canary_report::JsonReporter::parse(&json_text)
-        .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
+    let report_input = canary_report::JsonReporter::parse(&json_text).map_err(|e| {
+        // Name the stream the broken JSON came from, so a truncated pipe is
+        // told apart from a bad file without guessing.
+        let message = if from_stdin {
+            format!("invalid report file: failed to parse report from standard input: {e}")
+        } else {
+            format!("invalid report file: {e}")
+        };
+        CanaryError::Configuration(message)
+    })?;
 
     let rendered = match args.format {
         OutputFormat::Terminal => TerminalReporter::render(&report_input),

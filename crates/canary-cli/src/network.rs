@@ -358,4 +358,82 @@ mod tests {
             ""
         );
     }
+
+    /// The published passphrases are compared byte-for-byte against what an
+    /// endpoint reports from `getNetwork`. A stray leading or trailing space
+    /// would make every well-known run fail as a spurious network mismatch,
+    /// so each constant must be exactly its trimmed form.
+    #[test]
+    fn well_known_passphrase_constants_carry_no_surrounding_whitespace() {
+        for (name, passphrase) in [
+            ("TESTNET_PASSPHRASE", TESTNET_PASSPHRASE),
+            ("FUTURENET_PASSPHRASE", FUTURENET_PASSPHRASE),
+            ("MAINNET_PASSPHRASE", MAINNET_PASSPHRASE),
+        ] {
+            assert!(!passphrase.is_empty(), "{name} must not be empty");
+            assert_eq!(passphrase, passphrase.trim(), "{name} must be trimmed");
+            assert!(
+                !passphrase.starts_with(char::is_whitespace),
+                "{name} must not start with whitespace: {passphrase:?}"
+            );
+            assert!(
+                !passphrase.ends_with(char::is_whitespace),
+                "{name} must not end with whitespace: {passphrase:?}"
+            );
+        }
+    }
+
+    /// An explicit `--network-passphrase` is the run's exact network
+    /// identity: surrounding whitespace is preserved, never trimmed. Silently
+    /// "cleaning" it would compare a different string against the endpoint
+    /// than the one the user supplied, turning a deliberate passphrase into a
+    /// spurious mismatch.
+    #[test]
+    fn resolve_passphrase_preserves_a_custom_passphrase_exactly_as_provided() {
+        for name in [
+            NetworkName::Testnet,
+            NetworkName::Futurenet,
+            NetworkName::Mainnet,
+            NetworkName::Custom("local".into()),
+        ] {
+            for (custom, padded) in [
+                ("  Private Net ; 2026  ", true),
+                ("\tPrivate Net ; 2026\t", true),
+                (" Private Net ; 2026", true),
+                ("Private Net ; 2026 ", true),
+                ("Private  Net  ;  2026", false),
+            ] {
+                assert_eq!(
+                    resolve_passphrase(&name, Some(custom)),
+                    custom,
+                    "the flag value must be preserved unchanged for {name:?}"
+                );
+                if padded {
+                    assert_ne!(
+                        resolve_passphrase(&name, Some(custom)),
+                        custom.trim(),
+                        "the flag value must not be trimmed for {name:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Only Testnet has a built-in endpoint. Every other network — including
+    /// a custom one — must require an explicit `--rpc-url`, so the tool never
+    /// attributes results to an endpoint the user did not choose.
+    #[test]
+    fn default_rpc_url_returns_some_only_for_testnet() {
+        assert_eq!(
+            default_rpc_url(&NetworkName::Testnet),
+            Some(TESTNET_DEFAULT_RPC_URL)
+        );
+        for name in [
+            NetworkName::Futurenet,
+            NetworkName::Mainnet,
+            NetworkName::Custom("local".into()),
+        ] {
+            assert_eq!(default_rpc_url(&name), None, "{name:?}");
+        }
+    }
 }

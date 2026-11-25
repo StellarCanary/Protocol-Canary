@@ -319,7 +319,8 @@ async fn maps_a_non_json_200_body_to_invalid_json_without_panicking() {
     assert!(
         diagnostic.contains("invalid JSON response from getLatestLedger"),
         "{diagnostic}"
-    );    assert!(!matches!(
+    );
+    assert!(!matches!(
         err,
         RpcError::Transport { .. } | RpcError::Timeout { .. } | RpcError::RateLimited { .. }
     ));

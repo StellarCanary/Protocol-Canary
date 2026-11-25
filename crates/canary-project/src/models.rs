@@ -34,7 +34,9 @@ impl CapabilityEvidence {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapabilityModel {
+    /// The capability detected for the project.
     pub capability: Capability,
+    /// Evidence records explaining why the capability was detected; may be empty.
     pub evidence: Vec<CapabilityEvidence>,
 }
 

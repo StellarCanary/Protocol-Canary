@@ -167,6 +167,7 @@ async fn an_oversized_response_is_not_retried() {
     let client = HttpRpcClient::new(server.uri()).with_retry_policy(RetryPolicy {
         max_attempts: 3,
         base_delay: std::time::Duration::from_millis(1),
+        max_delay: std::time::Duration::from_secs(30),
     });
     assert!(too_large(&client.get_network().await.unwrap_err()));
 

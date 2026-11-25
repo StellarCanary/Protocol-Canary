@@ -29,6 +29,7 @@ struct TestSandbox {
     dir: PathBuf,
     dest: PathBuf,
     sentinel: PathBuf,
+    #[cfg(unix)]
     allowed_outside: Vec<String>,
 }
 
@@ -57,12 +58,14 @@ impl TestSandbox {
             dir,
             dest,
             sentinel,
+            #[cfg(unix)]
             allowed_outside: Vec::new(),
         }
     }
 
     /// Creates a directory next to `dest`, outside the extraction destination,
     /// and allows it when checking that nothing else was written outside.
+    #[cfg(unix)]
     fn create_outside_dir(&mut self, name: &str) -> PathBuf {
         let path = self.dir.join(name);
         std::fs::create_dir_all(&path).unwrap();
@@ -87,12 +90,18 @@ impl TestSandbox {
             let name = entry.file_name();
             let name_str = name.to_str().unwrap();
             assert!(
-                name_str == "dest"
-                    || name_str == "outside_sentinel.txt"
-                    || self
-                        .allowed_outside
-                        .iter()
-                        .any(|allowed| allowed == name_str),
+                name_str == "dest" || name_str == "outside_sentinel.txt" || {
+                    #[cfg(unix)]
+                    {
+                        self.allowed_outside
+                            .iter()
+                            .any(|allowed| allowed == name_str)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        false
+                    }
+                },
                 "Unexpected file or directory leaked outside destination: {name_str}"
             );
         }

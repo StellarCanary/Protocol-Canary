@@ -182,24 +182,33 @@ pub enum Ineligible {
 /// Summary of one report, for the `baseline` and `current` keys.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReportHeader {
+    /// Tool version recorded in the source report (`ReportInput.tool_version`).
     #[serde(rename = "toolVersion")]
     pub tool_version: String,
+    /// Target protocol version from the source report.
     #[serde(rename = "targetProtocol")]
     pub target_protocol: u32,
+    /// Overall report status string from `ReportInput.overall_status()`.
     pub status: String,
 }
 
 /// One identity whose state differs, or is carried over, between reports.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Entry {
+    /// Surface name for the compared identity.
     pub surface: String,
+    /// Result/fixture identity within the surface (`fixture_id` or `test_id` fallback).
     pub id: String,
+    /// State of the identity in the baseline report, or `Absent` if missing.
     pub from: State,
+    /// State of the identity in the current report, or `Absent` if missing.
     pub to: State,
+    /// Transition classification produced by [`classify`].
     pub classification: Classification,
+    /// Whether this entry counts as a regression under comparison rules/options.
     pub regression: bool,
-    /// Present only when a side's result was replayed from the cache: true
-    /// when the two sides' sources differ.
+    /// Cache-source change marker. `Some(true)` when either side was cached and sources differ,
+    /// `Some(false)` when either side was cached and sources match, `None` when neither side was cached.
     #[serde(rename = "sourceChanged", skip_serializing_if = "Option::is_none")]
     pub source_changed: Option<bool>,
 }
@@ -207,47 +216,60 @@ pub struct Entry {
 /// An identity that passed in the baseline and is removed or skipped now.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Missing {
+    /// Surface name of the missing/carried-over-good identity.
     pub surface: String,
+    /// Identity missing from current coverage as a passing result.
     pub id: String,
 }
 
 /// Counts over `entries` and `missing`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize)]
 pub struct Summary {
-    /// Entries that count as regressions.
+    /// Number of entries whose `regression` flag is true.
     pub regressed: usize,
-    /// Entries classified `resolved`.
+    /// Number of entries classified as `Resolved`.
     pub resolved: usize,
-    /// Entries classified `added` or `added-failing`.
+    /// Number of entries classified as `Added` or `AddedFailing`.
     pub added: usize,
-    /// Entries classified `removed` or `removed-failing`.
+    /// Number of entries classified as `Removed` or `RemovedFailing`.
     pub removed: usize,
-    /// Entries classified `unchanged` or `unchanged-skip`.
+    /// Number of entries classified as `Unchanged` or `UnchangedSkip`.
     pub unchanged: usize,
+    /// Number of `missing` entries.
     pub missing: usize,
 }
 
 /// The `diffVersion` 1 document. Field order is the contract's key order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Comparison {
+    /// Comparison document version written by this module.
     #[serde(rename = "diffVersion")]
     pub diff_version: u32,
+    /// Whether the two reports were eligible for comparison.
     pub comparable: bool,
+    /// Header summary derived from the baseline report.
     pub baseline: ReportHeader,
+    /// Header summary derived from the current report.
     pub current: ReportHeader,
-    /// Always `None` until the report model carries `fixturePack`.
+    /// Fixture-pack change indicator; always `None` until report model carries fixture pack data.
     #[serde(rename = "fixturePackChanged")]
     pub fixture_pack_changed: Option<bool>,
-    /// True only when both reports observed a protocol and they differ.
+    /// `true` only when both reports observed a network protocol and the values differ.
     #[serde(rename = "observedProtocolChanged")]
     pub observed_protocol_changed: bool,
+    /// Whether the baseline report had no executed results.
     #[serde(rename = "emptyBaseline")]
     pub empty_baseline: bool,
+    /// Whether the current report had no executed results.
     #[serde(rename = "emptyCurrent")]
     pub empty_current: bool,
+    /// Per-identity comparison entries for the union of baseline/current identities.
     pub entries: Vec<Entry>,
+    /// Identities that were good in baseline but are now absent/skipped coverage.
     pub missing: Vec<Missing>,
+    /// Aggregate counts derived from `entries` and `missing`.
     pub summary: Summary,
+    /// Overall comparison verdict derived from entries/missing.
     pub verdict: Verdict,
 }
 

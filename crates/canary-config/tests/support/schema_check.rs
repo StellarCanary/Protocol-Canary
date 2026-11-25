@@ -43,6 +43,7 @@ pub const SUPPORTED_KEYWORDS: &[&str] = &[
     "maximum",
     "pattern",
     "not",
+    "anyOf",
 ];
 
 /// The JSON type name a schema `type` keyword compares against.
@@ -148,9 +149,20 @@ pub fn validate(instance: &Value, schema: &Value, path: &str) -> Result<(), Stri
             }
         }
     }
+    // Any one branch matching is enough. The configuration schema uses this
+    // only under `not`, to reject a value that carries any of several
+    // forbidden substrings.
+    if let Some(branches) = schema.get("anyOf").and_then(Value::as_array) {
+        if !branches
+            .iter()
+            .any(|branch| validate(instance, branch, path).is_ok())
+        {
+            return Err(format!("{path}: does not match any `anyOf` branch"));
+        }
+    }
     // A `not` subschema is a rejection: matching it is the violation. The
-    // configuration schema uses exactly one, for the rule that a file cannot
-    // turn off every surface at once.
+    // configuration schema uses it for the rule that a file cannot turn off
+    // every surface at once, and for the substrings `fixtures_dir` forbids.
     if let Some(negated) = schema.get("not") {
         if validate(instance, negated, path).is_ok() {
             return Err(format!("{path}: matches the schema's `not` constraint"));

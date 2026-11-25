@@ -83,6 +83,16 @@ const DOCUMENTED_DIVERGENCES: &[(&str, &str)] = &[
         "the file documents a path relative to the project root; an absolute \
          one works through --fixtures-dir",
     ),
+    (
+        "fixtures_dir with parent directory traversal",
+        "the file documents a path inside the project root, so `..` is refused; \
+         the loader stores it verbatim like the other run settings",
+    ),
+    (
+        "fixtures_dir with trailing whitespace",
+        "a trailing space names a different directory, so an editor or CI job \
+         reports it; the loader stores the string verbatim",
+    ),
 ];
 
 /// Why the schema may be the stricter side for this corpus case, if it may.
@@ -286,6 +296,14 @@ fn corpus() -> Vec<(String, String)> {
         (
             "fixtures_dir given as an absolute path",
             "version = 1\nprotocol = 28\nfixtures_dir = \"/srv/fixtures\"\n",
+        ),
+        (
+            "fixtures_dir with parent directory traversal",
+            "version = 1\nprotocol = 28\nfixtures_dir = \"../fixtures\"\n",
+        ),
+        (
+            "fixtures_dir with trailing whitespace",
+            "version = 1\nprotocol = 28\nfixtures_dir = \"fixtures \"\n",
         ),
     ] {
         cases.push((name.to_string(), text.to_string()));

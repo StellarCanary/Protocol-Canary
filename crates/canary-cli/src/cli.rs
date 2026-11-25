@@ -186,7 +186,8 @@ pub struct CheckArgs {
     pub rpc_max_retries: u32,
 
     /// Base delay between RPC retry attempts, in milliseconds. The backoff
-    /// is linear: attempt n waits n times this value.
+    /// is exponential: the wait after attempt n is this value times 2^(n-1),
+    /// capped at 30 seconds.
     #[arg(long = "rpc-retry-delay-ms", default_value_t = 500)]
     pub rpc_retry_delay_ms: u64,
 

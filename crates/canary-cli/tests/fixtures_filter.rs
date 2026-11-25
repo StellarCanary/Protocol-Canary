@@ -6,6 +6,8 @@
 //! - Filter combinations (--surface and --category together) work as expected.
 //! - Filtering works across both text table (terminal) and `--format json` (including `--json` shorthand).
 //! - Filtering by a non-existent category outputs 0 fixtures cleanly with an empty array in JSON mode and exit code 0.
+//! - An unknown `--surface` value is rejected by the argument parser with exit code 2 (issue #728).
+//! - A non-matching `--category` prints a valid empty terminal listing without errors (issue #728).
 //! - Invalid fixtures in the directory still cause exit code 4 before filtering.
 
 mod support;
@@ -353,6 +355,99 @@ fn filter_by_nonexistent_category_outputs_zero_fixtures_cleanly() {
     assert_eq!(output.status.code(), Some(0));
     let text = stdout(&output);
     assert!(text.contains("(no fixtures found in "));
+}
+
+#[test]
+fn unknown_surface_is_rejected_by_the_argument_parser() {
+    let dir = setup_test_project("fixtures-filter-unknown-surface");
+
+    // `--surface` is a clap value enum: an unknown name is a usage error
+    // (exit 2) reported before any fixture is read, listing the accepted
+    // surfaces so the caller can fix the invocation.
+    let args = ["fixtures", "--surface", "nonexistent_surface"];
+    let output = run_in(&dir.path, &args);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "an unknown surface must be a usage error: {}",
+        stderr(&output)
+    );
+    assert!(stdout(&output).is_empty(), "{}", stdout(&output));
+
+    let err = stderr(&output);
+    assert!(err.starts_with("error: "), "{err}");
+    assert!(err.contains("invalid value 'nonexistent_surface'"));
+    assert!(err.contains("--surface"), "{err}");
+    assert!(err.contains("possible values"), "{err}");
+    for surface in ["xdr", "rpc", "soroban"] {
+        assert!(err.contains(surface), "missing {surface:?} in: {err}");
+    }
+    assert!(err.contains("--help"), "no help hint: {err}");
+
+    // The same rejection applies regardless of the requested output format.
+    let args = [
+        "fixtures",
+        "--surface",
+        "nonexistent_surface",
+        "--format",
+        "json",
+    ];
+    let output = run_in(&dir.path, &args);
+    assert_eq!(output.status.code(), Some(2), "{}", stderr(&output));
+    assert!(stdout(&output).is_empty(), "{}", stdout(&output));
+}
+
+#[test]
+fn nonexistent_category_prints_an_empty_terminal_listing() {
+    let dir = setup_test_project("fixtures-filter-nonexistent-cat-terminal");
+
+    let args = ["fixtures", "--category", "nonexistent_cat"];
+    let output = run_in(&dir.path, &args);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a category that matches nothing is an empty listing, not an error: {}",
+        stderr(&output)
+    );
+    assert!(stderr(&output).is_empty(), "{}", stderr(&output));
+
+    let text = stdout(&output);
+    assert!(
+        text.starts_with("Protocol 28 fixtures\n"),
+        "the heading is still rendered: {text}"
+    );
+    assert!(
+        text.contains("(no fixtures found in "),
+        "an empty listing must say so: {text}"
+    );
+    // No surface section or fixture id from the populated pack may leak
+    // into the filtered listing.
+    for heading in ["XDR", "RPC", "Soroban"] {
+        assert!(!text.contains(heading), "{heading} heading leaked: {text}");
+    }
+    for id in ["p28-xdr-auth", "p28-rpc-auth", "p28-soroban-token"] {
+        assert!(!text.contains(id), "{id} leaked: {text}");
+    }
+
+    // The JSON inventory for the same filter stays a valid, empty
+    // inventory rather than an error.
+    let args = [
+        "fixtures",
+        "--category",
+        "nonexistent_cat",
+        "--format",
+        "json",
+    ];
+    let output = run_in(&dir.path, &args);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let doc: Value = serde_json::from_str(&stdout(&output)).expect("valid json");
+    assert_eq!(doc["inventoryVersion"], 1);
+    assert_eq!(doc["directoryFound"], true);
+    assert_eq!(doc["counts"]["total"], 0);
+    assert_eq!(doc["counts"]["xdr"], 0);
+    assert_eq!(doc["counts"]["rpc"], 0);
+    assert_eq!(doc["counts"]["soroban"], 0);
+    assert_eq!(doc["fixtures"], serde_json::json!([]));
 }
 
 #[test]

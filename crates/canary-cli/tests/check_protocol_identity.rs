@@ -348,6 +348,73 @@ fn target_protocol_29_against_protocol_28_endpoint_surfaces_mismatch_warning() {
     );
 }
 
+/// Protocol 30, the next upgrade target: a `--protocol 30` run against an
+/// endpoint that reports 30 handshakes cleanly, records 30 as both target and
+/// observed, and executes the Protocol 30 fixtures rather than skipping them.
+#[test]
+fn target_protocol_30_matching_endpoint_passes_handshake_without_warnings() {
+    let (_rt, server) = mock_network(30);
+    let dir = project(&[
+        ("net", identity_fixture("p30-net", 30)),
+        ("x", xdr_fixture("p30-x", 30)),
+    ]);
+
+    let (output, report) = run_json(&dir, &server.uri(), &["--protocol", "30"]);
+
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    assert_eq!(report["targetProtocol"], 30, "what the run asked for");
+    assert_eq!(
+        report["network"]["observedProtocol"], 30,
+        "what the endpoint reported"
+    );
+    assert_eq!(report["counts"]["total"], 2, "both fixtures ran");
+    assert_eq!(status_of(&report, "p30-net"), "pass");
+    assert_eq!(status_of(&report, "p30-x"), "pass");
+
+    let err = stderr(&output);
+    assert!(
+        !err.contains("reports protocol"),
+        "no protocol-mismatch warning on a matching handshake: {err}"
+    );
+    assert!(
+        !err.contains("no checks ran"),
+        "the handshake is backed by a real run: {err}"
+    );
+}
+
+/// The upgrade-rehearsal case for Protocol 30: the run targets 30 while the
+/// endpoint still reports 29. The warning is emitted verbatim and the report
+/// keeps target 30 and observed 29 apart; no Protocol 30 fixture exists in
+/// this project, so `--allow-empty` keeps the exit at 0.
+#[test]
+fn target_protocol_30_against_protocol_29_endpoint_surfaces_mismatch_warning() {
+    let (_rt, server) = mock_network(29);
+    let dir = project(&[
+        ("net", identity_fixture("p29-net", 29)),
+        ("x", xdr_fixture("p29-x", 29)),
+    ]);
+
+    let (output, report) = run_json(&dir, &server.uri(), &["--protocol", "30", "--allow-empty"]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "a clean exit under --allow-empty: {}",
+        stderr(&output)
+    );
+    assert_eq!(report["targetProtocol"], 30);
+    assert_eq!(report["network"]["observedProtocol"], 29);
+    assert_eq!(report["counts"]["total"], 0, "nothing targets 30 yet");
+
+    let err = stderr(&output);
+    assert!(
+        err.contains(
+            "warning: the RPC endpoint reports protocol 29, but this run targets protocol 30"
+        ),
+        "{err}"
+    );
+}
+
 /// Negative case for the Protocol 29 handshake: identity agreement on the
 /// protocol is worthless if the endpoint is not the network the run named.
 /// A passphrase mismatch is a configuration error, so it aborts with exit

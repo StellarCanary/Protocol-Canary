@@ -1,5 +1,5 @@
-//! Error branches of `inspect`, `fixtures` and `check` (`[E-111]`,
-//! issue #505).
+//! Error branches of `inspect`, `fixtures`, `check`, `diff` and `report`
+//! (`[E-111]`, issues #505, #729).
 //!
 //! Every test runs the built binary in a fresh temporary project and
 //! checks the exit code from the documented contract
@@ -8,7 +8,11 @@
 //! - `2` for an unusable command line. That covers both argument-parser
 //!   usage errors (clap's message, a usage line or `--help` hint, no
 //!   `configuration error:` prefix) and configuration problems found at
-//!   run time (an `error: configuration error:` line).
+//!   run time (an `error: configuration error:` line). `diff` reports its
+//!   run-time configuration errors as a plain `error:` line (it does not
+//!   go through `CanaryError`), so its missing-input tests assert the
+//!   documented exit code and message without the `configuration error:`
+//!   prefix.
 //! - `4` for a fixture that cannot be loaded.
 //!
 //! Exit `1` is reserved for a compatibility failure, so no error branch
@@ -74,7 +78,7 @@ fn assert_fails(output: &Output, context: &str, code: i32, needles: &[&str]) -> 
 }
 
 /// A clap usage error: exit 2, clap's own message, and a pointer to help.
-fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) {
+fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) -> String {
     let err = assert_fails(output, context, 2, needles);
     assert!(err.starts_with("error: "), "{context}: {err}");
     assert!(
@@ -82,6 +86,7 @@ fn assert_usage_error(output: &Output, context: &str, needles: &[&str]) {
         "{context}: a usage error is reported by the argument parser: {err}"
     );
     assert!(err.contains("--help"), "{context}: no help hint: {err}");
+    err
 }
 
 /// A configuration problem found at run time: exit 2 and an
@@ -378,6 +383,139 @@ fn an_unknown_format_lists_the_possible_values() {
             ],
         );
     }
+}
+
+// --- diff -------------------------------------------------------------------
+
+/// A minimal JSON report `report` accepts: exactly the fields
+/// `JsonReporter::parse` requires, with everything else defaulted the same
+/// way a real report defaults it.
+fn minimal_report() -> &'static str {
+    "{\n  \"schemaVersion\": 1,\n  \"toolVersion\": \"0.0.0-test\",\n  \"targetProtocol\": 28,\n  \"project\": { \"name\": \"cli-err\", \"type\": \"unknown\" },\n  \"status\": \"pass\",\n  \"results\": []\n}\n"
+}
+
+#[test]
+fn diff_with_a_missing_current_report_is_a_configuration_error() {
+    let project = TempProject::new("cli-err-diff-missing-current");
+    project.write("baseline.json", minimal_report());
+
+    let args = ["no-such-current.json", "baseline.json"];
+    let output = run(&project, "diff", &args);
+    let err = assert_fails(
+        &output,
+        "diff missing current",
+        2,
+        &["failed to read report file", "no-such-current.json"],
+    );
+    // `diff` prints its own error line rather than a `CanaryError`, so the
+    // message must still be identifiable as an error and must not claim a
+    // compatibility failure.
+    assert!(err.starts_with("error: "), "diff: {err}");
+    assert!(!err.contains("compatibility"), "diff: {err}");
+}
+
+#[test]
+fn diff_with_a_missing_baseline_report_is_a_configuration_error() {
+    let project = TempProject::new("cli-err-diff-missing-baseline");
+    project.write("current.json", minimal_report());
+
+    let args = ["current.json", "no-such-baseline.json"];
+    let output = run(&project, "diff", &args);
+    let err = assert_fails(
+        &output,
+        "diff missing baseline",
+        2,
+        &["failed to read report file", "no-such-baseline.json"],
+    );
+    assert!(err.starts_with("error: "), "diff: {err}");
+}
+
+#[test]
+fn diff_without_both_report_paths_is_a_usage_error() {
+    let project = TempProject::new("cli-err-diff-usage");
+    project.write("current.json", minimal_report());
+
+    // Neither path: clap names both required positionals.
+    let output = run(&project, "diff", &[]);
+    assert_usage_error(
+        &output,
+        "diff no paths",
+        &[
+            "required arguments were not provided",
+            "CURRENT_REPORT",
+            "BASELINE_REPORT",
+        ],
+    );
+
+    // Only the current path: the baseline is the one that is missing. The
+    // `Usage:` line still spells out both positionals, so inspect only the
+    // required-arguments block that precedes it.
+    let output = run(&project, "diff", &["current.json"]);
+    let err = assert_usage_error(&output, "diff one path", &["BASELINE_REPORT"]);
+    let missing = err.split("Usage:").next().unwrap_or(&err);
+    assert!(
+        missing.contains("required arguments were not provided"),
+        "diff: {err}"
+    );
+    assert!(!missing.contains("CURRENT_REPORT"), "diff: {err}");
+}
+
+// --- report -----------------------------------------------------------------
+
+#[test]
+fn report_with_a_missing_input_path_is_a_configuration_error() {
+    let project = TempProject::new("cli-err-report-missing");
+    let output = run(&project, "report", &["no-such-report.json"]);
+    assert_configuration_error(
+        &output,
+        "report missing input",
+        &["failed to read report file", "no-such-report.json"],
+    );
+}
+
+#[test]
+fn report_without_an_input_path_is_a_usage_error() {
+    let project = TempProject::new("cli-err-report-no-path");
+    let output = run(&project, "report", &[]);
+    let err = assert_usage_error(&output, "report no path", &["PATH"]);
+    assert!(
+        err.contains("required arguments were not provided"),
+        "report: {err}"
+    );
+}
+
+#[test]
+fn report_with_an_unknown_format_is_a_usage_error() {
+    let project = TempProject::new("cli-err-report-format");
+    project.write("report.json", minimal_report());
+
+    let output = run(&project, "report", &["report.json", "--format", "yaml"]);
+    assert_usage_error(
+        &output,
+        "report unknown format",
+        &[
+            "invalid value 'yaml'",
+            "--format",
+            "possible values",
+            "markdown",
+        ],
+    );
+}
+
+#[test]
+fn report_rejects_a_flag_it_does_not_define() {
+    // `--json` is `check`'s shorthand; `report` renders the format it is
+    // given, so a report invocation carrying it is an unusable command
+    // line rather than a silently ignored flag.
+    let project = TempProject::new("cli-err-report-flag");
+    project.write("report.json", minimal_report());
+
+    let output = run(&project, "report", &["--json", "report.json"]);
+    assert_usage_error(
+        &output,
+        "report unsupported flag",
+        &["unexpected argument '--json'"],
+    );
 }
 
 // --- check-only combinations ------------------------------------------------

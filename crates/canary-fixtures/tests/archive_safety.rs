@@ -29,6 +29,8 @@ struct TestSandbox {
     dir: PathBuf,
     dest: PathBuf,
     sentinel: PathBuf,
+    #[cfg(unix)]
+    allowed_outside: Vec<String>,
 }
 
 impl TestSandbox {
@@ -56,7 +58,19 @@ impl TestSandbox {
             dir,
             dest,
             sentinel,
+            #[cfg(unix)]
+            allowed_outside: Vec::new(),
         }
+    }
+
+    /// Creates a directory next to `dest`, outside the extraction destination,
+    /// and allows it when checking that nothing else was written outside.
+    #[cfg(unix)]
+    fn create_outside_dir(&mut self, name: &str) -> PathBuf {
+        let path = self.dir.join(name);
+        std::fs::create_dir_all(&path).unwrap();
+        self.allowed_outside.push(name.to_string());
+        path
     }
 
     /// Asserts that no operation wrote or altered files outside `dest`.
@@ -76,7 +90,18 @@ impl TestSandbox {
             let name = entry.file_name();
             let name_str = name.to_str().unwrap();
             assert!(
-                name_str == "dest" || name_str == "outside_sentinel.txt",
+                name_str == "dest" || name_str == "outside_sentinel.txt" || {
+                    #[cfg(unix)]
+                    {
+                        self.allowed_outside
+                            .iter()
+                            .any(|allowed| allowed == name_str)
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        false
+                    }
+                },
                 "Unexpected file or directory leaked outside destination: {name_str}"
             );
         }
@@ -525,6 +550,36 @@ fn negative_symlink_escape_rejected() {
         }
         other => panic!("Expected UnsupportedEntryType for symlink, got {other:?}"),
     }
+    sandbox.assert_nothing_written_outside();
+}
+
+/// A symlinked directory that already exists inside the destination must not
+/// be followed when the archive creates a file beneath it.
+#[cfg(unix)]
+#[test]
+fn negative_preexisting_destination_symlink_rejected() {
+    use std::os::unix::fs::symlink;
+
+    let mut sandbox = TestSandbox::new("destination-symlink");
+    let outside = sandbox.create_outside_dir("outside");
+    symlink(&outside, sandbox.dest.join("pack")).unwrap();
+
+    let archive = ArchiveFixtureBuilder::new()
+        .file("pack/escaped.txt", b"must stay inside the destination")
+        .build();
+
+    let result = extract_archive(archive.as_slice(), &sandbox.dest);
+    match result {
+        Err(ArchiveSafetyError::DestinationSymlink { path }) => {
+            assert_eq!(path, sandbox.dest.join("pack"));
+        }
+        other => panic!("Expected DestinationSymlink, got {other:?}"),
+    }
+
+    assert!(
+        !outside.join("escaped.txt").exists(),
+        "extraction wrote through the pre-existing symlink"
+    );
     sandbox.assert_nothing_written_outside();
 }
 

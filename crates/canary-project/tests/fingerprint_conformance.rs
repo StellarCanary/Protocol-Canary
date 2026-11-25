@@ -330,6 +330,135 @@ fn inputs_count_the_manifest_unreadable_and_artifact_lines() {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-file contract directories
+// ---------------------------------------------------------------------------
+
+/// Where the detector looks for a contract's built WASM artifacts.
+const CONTRACT_ARTIFACT_DIR: &str = "target/wasm32-unknown-unknown/release";
+
+fn write_contract_sources(tree: &Tree) {
+    tree.write("src/lib.rs", "#![no_std]\npub mod token;\n");
+    tree.write("src/token.rs", "pub fn transfer() -> u32 { 1 }\n");
+    tree.write("src/metadata.rs", "pub const NAME: &str = \"token\";\n");
+}
+
+fn write_contract_artifacts(tree: &Tree, release: &[u8], test: &[u8]) {
+    tree.write(&format!("{CONTRACT_ARTIFACT_DIR}/token.wasm"), release);
+    tree.write(&format!("{CONTRACT_ARTIFACT_DIR}/token_test.wasm"), test);
+}
+
+#[test]
+fn multi_file_contract_directories_fingerprint_deterministically_across_creation_orders() {
+    let first = temp_tree("fp-contract-order-a");
+    first.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+    write_contract_sources(&first);
+    write_contract_artifacts(
+        &first,
+        b"\0asm\x01\x00\x00\x00release",
+        b"\0asm\x01\x00\x00\x00test",
+    );
+
+    // The same tree, with the files created in the opposite order.
+    let second = temp_tree("fp-contract-order-b");
+    write_contract_artifacts(
+        &second,
+        b"\0asm\x01\x00\x00\x00release",
+        b"\0asm\x01\x00\x00\x00test",
+    );
+    write_contract_sources(&second);
+    second.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+
+    assert_eq!(fingerprint_of(&first.path), fingerprint_of(&second.path));
+
+    // One manifest plus the two WASM artifacts are the contract directory's
+    // fingerprint inputs; source files are deliberately outside CA-04's scope.
+    let context = detect(&first.path);
+    let fingerprint = compute_fingerprint(
+        &first.path,
+        context.project_type,
+        &context.capabilities,
+        None,
+    );
+    assert_eq!(fingerprint.inputs(), 3);
+}
+
+#[test]
+fn a_single_contract_file_change_produces_a_distinct_fingerprint() {
+    let tree = temp_tree("fp-contract-single-change");
+    tree.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+    write_contract_sources(&tree);
+    write_contract_artifacts(
+        &tree,
+        b"\0asm\x01\x00\x00\x00release-v1",
+        b"\0asm\x01\x00\x00\x00test-v1",
+    );
+    let before = fingerprint_of(&tree.path);
+
+    // Change one of the directory's inputs. The other artifact, the sources
+    // and every path stay exactly as they were.
+    tree.write(
+        &format!("{CONTRACT_ARTIFACT_DIR}/token_test.wasm"),
+        b"\0asm\x01\x00\x00\x00test-v2",
+    );
+    let after_artifact = fingerprint_of(&tree.path);
+    assert_ne!(before, after_artifact);
+
+    // Restoring the artifact and instead changing only the manifest's
+    // dependency version also moves the digest.
+    tree.write(
+        &format!("{CONTRACT_ARTIFACT_DIR}/token_test.wasm"),
+        b"\0asm\x01\x00\x00\x00test-v1",
+    );
+    assert_eq!(before, fingerprint_of(&tree.path));
+    tree.write("Cargo.toml", cargo_manifest_with_dependency("23"));
+    assert_ne!(before, fingerprint_of(&tree.path));
+}
+
+#[test]
+fn artifact_paths_are_bound_to_their_contents_in_the_digest() {
+    // Moving bytes between artifact paths must change the digest: the
+    // digest input ranks lines by path and hashes each file's own bytes,
+    // so accumulation order is not independent of the path/value pairing.
+    let one = temp_tree("fp-artifact-binding-a");
+    one.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+    write_contract_artifacts(&one, b"\0asm\x01\x00\x00\x00A", b"\0asm\x01\x00\x00\x00B");
+
+    let two = temp_tree("fp-artifact-binding-b");
+    two.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+    write_contract_artifacts(&two, b"\0asm\x01\x00\x00\x00B", b"\0asm\x01\x00\x00\x00A");
+
+    assert_ne!(fingerprint_of(&one.path), fingerprint_of(&two.path));
+}
+
+#[test]
+fn contract_source_edits_are_outside_the_fingerprint_but_artifacts_are_not() {
+    // CA-04 fingerprints the inspected inputs (manifests and built
+    // artifacts), not source text. A source edit alone must not invalidate
+    // the fingerprint; a rebuilt artifact must.
+    let tree = temp_tree("fp-contract-source-scope");
+    tree.write("Cargo.toml", cargo_manifest_with_dependency("22"));
+    write_contract_sources(&tree);
+    write_contract_artifacts(
+        &tree,
+        b"\0asm\x01\x00\x00\x00release",
+        b"\0asm\x01\x00\x00\x00test",
+    );
+    let before = fingerprint_of(&tree.path);
+
+    tree.write(
+        "src/token.rs",
+        "pub fn transfer() -> u32 { 2 } // behaviour changed in source only\n",
+    );
+    assert_eq!(before, fingerprint_of(&tree.path));
+
+    tree.write(
+        &format!("{CONTRACT_ARTIFACT_DIR}/token.wasm"),
+        b"\0asm\x01\x00\x00\x00release-v2",
+    );
+    assert_ne!(before, fingerprint_of(&tree.path));
+}
+
+// ---------------------------------------------------------------------------
 // Unreadable inputs and non-UTF-8 paths (CA-04 section 3)
 // ---------------------------------------------------------------------------
 

@@ -254,7 +254,11 @@ fn lock_fails_when_destination_is_unwritable() {
     let output = run_in(&project.path, &["lock"]);
 
     // The command must fail with exit code 2.
-    assert!(!output.status.success(), "lock must fail with exit code 2; stderr: {}", stderr(&output));
+    assert!(
+        !output.status.success(),
+        "lock must fail with exit code 2; stderr: {}",
+        stderr(&output)
+    );
     assert_eq!(
         output.status.code(),
         Some(2),

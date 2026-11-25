@@ -152,6 +152,7 @@ configuration error, `3` execution error, `4` invalid fixture, `5` internal.
 |---|---|---|---|
 | All executed results pass | `pass` | 0 | |
 | Warnings only | `warning` | 0 | `warnings_are_failures` turns this into `fail`. |
+| Warnings only, `--fail-on-warning` | `warning` | 1 | The flag gates CI only; it does not rewrite the report status. |
 | Any `fail` | `fail` | 1 | |
 | Any `error` | `error` | 3 | Outranks `fail`. |
 | Zero results executed, `0.1.1` and earlier | `pass` | 0 | The old false-green behavior. Not to be relied on. |

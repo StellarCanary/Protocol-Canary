@@ -46,7 +46,9 @@ prove nothing about compatibility either way.
 
 **When it happens.** Every applicable check passed. Concretely: `check`
 finishes with a `pass` (or `warning` — warnings do not fail a run unless
-`warnings_are_failures` is enabled in the policy) and no result recorded
+`warnings_are_failures` is enabled in the policy or `--fail-on-warning`
+is passed; the flag changes only the exit code, never the report status)
+and no result recorded
 an execution error; `inspect`, `fixtures`, `report`, `cache clear`, and
 `version` complete successfully; `config validate` finds the project's
 `.stellar-canary.toml` valid (or no file at all, which is valid: the
@@ -64,8 +66,9 @@ release.
 failed: the check *ran* and found a real mismatch (for example an XDR
 value that no longer round-trips, or an RPC endpoint that no longer
 reports the expected protocol). A `warning` result also becomes a
-failure when the policy sets `warnings_are_failures = true`. The run
-completed — exit `1` is evidence, not an outage.
+failure when the policy sets `warnings_are_failures = true`, or when
+`check --fail-on-warning` is given. The run completed — exit `1` is
+evidence, not an outage.
 
 The read-only verdict commands use the same number for the same reason:
 `lock verify` exits `1` when the pin does not hold and `config validate`

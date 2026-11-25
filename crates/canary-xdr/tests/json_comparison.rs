@@ -19,8 +19,10 @@ use canary_xdr::{
 };
 use serde_json::json;
 use stellar_xdr::{
-    Limits, Memo, ScVal, StellarValue, Transaction, TransactionEnvelope, TransactionV1Envelope,
-    WriteXdr,
+    ContractDataDurability, ContractDataEntry, ContractExecutable, ContractId, ExtensionPoint,
+    Hash, LedgerEntry, LedgerEntryData, Limits, Memo, ScAddress, ScContractInstance, ScSymbol,
+    ScVal, StellarValue, StringM, Transaction, TransactionEnvelope, TransactionV1Envelope,
+    TtlEntry, WriteXdr,
 };
 
 fn context() -> ExecutionContext {
@@ -472,6 +474,282 @@ fn a_parsed_fixture_carries_the_expected_json_value() {
         }
     );
     assert_eq!(run(&fixture).status, Status::Pass);
+}
+
+// --- ledger entries: contract data, storage types, and TTL --------------------
+
+/// The strkey of `ScAddress::Contract(ContractId(Hash([9; 32])))`, as the
+/// `stellar-xdr` JSON form writes contract addresses.
+const CONTRACT_STRKEY: &str = "CAEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQSCIJBEEQTD2L";
+
+fn state_symbol() -> ScVal {
+    ScVal::Symbol(ScSymbol(
+        StringM::try_from("STATE".to_string()).expect("fits 32"),
+    ))
+}
+
+/// A `ContractData` ledger entry for the contract at `Hash([9; 32])`,
+/// storing `ScVal::Symbol("STATE") -> ScVal::U32(7)` with `durability`.
+fn contract_data_entry(durability: ContractDataDurability) -> LedgerEntry {
+    LedgerEntry {
+        last_modified_ledger_seq: 200,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([9; 32]))),
+            key: state_symbol(),
+            durability,
+            val: ScVal::U32(7),
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    }
+}
+
+fn contract_data_base64(durability: ContractDataDurability) -> String {
+    contract_data_entry(durability)
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+}
+
+/// The JSON form of [`contract_data_entry`] for a durability spelling.
+fn contract_data_json(durability: &str) -> serde_json::Value {
+    json!({
+        "last_modified_ledger_seq": 200,
+        "data": {
+            "contract_data": {
+                "ext": "v0",
+                "contract": CONTRACT_STRKEY,
+                "key": { "symbol": "STATE" },
+                "durability": durability,
+                "val": { "u32": 7 },
+            }
+        },
+        "ext": "v0",
+    })
+}
+
+/// Soroban's `Instance` storage type is not a third `ContractDataDurability`:
+/// the XDR only has `TEMPORARY` and `PERSISTENT`, and instance storage is a
+/// persistent entry whose key is `SCV_LEDGER_KEY_CONTRACT_INSTANCE`.
+fn instance_entry() -> LedgerEntry {
+    LedgerEntry {
+        last_modified_ledger_seq: 200,
+        data: LedgerEntryData::ContractData(ContractDataEntry {
+            ext: ExtensionPoint::V0,
+            contract: ScAddress::Contract(ContractId(Hash([9; 32]))),
+            key: ScVal::LedgerKeyContractInstance,
+            durability: ContractDataDurability::Persistent,
+            val: ScVal::ContractInstance(ScContractInstance {
+                executable: ContractExecutable::Wasm(Hash([1; 32])),
+                storage: None,
+            }),
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    }
+}
+
+fn instance_json() -> serde_json::Value {
+    json!({
+        "last_modified_ledger_seq": 200,
+        "data": {
+            "contract_data": {
+                "ext": "v0",
+                "contract": CONTRACT_STRKEY,
+                "key": "ledger_key_contract_instance",
+                "durability": "persistent",
+                "val": {
+                    "contract_instance": {
+                        "executable": {
+                            "wasm": "0101010101010101010101010101010101010101010101010101010101010101"
+                        },
+                        "storage": null,
+                    }
+                },
+            }
+        },
+        "ext": "v0",
+    })
+}
+
+fn ttl_entry(live_until_ledger_seq: u32) -> LedgerEntry {
+    LedgerEntry {
+        last_modified_ledger_seq: 201,
+        data: LedgerEntryData::Ttl(TtlEntry {
+            key_hash: Hash([2; 32]),
+            live_until_ledger_seq,
+        }),
+        ext: stellar_xdr::LedgerEntryExt::V0,
+    }
+}
+
+fn ttl_base64(live_until_ledger_seq: u32) -> String {
+    ttl_entry(live_until_ledger_seq)
+        .to_xdr_base64(Limits::none())
+        .unwrap()
+}
+
+fn ttl_json(live_until_ledger_seq: u32) -> serde_json::Value {
+    json!({
+        "last_modified_ledger_seq": 201,
+        "data": {
+            "ttl": {
+                "key_hash": "0202020202020202020202020202020202020202020202020202020202020202",
+                "live_until_ledger_seq": live_until_ledger_seq,
+            }
+        },
+        "ext": "v0",
+    })
+}
+
+#[test]
+fn contract_data_storage_types_serialize_to_soroban_names() {
+    for (durability, expected) in [
+        (ContractDataDurability::Persistent, "persistent"),
+        (ContractDataDurability::Temporary, "temporary"),
+    ] {
+        let value =
+            decode(XdrTypeName::LedgerEntry, &contract_data_base64(durability)).expect("decodes");
+        let actual = value.to_json().expect("serializes");
+        assert_eq!(
+            actual["data"]["contract_data"]["durability"],
+            json!(expected),
+            "{durability:?} must serialize to the Soroban storage type spelling"
+        );
+        assert_eq!(actual, contract_data_json(expected));
+        assert!(compare_json(&contract_data_json(expected), &actual).is_empty());
+    }
+}
+
+#[test]
+fn instance_storage_is_a_persistent_contract_data_entry() {
+    let value = decode(XdrTypeName::LedgerEntry, &{
+        instance_entry().to_xdr_base64(Limits::none()).unwrap()
+    })
+    .expect("decodes");
+    let actual = value.to_json().expect("serializes");
+
+    // Soroban's three storage types map onto the XDR's two durabilities:
+    // Instance (and Persistent) are `persistent`, Temporary is `temporary`.
+    assert_eq!(
+        actual["data"]["contract_data"]["durability"],
+        json!("persistent")
+    );
+    assert_eq!(
+        actual["data"]["contract_data"]["key"],
+        json!("ledger_key_contract_instance")
+    );
+    assert_eq!(actual, instance_json());
+    assert!(compare_json(&instance_json(), &actual).is_empty());
+}
+
+#[test]
+fn ttl_entries_preserve_live_until_ledger_in_json() {
+    let value = decode(XdrTypeName::LedgerEntry, &ttl_base64(4_000_000)).expect("decodes");
+    let actual = value.to_json().expect("serializes");
+    assert_eq!(
+        actual["data"]["ttl"]["live_until_ledger_seq"],
+        json!(4_000_000),
+        "the TTL must survive JSON serialization as a number"
+    );
+    assert_eq!(actual, ttl_json(4_000_000));
+}
+
+#[test]
+fn matching_contract_data_json_passes() {
+    let result = run(&json_fixture(
+        "LedgerEntry",
+        &contract_data_base64(ContractDataDurability::Persistent),
+        &contract_data_json("persistent").to_string(),
+    ));
+    assert_eq!(result.status, Status::Pass, "{:?}", result.details);
+    assert_eq!(
+        result.summary,
+        "decoded LedgerEntry matched the expected JSON"
+    );
+}
+
+#[test]
+fn matching_ttl_json_passes() {
+    let result = run(&json_fixture(
+        "LedgerEntry",
+        &ttl_base64(4_000_000),
+        &ttl_json(4_000_000).to_string(),
+    ));
+    assert_eq!(result.status, Status::Pass, "{:?}", result.details);
+}
+
+#[test]
+fn differing_storage_type_is_reported_at_the_durability_field() {
+    let mut expected = contract_data_json("temporary");
+    expected["data"]["contract_data"]["durability"] = json!("persistent");
+    let result = run(&json_fixture(
+        "LedgerEntry",
+        &contract_data_base64(ContractDataDurability::Temporary),
+        &expected.to_string(),
+    ));
+    assert_eq!(result.status, Status::Fail);
+    assert_eq!(
+        details(&result),
+        "/data/contract_data/durability: expected \"persistent\", found \"temporary\""
+    );
+
+    let differences = compare_json(
+        &contract_data_json("persistent"),
+        &contract_data_json("temporary"),
+    );
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0].path, "/data/contract_data/durability");
+    assert!(matches!(
+        differences[0].kind,
+        JsonDifferenceKind::ValueMismatch { .. }
+    ));
+}
+
+#[test]
+fn differing_live_until_ledger_is_reported() {
+    let mut expected = ttl_json(4_000_001);
+    expected["data"]["ttl"]["live_until_ledger_seq"] = json!(4_000_001);
+    let result = run(&json_fixture(
+        "LedgerEntry",
+        &ttl_base64(4_000_000),
+        &expected.to_string(),
+    ));
+    assert_eq!(result.status, Status::Fail);
+    assert_eq!(
+        details(&result),
+        "/data/ttl/live_until_ledger_seq: expected 4000001, found 4000000"
+    );
+
+    let differences = compare_json(&ttl_json(4_000_001), &ttl_json(4_000_000));
+    assert_eq!(differences.len(), 1);
+    assert_eq!(differences[0].path, "/data/ttl/live_until_ledger_seq");
+}
+
+#[test]
+fn identical_ledger_entries_compare_equal_and_durabilities_distinguish_them() {
+    let persistent = decode(
+        XdrTypeName::LedgerEntry,
+        &contract_data_base64(ContractDataDurability::Persistent),
+    )
+    .expect("decodes")
+    .to_json()
+    .expect("serializes");
+    let same = decode(
+        XdrTypeName::LedgerEntry,
+        &contract_data_base64(ContractDataDurability::Persistent),
+    )
+    .expect("decodes")
+    .to_json()
+    .expect("serializes");
+    assert!(compare_json(&persistent, &same).is_empty());
+
+    let temporary = decode(
+        XdrTypeName::LedgerEntry,
+        &contract_data_base64(ContractDataDurability::Temporary),
+    )
+    .expect("decodes")
+    .to_json()
+    .expect("serializes");
+    assert_eq!(compare_json(&persistent, &temporary).len(), 1);
 }
 
 // --- backward compatibility --------------------------------------------------

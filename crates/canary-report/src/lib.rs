@@ -28,27 +28,36 @@ pub use writer::atomic_write_report;
 /// `canary-runner`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkipSummary {
+    /// Identifier of the fixture that was skipped.
     pub fixture_id: String,
+    /// Surface the skipped fixture belongs to.
     pub surface: Surface,
+    /// Human-readable explanation of why the fixture was skipped.
     pub reason: String,
-    /// The stable machine-readable skip reason written as
-    /// `skipped[].code` in the JSON report (CF-01). `reason` stays
-    /// free-form prose; tooling should key off this code instead.
+    /// Stable machine-readable skip reason written as `skipped[].code` in the JSON report (CF-01).
+    /// `reason` stays free-form prose; tooling should key off this code instead.
     pub code: SkipCode,
 }
 
 /// What is known about the project under test, for the report header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSummary {
+    /// Display name of the project under test.
     pub name: String,
+    /// Detected or configured project type shown in report context.
     pub project_type: ProjectType,
 }
 
 /// What is known about the live network, when a live check ran.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NetworkSummary {
+    /// Network selected for the run.
     pub name: NetworkName,
+    /// Protocol version observed from the network, when available.
+    /// `None` when the check did not observe a protocol version.
     pub observed_protocol: Option<ProtocolVersion>,
+    /// Network/query error message captured for reporting, when present.
+    /// `None` when no network error was recorded.
     pub error: Option<String>,
 }
 
@@ -57,13 +66,13 @@ pub struct NetworkSummary {
 /// passing run is not a verification (CF-04 section 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerificationSummary {
+    /// Identifier of the fixture this verification record applies to.
     pub fixture_id: String,
-    /// The CF-04 method: `structural`, `source-checked`, `live-read-only`
-    /// or `live-simulation`.
+    /// CF-04 verification method: `structural`, `source-checked`, `live-read-only`, or `live-simulation`.
     pub method: String,
-    /// `matched` or `mismatched`.
+    /// Verification outcome, such as `matched` or `mismatched`.
     pub outcome: String,
-    /// The RFC 3339 UTC instant the record was checked at.
+    /// RFC 3339 UTC instant when the verification record was checked.
     pub checked_at: String,
 }
 
@@ -102,23 +111,27 @@ pub struct RunSummary {
 /// input any reporter takes.
 #[derive(Debug, Clone)]
 pub struct ReportInput {
+    /// Version of the tool that produced the report input.
     pub tool_version: String,
+    /// Target protocol version the run evaluated against.
     pub target_protocol: ProtocolVersion,
+    /// Project context rendered in report headers/summaries.
     pub project: ProjectSummary,
+    /// Live network context, when a live/network check was performed; `None` for runs without network data.
     pub network: Option<NetworkSummary>,
+    /// Compatibility results in execution order, including skipped/error statuses as reported.
     pub results: Vec<CompatibilityResult>,
+    /// Fixtures the planner skipped, with reasons and stable skip codes.
     pub skipped: Vec<SkipSummary>,
-    /// Verification evidence for the fixtures of this run, by fixture
-    /// id. A fixture missing from this list is unverified, which is the
-    /// unknown state; the terminal reporter shows that rather than
-    /// omitting it.
+    /// Verification evidence for fixtures in this run. Fixtures absent from this list are treated as unverified.
     pub verification: Vec<VerificationSummary>,
+    /// Policy decision computed for the run before reporter rendering.
     pub decision: PolicyDecision,
+    /// Git repository context captured for the report.
     pub git: GitContext,
+    /// Whether reporters should include verbose/detail output where supported.
     pub verbose: bool,
-    /// Build provenance of the engine. `None` means *not recorded* (a report
-    /// written before the field existed), which is different from a
-    /// recorded run whose commit is unknown.
+    /// Engine build provenance. `None` means not recorded; a present `RunSummary` with unknown commit is different.
     pub run: Option<RunSummary>,
 }
 

@@ -441,12 +441,22 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     let results = canary_runner::execute(&plan, &context, &context.network.rpc_url).await;
 
     let has_warnings = canary_runner::summarize(&results).has_warnings();
+    // The report describes the run's own outcome, so `--fail-on-warning` does
+    // not rewrite it: a run whose only problems are warnings still reports
+    // `status: "warning"`. The flag is a CI gate, so it only promotes the
+    // decision used for the exit code (see `policy.rs` in `canary-core`). A
+    // configured `warnings_are_failures` remains a policy decision and does
+    // promote the report status to `fail`, as before.
     let policy = Policy {
-        warnings_are_failures: config.policy.warnings_are_failures
-            || (args.fail_on_warning && has_warnings),
+        warnings_are_failures: config.policy.warnings_are_failures,
     };
     let decision = DefaultPolicyEvaluator.evaluate(&results, &policy);
-    let exit_code = canary_core::exit_code_for_run(&results, decision);
+    let gate = if args.fail_on_warning && has_warnings {
+        canary_core::PolicyDecision::Fail
+    } else {
+        decision
+    };
+    let exit_code = canary_core::exit_code_for_run(&results, gate);
 
     // The fixtures' own CF-04 evidence, so the terminal report can show
     // which results are backed by a verification record. A fixture with

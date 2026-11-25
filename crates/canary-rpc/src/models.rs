@@ -16,15 +16,21 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetHealthResponse {
+    /// Health status reported by the endpoint, such as `"healthy"`.
     pub status: String,
+    /// Latest ledger sequence known to the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<u32>,
+    /// Oldest ledger sequence retained by the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger: Option<u32>,
+    /// Number of ledgers retained by the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ledger_retention_window: Option<u32>,
+    /// Close time for `latest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger_close_time: Option<String>,
+    /// Close time for `oldest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger_close_time: Option<String>,
 }
@@ -33,9 +39,12 @@ pub struct GetHealthResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NetworkInfo {
+    /// Friendbot URL for the network, when the endpoint reports one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub friendbot_url: Option<String>,
+    /// Network passphrase reported by the endpoint.
     pub passphrase: String,
+    /// Stellar protocol version reported by the endpoint.
     pub protocol_version: u32,
 }
 
@@ -43,8 +52,11 @@ pub struct NetworkInfo {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LatestLedger {
+    /// Ledger identifier reported by the endpoint.
     pub id: String,
+    /// Stellar protocol version for the latest ledger.
     pub protocol_version: u32,
+    /// Sequence number of the latest ledger.
     pub sequence: u32,
 }
 
@@ -91,11 +103,11 @@ impl VersionInfoResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeeStatsResponse {
-    /// Inclusion fee statistics for Soroban transactions.
+    /// Inclusion fee distribution for Soroban transactions.
     pub soroban_inclusion_fee: FeeDistribution,
-    /// Inclusion fee statistics for all transactions.
+    /// Inclusion fee distribution for all transactions.
     pub inclusion_fee: FeeDistribution,
-    /// The latest ledger the statistics cover.
+    /// Latest ledger sequence covered by the reported fee statistics.
     pub latest_ledger: u32,
 }
 
@@ -103,23 +115,37 @@ pub struct FeeStatsResponse {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FeeDistribution {
+    /// Maximum fee in the distribution, as a string-encoded integer.
     pub max: String,
+    /// Minimum fee in the distribution, as a string-encoded integer.
     pub min: String,
+    /// Mode fee in the distribution, as a string-encoded integer.
     pub mode: String,
+    /// 10th percentile fee, as a string-encoded integer.
     pub p10: String,
+    /// 20th percentile fee, as a string-encoded integer.
     pub p20: String,
+    /// 30th percentile fee, as a string-encoded integer.
     pub p30: String,
+    /// 40th percentile fee, as a string-encoded integer.
     pub p40: String,
+    /// 50th percentile fee, as a string-encoded integer.
     pub p50: String,
+    /// 60th percentile fee, as a string-encoded integer.
     pub p60: String,
+    /// 70th percentile fee, as a string-encoded integer.
     pub p70: String,
+    /// 80th percentile fee, as a string-encoded integer.
     pub p80: String,
+    /// 90th percentile fee, as a string-encoded integer.
     pub p90: String,
+    /// 95th percentile fee, as a string-encoded integer.
     pub p95: String,
+    /// 99th percentile fee, as a string-encoded integer.
     pub p99: String,
-    /// Number of transactions the distribution was computed from.
+    /// Number of transactions in the distribution, as a string-encoded integer.
     pub transaction_count: String,
-    /// Number of ledgers the distribution was computed over.
+    /// Number of ledgers in the distribution window.
     pub ledger_count: u32,
 }
 
@@ -147,7 +173,9 @@ pub struct EventFilter {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EventResponse {
+    /// Latest ledger sequence known to the endpoint at response time.
     pub latest_ledger: u32,
+    /// Events returned for the request; empty when none matched.
     pub events: Vec<Event>,
 }
 
@@ -155,12 +183,17 @@ pub struct EventResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Event {
+    /// Ledger sequence in which the event was emitted.
     pub ledger: u32,
+    /// Contract ID that emitted the event, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_id: Option<String>,
+    /// Event type reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub r#type: Option<String>,
+    /// Event topic segments as base64-encoded XDR strings.
     pub topic: Vec<String>,
+    /// Event value as a base64-encoded XDR string.
     pub value: String,
 }
 
@@ -174,20 +207,23 @@ pub struct Event {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetLedgersResponse {
-    /// The ledgers in the requested range, in ascending sequence order.
-    /// Empty when the endpoint returns no ledger for that range.
+    /// Ledgers in the requested range, in ascending sequence order.
+    /// Defaults to an empty list when the endpoint omits the field.
     #[serde(default)]
     pub ledgers: Vec<LedgerHeaderInfo>,
+    /// Latest ledger sequence known to the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<u32>,
+    /// Close time for `latest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger_close_time: Option<String>,
+    /// Oldest ledger sequence retained by the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger: Option<u32>,
+    /// Close time for `oldest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger_close_time: Option<String>,
-    /// Opaque cursor for the page after this one, when the endpoint returns
-    /// one.
+    /// Opaque cursor for the next page, when the endpoint provides one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
@@ -269,8 +305,11 @@ pub struct LedgerEntryResult {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionsResponse {
+    /// Latest ledger sequence known to the endpoint at response time.
     pub latest_ledger: u32,
+    /// Transactions returned for the request; empty when none matched.
     pub transactions: Vec<Transaction>,
+    /// Opaque cursor for the next page, when the endpoint provides one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
 }
@@ -293,23 +332,33 @@ pub enum TransactionStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GetTransactionResponse {
+    /// Transaction status reported by the endpoint.
     pub status: TransactionStatus,
+    /// Transaction hash, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tx_hash: Option<String>,
+    /// Ledger sequence containing the transaction, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ledger: Option<u32>,
+    /// Latest ledger sequence known to the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger: Option<u32>,
+    /// Close time for `latest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_ledger_close_time: Option<String>,
+    /// Oldest ledger sequence retained by the endpoint, when reported.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger: Option<u32>,
+    /// Close time for `oldest_ledger`, as reported by the endpoint, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oldest_ledger_close_time: Option<String>,
+    /// Base64-encoded transaction envelope XDR, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub envelope_xdr: Option<String>,
+    /// Base64-encoded transaction result XDR, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_xdr: Option<String>,
+    /// Base64-encoded transaction result meta XDR, when present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub result_meta_xdr: Option<String>,
 }
@@ -318,7 +367,9 @@ pub struct GetTransactionResponse {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Transaction {
+    /// Ledger sequence containing the transaction.
     pub ledger: u32,
+    /// Transaction status as reported by the endpoint.
     pub status: String,
 }
 
@@ -357,15 +408,18 @@ mod transaction_tests {
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SimulationResponse {
+    /// Latest ledger sequence known to the endpoint at simulation time.
     pub latest_ledger: u32,
+    /// Simulation error message; absent or `None` when simulation succeeded.
     #[serde(default)]
     pub error: Option<String>,
+    /// Base64-encoded Soroban transaction data XDR, when returned.
     #[serde(default)]
     pub transaction_data: Option<String>,
+    /// Minimum resource fee reported by the endpoint, as a string-encoded integer, when present.
     #[serde(default)]
     pub min_resource_fee: Option<String>,
-    /// One entry per simulated invocation, empty when the endpoint
-    /// reports none (including on every failed simulation).
+    /// Per-invocation simulation results; defaults to empty when omitted.
     #[serde(default)]
     pub results: Vec<SimulationResult>,
 }

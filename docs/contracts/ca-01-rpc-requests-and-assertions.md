@@ -36,8 +36,8 @@ Checked against `main` at `1ff7908`:
   `field-type` (types `string`, `number`, `bool`, `object`, `array`, `null`).
   The `field` is a single top-level key. `field-equals` compares JSON values
   exactly: `28` and `28.0` are different values, a string never equals a number.
-- Transport failures, timeouts and HTTP 429 are retried up to 3 attempts with a
-  linear 200 ms step; HTTP 5xx is a transport error; a JSON-RPC `error` object,
+- Transport failures, timeouts and HTTP 429 are retried up to 3 attempts with an
+  exponential 200 ms step (200 ms, 400 ms, capped at 30 s); HTTP 5xx is a transport error; a JSON-RPC `error` object,
   invalid JSON and a response with neither `result` nor `error` are not retried.
   All of these end as a result with status `error` (exit code 3).
 - A real `getLatestLedger` response on Mainnet carried a `metadataXdr` field of

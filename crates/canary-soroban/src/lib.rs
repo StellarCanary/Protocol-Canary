@@ -9,7 +9,8 @@ pub mod runner;
 pub mod simulation;
 
 pub use builder::{
-    build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
+    build_invoke_transaction_envelope, BuilderError, InvocationSpec, OperationBuilder, ScValInput,
+    ValidationError, MAX_ARG_DEPTH,
 };
 pub use models::{parse_auth_results, SimulationAuthEntry};
 pub use runner::{

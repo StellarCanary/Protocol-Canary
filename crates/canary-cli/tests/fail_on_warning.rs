@@ -62,3 +62,82 @@ fn no_warnings_exit_zero_with_fail_on_warning() {
     let output = run_in(&dir.path, &["check", "--fail-on-warning"]);
     assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
 }
+
+/// Parses a JSON report and asserts the parts every caller needs: the run is
+/// reported as `warning`, the warning count is right, and the individual
+/// fixture that warned is still listed with its `warning` status.
+fn assert_preserved_warning_report(report: &Value) {
+    assert_eq!(report["schemaVersion"], 1, "{report}");
+    assert_eq!(report["targetProtocol"], 28, "{report}");
+    assert_eq!(
+        report["status"], "warning",
+        "fail-on-warning gates the exit code but must not rewrite the report: {report}"
+    );
+    assert_eq!(report["counts"]["warnings"], 1, "{report}");
+    assert_eq!(report["counts"]["failed"], 0, "{report}");
+
+    let results = report["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("results must be an array: {report}"));
+    let warning = results
+        .iter()
+        .find(|result| result["fixtureId"] == "p28-xdr-1")
+        .unwrap_or_else(|| panic!("the warning fixture must be in the report: {report}"));
+    assert_eq!(warning["status"], "warning", "{report}");
+    assert_eq!(warning["surface"], "xdr", "{report}");
+}
+
+/// `--fail-on-warning` makes the process exit 1, but the machine-readable
+/// report must still be emitted in full on stdout so CI can inspect which
+/// fixture warned. The exit code and the report are both part of the
+/// contract: suppressing the payload on failure would leave a failing job
+/// with nothing to inspect.
+#[test]
+fn fail_on_warning_still_emits_the_warning_json_report_on_stdout() {
+    let dir = project("fail-on-warning-json-stdout");
+    seed_warning_result(&dir);
+
+    let output = run_in(
+        &dir.path,
+        &["check", "--fail-on-warning", "--format", "json"],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+
+    let report: Value = serde_json::from_str(&stdout(&output))
+        .expect("stdout must carry the complete JSON report even when the run exits 1");
+    assert_preserved_warning_report(&report);
+}
+
+/// The same guarantee through `--output`: the file holds the full report and
+/// stdout still receives it, while the exit code is the failing one.
+#[test]
+fn fail_on_warning_writes_the_warning_json_report_to_the_output_file() {
+    let dir = project("fail-on-warning-json-output");
+    seed_warning_result(&dir);
+    let report_path = dir.path.join("report.json");
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--fail-on-warning",
+            "--format",
+            "json",
+            "--output",
+            report_path.to_str().unwrap(),
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(&output));
+
+    let written = std::fs::read_to_string(&report_path)
+        .expect("--output must create the report even when the run exits 1");
+    assert_eq!(
+        written,
+        stdout(&output),
+        "the file must hold exactly the report printed to stdout"
+    );
+
+    let report: Value =
+        serde_json::from_str(&written).expect("the written report must be valid JSON");
+    assert_preserved_warning_report(&report);
+}

@@ -49,8 +49,10 @@ fn context(max_concurrency: u32) -> ExecutionContext {
         COUNTER.fetch_add(1, Ordering::Relaxed),
     );
 
-    let mut options = RunOptions::default();
-    options.max_concurrency = max_concurrency;
+    let options = RunOptions {
+        max_concurrency,
+        ..Default::default()
+    };
 
     ExecutionContext {
         protocol: ProtocolVersion(28),
@@ -337,16 +339,20 @@ async fn a_higher_max_concurrency_runs_checks_in_parallel_and_bounds_them() {
     }
 
     let serial_context = context(1);
-    let mut serial_plan = CompatibilityPlan::default();
-    serial_plan.soroban = make_fixtures();
+    let serial_plan = CompatibilityPlan {
+        soroban: make_fixtures(),
+        ..Default::default()
+    };
     let serial_started = Instant::now();
     let serial_results = execute(&serial_plan, &serial_context, &server.uri()).await;
     let serial_elapsed = serial_started.elapsed();
     let _ = serial_context.cache.clear();
 
     let parallel_context = context(4);
-    let mut parallel_plan = CompatibilityPlan::default();
-    parallel_plan.soroban = make_fixtures();
+    let parallel_plan = CompatibilityPlan {
+        soroban: make_fixtures(),
+        ..Default::default()
+    };
     let parallel_started = Instant::now();
     let parallel_results = execute(&parallel_plan, &parallel_context, &server.uri()).await;
     let parallel_elapsed = parallel_started.elapsed();

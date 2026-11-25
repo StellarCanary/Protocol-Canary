@@ -140,11 +140,11 @@ fn has_required_failure_is_true_exactly_when_a_fail_or_error_is_present() {
                 for &errors in &[0usize, 1] {
                     for &skipped in &[0usize, 1, 2] {
                         let mut statuses = Vec::new();
-                        statuses.extend(std::iter::repeat(Status::Pass).take(pass));
-                        statuses.extend(std::iter::repeat(Status::Fail).take(fail));
-                        statuses.extend(std::iter::repeat(Status::Warning).take(warnings));
-                        statuses.extend(std::iter::repeat(Status::Error).take(errors));
-                        statuses.extend(std::iter::repeat(Status::Skipped).take(skipped));
+                        statuses.extend(std::iter::repeat_n(Status::Pass, pass));
+                        statuses.extend(std::iter::repeat_n(Status::Fail, fail));
+                        statuses.extend(std::iter::repeat_n(Status::Warning, warnings));
+                        statuses.extend(std::iter::repeat_n(Status::Error, errors));
+                        statuses.extend(std::iter::repeat_n(Status::Skipped, skipped));
 
                         let summary = summarize(&results(&statuses));
                         let expected = fail > 0 || errors > 0;

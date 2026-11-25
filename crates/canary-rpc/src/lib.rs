@@ -7,7 +7,8 @@ pub mod request;
 pub mod runner;
 
 pub use client::{
-    validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError, MAX_RESPONSE_BYTES,
+    validate_network_info, HttpRpcClient, RetryPolicy, RpcClient, RpcError,
+    DEFAULT_MAX_RETRY_DELAY, MAX_RESPONSE_BYTES,
 };
 pub use models::{
     FeeDistribution, FeeStatsResponse, GetHealthResponse, GetLedgerEntriesResponse,

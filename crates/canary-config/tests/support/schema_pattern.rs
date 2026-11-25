@@ -10,6 +10,12 @@
 //! schema pattern steps outside that subset, so the published file can never
 //! quietly become something these suites no longer interpret — and never needs
 //! a syntax a small validator cannot run.
+//!
+//! Patterns under a `not` subschema are the deliberate exception to the
+//! anchored rule: a `not` around an unanchored pattern rejects any value
+//! containing the forbidden substring (for example `..` in `fixtures_dir`),
+//! which an anchored pattern cannot express in this subset.
+//! [`collect_patterns`] leaves them out of the anchoring check.
 
 use serde_json::Value;
 
@@ -249,7 +255,11 @@ pub fn collect_patterns(node: &Value, into: &mut Vec<String>) {
                     }
                 }
             }
-            "not" | "items" => collect_patterns(value, into),
+            // Patterns under `not` are intentionally unanchored substring
+            // probes, so they are not part of the whole-value anchoring
+            // check these suites run.
+            "not" => {}
+            "items" => collect_patterns(value, into),
             "anyOf" | "oneOf" | "allOf" => {
                 if let Some(branches) = value.as_array() {
                     for branch in branches {

@@ -20,11 +20,68 @@ use stellar_xdr::{
 /// fixture cannot overflow the stack. A top-level `Vec` is at depth 1.
 pub const MAX_ARG_DEPTH: usize = 8;
 
+/// Structural validation failures for a transaction under construction.
+///
+/// These are distinct from [`BuilderError`]: they say the transaction itself
+/// is invalid, not that one of its inputs could not be converted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum ValidationError {
+    /// A transaction envelope must carry at least one operation. Encoding an
+    /// empty operation list would produce an envelope that every downstream
+    /// consumer — simulation included — must reject, so it is refused here.
+    #[error("transaction must contain at least one operation: the operation list is empty")]
+    EmptyOperations,
+}
+
+/// Builder for the ordered operation list of an unsigned transaction.
+///
+/// Operations are appended with [`OperationBuilder::with_operation`] and the
+/// list is finalized with [`OperationBuilder::build`], which refuses to hand
+/// back an empty list (see [`ValidationError::EmptyOperations`]).
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct OperationBuilder {
+    operations: Vec<Operation>,
+}
+
+impl OperationBuilder {
+    /// Creates an empty builder: the operation list has no entries yet.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Appends `operation` after the ones already added and returns the
+    /// builder, so additions can be chained.
+    pub fn with_operation(mut self, operation: Operation) -> Self {
+        self.operations.push(operation);
+        self
+    }
+
+    /// Whether no operation has been added yet.
+    pub fn is_empty(&self) -> bool {
+        self.operations.is_empty()
+    }
+
+    /// Returns the operations in the order they were added.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ValidationError::EmptyOperations`] when no operation was
+    /// added: a zero-operation transaction is invalid and must never reach
+    /// envelope construction.
+    pub fn build(self) -> Result<Vec<Operation>, ValidationError> {
+        if self.operations.is_empty() {
+            return Err(ValidationError::EmptyOperations);
+        }
+        Ok(self.operations)
+    }
+}
+
 /// Errors returned while building an unsigned Soroban invocation envelope.
 ///
 /// These errors indicate invalid account, contract, function, or argument
-/// input, or a failure to encode the resulting transaction as XDR. The builder
-/// returns these errors rather than panicking.
+/// input, a structurally invalid transaction, or a failure to encode the
+/// resulting transaction as XDR. The builder returns these errors rather than
+/// panicking.
 #[derive(Debug, thiserror::Error)]
 pub enum BuilderError {
     /// The source account is not a valid Stellar account strkey.
@@ -62,6 +119,11 @@ pub enum BuilderError {
     /// keyed collections, so a repeated key is ambiguous.
     #[error("duplicate key in map argument")]
     DuplicateMapKey,
+
+    /// The transaction is structurally invalid, for example because it has
+    /// no operations.
+    #[error(transparent)]
+    Validation(#[from] ValidationError),
 
     /// The transaction envelope could not be encoded as base64 XDR.
     #[error("failed to encode transaction envelope: {0}")]
@@ -592,13 +654,18 @@ pub fn build_invoke_transaction_envelope(spec: &InvocationSpec) -> Result<String
         }),
     };
 
+    // The operation list is validated before the envelope exists, so an
+    // invalid zero-operation envelope cannot be constructed here or handed
+    // downstream to simulation.
+    let operations = OperationBuilder::new().with_operation(operation).build()?;
+
     let transaction = Transaction {
         source_account: MuxedAccount::Ed25519(Uint256(source_bytes)),
         fee: 100,
         seq_num: SequenceNumber(spec.sequence_number),
         cond: Preconditions::None,
         memo: Memo::None,
-        operations: vec![operation]
+        operations: operations
             .try_into()
             .map_err(|e: stellar_xdr::Error| BuilderError::Encode(e.to_string()))?,
         ext: TransactionExt::V0,

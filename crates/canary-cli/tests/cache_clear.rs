@@ -109,10 +109,7 @@ fn cache_clear_fails_when_cache_target_is_a_file() {
     );
 
     // Verify the original file still exists and its contents are intact.
-    assert!(
-        cache_path.exists(),
-        "original file should still exist"
-    );
+    assert!(cache_path.exists(), "original file should still exist");
     let contents = std::fs::read_to_string(&cache_path).unwrap();
     assert_eq!(
         contents, "this is not a cache directory",
@@ -130,7 +127,10 @@ fn cache_clear_fails_with_explicit_file_cache_dir() {
     // Create a regular file at an explicit cache directory path.
     let custom_cache = dir.path.join("custom-cache-file");
     std::fs::write(&custom_cache, "this is not a cache directory either").unwrap();
-    assert!(custom_cache.is_file(), "setup: custom cache path should be a file");
+    assert!(
+        custom_cache.is_file(),
+        "setup: custom cache path should be a file"
+    );
 
     // Run cache clear with --cache-dir pointing to the file.
     let output = run_in(
@@ -147,15 +147,14 @@ fn cache_clear_fails_with_explicit_file_cache_dir() {
     // Verify the error message is informative.
     let err = stderr(&output);
     assert!(
-        err.contains("failed to read cache directory") || err.contains("failed to clear cache") || err.contains("could not be created"),
+        err.contains("failed to read cache directory")
+            || err.contains("failed to clear cache")
+            || err.contains("could not be created"),
         "stderr should contain an informative error message; stderr: {err}"
     );
 
     // Verify the original file still exists and its contents are intact.
-    assert!(
-        custom_cache.exists(),
-        "original file should still exist"
-    );
+    assert!(custom_cache.exists(), "original file should still exist");
     let contents = std::fs::read_to_string(&custom_cache).unwrap();
     assert_eq!(
         contents, "this is not a cache directory either",

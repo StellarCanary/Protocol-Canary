@@ -105,9 +105,9 @@ async fn configured_retries_are_honored_as_extra_requests() {
     );
 }
 
-/// The configured delay is really waited: linear backoff with a 100ms base
-/// sleeps 100ms after attempt 1 and 200ms after attempt 2, so the call must
-/// take at least 300ms (the sleeps are awaited inside the call, so this
+/// The configured delay is really waited: exponential backoff with a 100ms
+/// base sleeps 100ms after attempt 1 and 200ms after attempt 2, so the call
+/// must take at least 300ms (the sleeps are awaited inside the call, so this
 /// bounds from below — network speed cannot make it faster).
 #[tokio::test]
 async fn the_configured_base_delay_is_actually_waited_between_attempts() {
@@ -125,8 +125,117 @@ async fn the_configured_base_delay_is_actually_waited_between_attempts() {
     assert_eq!(request_count(&server).await, 3);
     assert!(
         elapsed >= Duration::from_millis(300),
-        "expected at least 300ms of linear backoff, took {elapsed:?}"
+        "expected at least 300ms of exponential backoff, took {elapsed:?}"
     );
+}
+
+// ── Exponential backoff and the backoff ceiling (issue #762) ───────────
+
+/// The delay schedule is the exponential one: each wait doubles the previous
+/// one, starting at the configured base delay. Asserting the pure schedule
+/// (rather than a wall-clock measurement) pins the intervals exactly, so a
+/// regression to fixed or linear intervals fails regardless of machine speed.
+#[test]
+fn retry_delays_double_after_each_failed_attempt() {
+    let policy = RetryPolicy::from_retries(4, Duration::from_millis(100));
+
+    let delays: Vec<Duration> = (1..=5)
+        .map(|attempt| policy.delay_for_attempt(attempt))
+        .collect();
+    assert_eq!(
+        delays,
+        vec![
+            Duration::from_millis(100),
+            Duration::from_millis(200),
+            Duration::from_millis(400),
+            Duration::from_millis(800),
+            Duration::from_millis(1600),
+        ]
+    );
+}
+
+/// Growth stops at `max_delay`: the schedule never exceeds the configured
+/// ceiling, so a run with many retries cannot wait unbounded time.
+#[test]
+fn retry_delays_are_clamped_to_the_maximum_backoff() {
+    let policy = RetryPolicy {
+        max_attempts: 7,
+        base_delay: Duration::from_millis(100),
+        max_delay: Duration::from_millis(250),
+    };
+
+    assert_eq!(policy.delay_for_attempt(1), Duration::from_millis(100));
+    assert_eq!(policy.delay_for_attempt(2), Duration::from_millis(200));
+    for attempt in 3..=6 {
+        assert_eq!(
+            policy.delay_for_attempt(attempt),
+            Duration::from_millis(250),
+            "attempt {attempt} must wait exactly the ceiling"
+        );
+    }
+
+    // Nothing in the schedule can exceed the ceiling, including at the
+    // exponent widths where `2^(attempt-1)` itself stops fitting in `u32`.
+    for attempt in [0, 1, 2, 3, 31, 32, 64, 1000, u32::MAX] {
+        assert!(
+            policy.delay_for_attempt(attempt) <= policy.max_delay,
+            "attempt {attempt} exceeded the maximum backoff"
+        );
+    }
+}
+
+/// The waits actually observed end to end grow exponentially rather than
+/// linearly: with a 50ms base and five attempts the client sleeps
+/// 50 + 100 + 200 + 400 = 750ms, while a linear schedule would sleep
+/// 50 + 100 + 150 + 200 = 500ms. The lower bound of 700ms therefore fails if
+/// the exponential step is ever replaced by a linear one. (Lower-bound only:
+/// the sleeps are awaited inside the call, so a slow machine cannot make it
+/// flaky.)
+#[tokio::test]
+async fn the_observed_retry_waits_grow_exponentially() {
+    let server = always_failing_server(503).await;
+    let client = HttpRpcClient::new(server.uri())
+        .with_retry_policy(RetryPolicy::from_retries(4, Duration::from_millis(50)));
+
+    let started = Instant::now();
+    let _ = client
+        .get_network()
+        .await
+        .expect_err("the endpoint never recovers");
+    let elapsed = started.elapsed();
+
+    assert_eq!(request_count(&server).await, 5);
+    assert!(
+        elapsed >= Duration::from_millis(700),
+        "exponential backoff (50, 100, 200, 400ms) must take at least 700ms, took {elapsed:?}"
+    );
+}
+
+/// A call's attempt budget is local to that call: after one call exhausts its
+/// retries, the next call on the same client starts again with a full budget
+/// and makes its own initial attempt plus retry. A counter that leaked across
+/// calls would fail the second call after a single request.
+#[tokio::test]
+async fn retry_counters_reset_between_calls() {
+    let server = always_failing_server(503).await;
+    let client = HttpRpcClient::new(server.uri())
+        .with_retry_policy(RetryPolicy::from_retries(1, Duration::from_millis(1)));
+
+    for call in 1..=2 {
+        let err = client
+            .get_network()
+            .await
+            .expect_err("each call exhausts its own attempt budget");
+        assert!(
+            matches!(err, RpcError::Transport { .. }),
+            "unexpected error on call {call}: {err}"
+        );
+        assert_eq!(
+            request_count(&server).await,
+            call * 2,
+            "call {call} must make one initial attempt plus one retry"
+        );
+    }
 }
 
 /// Retrying must actually recover: a transient failure followed by a good
@@ -274,13 +383,13 @@ async fn exhausted_rate_limit_retries_surface_rate_limited_with_the_attempt_coun
     assert_eq!(request_count(&server).await, 3);
 }
 
-/// Rate limiting is paced by the configured linear backoff exactly like
+/// Rate limiting is paced by the configured exponential backoff exactly like
 /// any other transient failure: a 100ms base with three attempts sleeps
 /// 100ms then 200ms, so the call cannot complete in under 300ms. This is
 /// a lower-bound assertion only — waiting is awaited inside the call, so
 /// no amount of machine slowness can make it flaky.
 #[tokio::test]
-async fn rate_limited_retries_wait_the_configured_linear_backoff() {
+async fn rate_limited_retries_wait_the_configured_exponential_backoff() {
     let server = always_failing_server(429).await;
     let client = HttpRpcClient::new(server.uri())
         .with_retry_policy(RetryPolicy::from_retries(2, Duration::from_millis(100)));
@@ -295,12 +404,12 @@ async fn rate_limited_retries_wait_the_configured_linear_backoff() {
     assert_eq!(request_count(&server).await, 3);
     assert!(
         elapsed >= Duration::from_millis(300),
-        "expected at least 300ms of linear backoff, took {elapsed:?}"
+        "expected at least 300ms of exponential backoff, took {elapsed:?}"
     );
 }
 
 /// The `Retry-After` header is deliberately not honored: the documented
-/// timing model is the configured linear backoff and nothing else (see
+/// timing model is the configured exponential backoff and nothing else (see
 /// `HttpRpcClient::with_retry_policy`). The 429 below demands a one-hour
 /// pause via `Retry-After`; if the client ever started honoring it, this
 /// call would take an hour instead of a couple of milliseconds — the
@@ -341,7 +450,7 @@ async fn retry_after_header_does_not_extend_the_configured_backoff() {
     assert!(
         elapsed < Duration::from_secs(10),
         "the Retry-After header must not be waited out; the configured \
-         linear backoff alone applies (took {elapsed:?})"
+         exponential backoff alone applies (took {elapsed:?})"
     );
 }
 

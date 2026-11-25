@@ -223,20 +223,11 @@ fn check_allow_empty_in_terminal_mode_with_no_applicable_checks() {
     let dir = project();
     // Create fixtures for protocol 28, but run with protocol 29 so all
     // fixtures are skipped due to protocol mismatch.
-    dir.write(
-        "fixtures/p28-xdr-1.toml",
-        &xdr_fixture("p28-xdr-1", 28, ""),
-    );
-    dir.write(
-        "fixtures/p28-xdr-2.toml",
-        &xdr_fixture("p28-xdr-2", 28, ""),
-    );
+    dir.write("fixtures/p28-xdr-1.toml", &xdr_fixture("p28-xdr-1", 28, ""));
+    dir.write("fixtures/p28-xdr-2.toml", &xdr_fixture("p28-xdr-2", 28, ""));
 
     // Run check with --allow-empty in terminal mode (no --json flag).
-    let output = run_in(
-        &dir.path,
-        &["check", "--protocol", "29", "--allow-empty"],
-    );
+    let output = run_in(&dir.path, &["check", "--protocol", "29", "--allow-empty"]);
 
     // The command should exit successfully.
     assert_eq!(output.status.code(), Some(0), "stdout: {}", stdout(&output));
@@ -252,19 +243,18 @@ fn check_allow_empty_in_terminal_mode_with_no_applicable_checks() {
         "stderr should explain the result is not evidence of compatibility; stderr: {err}"
     );
 
-    // stdout should contain the execution summary but not falsely claim
-    // that applicable checks passed.
+    // stdout should show the skipped count and 0/0 applicable checks.
     let out = stdout(&output);
     assert!(
-        out.contains("Execution summary"),
-        "stdout should contain execution summary; stdout: {out}"
+        out.contains("Skipped fixtures: 2"),
+        "stdout should show skipped fixtures count; stdout: {out}"
     );
     assert!(
-        !out.contains("applicable checks passed"),
-        "stdout should NOT claim applicable checks passed; stdout: {out}"
-    );
-    assert!(
-        out.contains("0/0 applicable checks passed"),
+        out.contains("0/0 applicable checks passed."),
         "stdout should show 0/0 applicable checks; stdout: {out}"
+    );
+    assert!(
+        out.contains("Status: PASS"),
+        "stdout should show PASS status; stdout: {out}"
     );
 }

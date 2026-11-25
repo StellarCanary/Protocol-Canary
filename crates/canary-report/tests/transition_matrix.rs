@@ -1150,3 +1150,384 @@ fn verdict_precedence_puts_regression_above_coverage_above_improvement() {
         "the corpus must exercise all four verdicts"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Skipped <-> failing transitions (issue #745)
+// ---------------------------------------------------------------------------
+//
+// The golden corpus above already carries `from-skipped` and the `*-to-
+// skipped` entries; these tests drive the same transitions through
+// `diff::compare` with in-memory reports, one identity per pair, so the
+// categorisation of a skip that starts failing ("added-failing") and of a
+// failure that becomes a skip ("skipped-failing") is pinned explicitly, along
+// with the summary buckets and verdict those entries must produce.
+
+use canary_core::{
+    CompatibilityResult, GitContext, PolicyDecision, ProjectType, ProtocolVersion, ResultSource,
+    SkipCode, Status, Surface,
+};
+use canary_report::diff::{classify, compare, Classification, Comparison, State, Verdict};
+use canary_report::{ProjectSummary, ReportInput, SkipSummary};
+
+/// The CF-05 spelling of a state, as the contract table and entries use it.
+fn state_name(state: State) -> String {
+    as_str(&json!(state)).to_string()
+}
+
+fn classification_name(classification: Classification) -> String {
+    as_str(&json!(classification)).to_string()
+}
+
+const ALL_STATES: [State; 6] = [
+    State::Pass,
+    State::Warning,
+    State::Fail,
+    State::Error,
+    State::Skipped,
+    State::Absent,
+];
+
+/// Puts identity `id` into `report` in `state`: a result for an outcome, a
+/// skip-list entry for `skipped`, nothing for `absent`.
+fn place(report: &mut ReportInput, id: &str, state: State) {
+    let status = match state {
+        State::Pass => Status::Pass,
+        State::Warning => Status::Warning,
+        State::Fail => Status::Fail,
+        State::Error => Status::Error,
+        State::Skipped => {
+            report.skipped.push(SkipSummary {
+                fixture_id: id.to_string(),
+                surface: Surface::Xdr,
+                reason: "fixture targets protocol 29, this run targets protocol 28".to_string(),
+                code: SkipCode::UnsupportedProtocol,
+            });
+            return;
+        }
+        State::Absent => return,
+    };
+    report.results.push(CompatibilityResult {
+        test_id: id.to_string(),
+        protocol: ProtocolVersion(28),
+        surface: Surface::Xdr,
+        status,
+        summary: String::new(),
+        details: None,
+        duration_ms: 1,
+        fixture_id: Some(id.to_string()),
+        source: ResultSource::Live,
+    });
+}
+
+fn empty_report() -> ReportInput {
+    ReportInput {
+        tool_version: "0.3.0".into(),
+        target_protocol: ProtocolVersion(28),
+        project: ProjectSummary {
+            name: "transition-matrix".into(),
+            project_type: ProjectType::Soroban,
+        },
+        network: None,
+        results: Vec::new(),
+        skipped: Vec::new(),
+        decision: PolicyDecision::Pass,
+        git: GitContext::default(),
+        verbose: false,
+        verification: Vec::new(),
+        run: None,
+    }
+}
+
+/// A report pair holding one identity per `(from, to)` transition, plus an
+/// `anchor` that passes on both sides so neither side is empty (an empty
+/// side suppresses every regression, CF-05 section 2).
+fn pair_of(transitions: &[(State, State)]) -> (ReportInput, ReportInput) {
+    let mut baseline = empty_report();
+    let mut current = empty_report();
+    place(&mut baseline, "anchor", State::Pass);
+    place(&mut current, "anchor", State::Pass);
+    for (from, to) in transitions {
+        let id = format!("{}-to-{}", state_name(*from), state_name(*to));
+        place(&mut baseline, &id, *from);
+        place(&mut current, &id, *to);
+    }
+    (baseline, current)
+}
+
+fn compare_pair(transitions: &[(State, State)], warnings_are_failures: bool) -> Comparison {
+    let (baseline, current) = pair_of(transitions);
+    compare(
+        &baseline,
+        &current,
+        CompareOptions {
+            warnings_are_failures,
+        },
+    )
+    .expect("a pair with unique identities is comparable")
+}
+
+fn entry(comparison: &Comparison, from: State, to: State) -> &canary_report::diff::Entry {
+    let id = format!("{}-to-{}", state_name(from), state_name(to));
+    comparison
+        .entries
+        .iter()
+        .find(|entry| entry.id == id)
+        .unwrap_or_else(|| panic!("no entry for {id}"))
+}
+
+/// The skip-related rows of CF-05 section 4: every pair with `skipped` on
+/// either side, other than the identity row.
+const SKIP_TRANSITIONS: [(State, State, Classification, bool); 9] = [
+    (
+        State::Skipped,
+        State::Fail,
+        Classification::AddedFailing,
+        true,
+    ),
+    (
+        State::Skipped,
+        State::Error,
+        Classification::AddedFailing,
+        true,
+    ),
+    (
+        State::Fail,
+        State::Skipped,
+        Classification::SkippedFailing,
+        true,
+    ),
+    (
+        State::Error,
+        State::Skipped,
+        Classification::SkippedFailing,
+        true,
+    ),
+    (State::Pass, State::Skipped, Classification::Skipped, false),
+    (
+        State::Warning,
+        State::Skipped,
+        Classification::Skipped,
+        false,
+    ),
+    (State::Skipped, State::Pass, Classification::Added, false),
+    (State::Skipped, State::Warning, Classification::Added, false),
+    (
+        State::Skipped,
+        State::Absent,
+        Classification::UnchangedSkip,
+        false,
+    ),
+];
+
+#[test]
+fn classify_agrees_with_the_contract_for_every_state_pair_under_both_policies() {
+    // The library's own table, read pair by pair, against the table parsed
+    // out of CF-05 — every one of the 36 pairs, skipped and absent included.
+    let table = transition_table();
+    for strict in [false, true] {
+        for from in ALL_STATES {
+            for to in ALL_STATES {
+                let (classification, regression) = classify(from, to, strict);
+                let key = (state_name(from), state_name(to));
+                let (expected, policy) = table
+                    .get(&key)
+                    .unwrap_or_else(|| panic!("CF-05 has no row for {} to {}", key.0, key.1));
+                assert_eq!(
+                    classification_name(classification),
+                    *expected,
+                    "{} to {}",
+                    key.0,
+                    key.1
+                );
+                let expected_regression = match policy {
+                    CountsAsRegression::Yes => true,
+                    CountsAsRegression::OnlyWithPolicy => strict,
+                    CountsAsRegression::No => false,
+                };
+                assert_eq!(
+                    regression, expected_regression,
+                    "{} to {} under warnings_are_failures={strict}",
+                    key.0, key.1
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn skipped_to_failing_is_a_new_failure_and_a_regression() {
+    let comparison = compare_pair(
+        &[
+            (State::Skipped, State::Fail),
+            (State::Skipped, State::Error),
+        ],
+        false,
+    );
+    for to in [State::Fail, State::Error] {
+        let entry = entry(&comparison, State::Skipped, to);
+        assert_eq!(entry.from, State::Skipped);
+        assert_eq!(entry.to, to);
+        assert_eq!(
+            entry.classification,
+            Classification::AddedFailing,
+            "a check that ran for the first time and failed is a new failure"
+        );
+        assert!(entry.regression, "skipped to {to:?} counts as a regression");
+    }
+    // Neither was passing in the baseline, so no coverage was lost.
+    assert!(comparison.missing.is_empty());
+    assert_eq!(comparison.summary.regressed, 2);
+    assert_eq!(
+        comparison.summary.added, 2,
+        "added-failing is counted as added"
+    );
+    assert_eq!(comparison.verdict, Verdict::Regression);
+}
+
+#[test]
+fn failing_to_skipped_is_newly_skipped_and_still_a_regression() {
+    let comparison = compare_pair(
+        &[
+            (State::Fail, State::Skipped),
+            (State::Error, State::Skipped),
+        ],
+        false,
+    );
+    for from in [State::Fail, State::Error] {
+        let entry = entry(&comparison, from, State::Skipped);
+        assert_eq!(
+            entry.classification,
+            Classification::SkippedFailing,
+            "skipping a failing check hides the failure rather than fixing it"
+        );
+        assert!(
+            entry.regression,
+            "{from:?} to skipped counts as a regression"
+        );
+    }
+    // `missing` lists checks that *passed* and are gone; a failing check
+    // being skipped is not lost coverage, and it is not resolved either.
+    assert!(comparison.missing.is_empty());
+    assert_eq!(comparison.summary.missing, 0);
+    assert_eq!(comparison.summary.resolved, 0);
+    assert_eq!(comparison.summary.regressed, 2);
+    assert_eq!(comparison.verdict, Verdict::Regression);
+}
+
+#[test]
+fn passing_to_skipped_is_lost_coverage_not_a_regression() {
+    let comparison = compare_pair(
+        &[
+            (State::Pass, State::Skipped),
+            (State::Warning, State::Skipped),
+        ],
+        false,
+    );
+    for from in [State::Pass, State::Warning] {
+        let entry = entry(&comparison, from, State::Skipped);
+        assert_eq!(entry.classification, Classification::Skipped);
+        assert!(!entry.regression);
+    }
+    assert_eq!(comparison.missing.len(), 2, "both lost checks are listed");
+    assert_eq!(comparison.summary.missing, 2);
+    assert_eq!(comparison.summary.regressed, 0);
+    assert_eq!(comparison.verdict, Verdict::CoverageLost);
+}
+
+#[test]
+fn the_skip_transition_matrix_summary_matches_its_entries() {
+    // Every skip-related row at once, under both policies: the classification
+    // and regression flag of each entry, and every summary bucket recomputed
+    // from the entries, must agree with the counts the engine reports.
+    let transitions: Vec<(State, State)> = SKIP_TRANSITIONS
+        .iter()
+        .map(|(from, to, _, _)| (*from, *to))
+        .collect();
+    for strict in [false, true] {
+        let comparison = compare_pair(&transitions, strict);
+        for (from, to, classification, regression) in SKIP_TRANSITIONS {
+            let entry = entry(&comparison, from, to);
+            assert_eq!(entry.classification, classification, "{from:?} to {to:?}");
+            assert_eq!(
+                entry.regression, regression,
+                "{from:?} to {to:?}: the policy never changes a skip transition"
+            );
+        }
+        // The anchor plus one entry per transition.
+        assert_eq!(comparison.entries.len(), SKIP_TRANSITIONS.len() + 1);
+
+        let count = |wanted: &[Classification]| {
+            comparison
+                .entries
+                .iter()
+                .filter(|entry| wanted.contains(&entry.classification))
+                .count()
+        };
+        let summary = comparison.summary;
+        assert_eq!(
+            summary.regressed,
+            comparison.entries.iter().filter(|e| e.regression).count()
+        );
+        assert_eq!(summary.regressed, 4, "skipped<->failing, both directions");
+        assert_eq!(
+            summary.added,
+            count(&[Classification::Added, Classification::AddedFailing])
+        );
+        assert_eq!(summary.added, 4);
+        assert_eq!(
+            summary.unchanged,
+            count(&[Classification::Unchanged, Classification::UnchangedSkip])
+        );
+        assert_eq!(summary.unchanged, 2, "the anchor and skipped to absent");
+        assert_eq!(summary.resolved, count(&[Classification::Resolved]));
+        assert_eq!(summary.resolved, 0, "no skip transition resolves a failure");
+        assert_eq!(
+            summary.removed,
+            count(&[Classification::Removed, Classification::RemovedFailing])
+        );
+        assert_eq!(summary.missing, comparison.missing.len());
+        assert_eq!(summary.missing, 2, "pass and warning to skipped");
+        assert_eq!(comparison.verdict, Verdict::Regression);
+
+        // The serialized document carries the same numbers the struct does.
+        let document = json!(comparison);
+        assert_eq!(
+            as_usize(&document["summary"]["regressed"]),
+            summary.regressed
+        );
+        assert_eq!(as_str(&document["verdict"]), "regression");
+    }
+}
+
+#[test]
+fn a_skip_that_starts_failing_against_an_all_skipped_baseline_is_not_a_regression() {
+    // CF-05 section 2: a side with no results cannot establish a regression.
+    // A baseline that skipped everything has no results, so the same
+    // skipped-to-fail transition is classified identically but not counted.
+    let mut baseline = empty_report();
+    let mut current = empty_report();
+    place(&mut baseline, "skipped-to-fail", State::Skipped);
+    place(&mut current, "skipped-to-fail", State::Fail);
+
+    let comparison = compare(&baseline, &current, CompareOptions::default())
+        .expect("an all-skipped baseline is comparable");
+    assert!(comparison.empty_baseline);
+    let entry = &comparison.entries[0];
+    assert_eq!(entry.classification, Classification::AddedFailing);
+    assert!(
+        !entry.regression,
+        "an empty baseline suppresses the regression"
+    );
+    assert_eq!(comparison.summary.regressed, 0);
+    assert_eq!(comparison.verdict, Verdict::NoChange);
+}
+
+#[test]
+fn a_skip_that_stays_skipped_is_unchanged() {
+    let comparison = compare_pair(&[(State::Skipped, State::Skipped)], false);
+    let entry = entry(&comparison, State::Skipped, State::Skipped);
+    assert_eq!(entry.classification, Classification::Unchanged);
+    assert!(!entry.regression);
+    assert_eq!(comparison.summary.unchanged, 2);
+    assert_eq!(comparison.verdict, Verdict::NoChange);
+}

@@ -27,15 +27,24 @@ pub const CACHE_FORMAT: u32 = 3;
 /// the same key in any checkout location.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
+    /// Stable fixture identifier; distinct fixtures cannot reuse one another's
+    /// results.
     pub fixture_id: String,
     /// Digest of the fixture file and any payloads it references, so editing
     /// either one changes the key. See `canary_fixtures::content_digest`.
     pub fixture_digest: String,
+    /// Target Stellar protocol version against which the fixture was
+    /// evaluated.
     pub protocol: ProtocolVersion,
+    /// Fingerprint of the project's type, capabilities, and Git
+    /// commit/dirty state.
     pub project_fingerprint: String,
     /// Network name, for example `testnet`.
     pub network: String,
+    /// Configured RPC endpoint URL; results from another endpoint are not
+    /// reused.
     pub rpc_endpoint: String,
+    /// Protocol reported by the endpoint, or `None` when it was not observed.
     pub observed_protocol: Option<ProtocolVersion>,
     /// Version of the tool that produced the result: a new release may
     /// change how a fixture is evaluated.

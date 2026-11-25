@@ -93,8 +93,17 @@ pub struct AuthExpectation {
 /// A fully parsed Soroban compatibility fixture.
 #[derive(Debug, Clone)]
 pub struct SorobanFixture {
+    /// Fixture metadata (id, protocol, surface, category, description, source
+    /// reference, capabilities, and content digest) copied from the loaded
+    /// fixture. It identifies and schedules the fixture and labels its
+    /// result; it is not an input to the transaction or the simulation.
     pub metadata: FixtureMetadata,
+    /// The contract invocation inputs used to build the unsigned envelope that
+    /// is passed to `simulateTransaction`.
     pub invocation: InvocationSpec,
+    /// The outcome the simulation must produce for this fixture to pass.
+    /// Applied to the simulation response after it returns; it does not affect
+    /// the envelope that is built or simulated.
     pub assertion: SorobanAssertion,
     /// Authorization entries the simulation must report as required,
     /// empty for fixtures that assert nothing about auth. Every entry is

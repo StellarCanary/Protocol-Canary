@@ -76,6 +76,139 @@ fn a_well_formed_fixture_parses() {
     );
 }
 
+#[test]
+fn a_parameterless_method_other_than_get_network_parses() {
+    let fixture = parse_rpc(
+        "method = \"get-latest-ledger\"
+
+[[assert]]
+kind = \"field-number-range\"
+field = \"sequence\"
+min = 1
+",
+    )
+    .unwrap();
+    assert_eq!(fixture.method, RpcMethod::GetLatestLedger);
+    assert_eq!(fixture.request, None, "no [request] table, so no params");
+    assert_eq!(fixture.assertions.len(), 1);
+    match &fixture.assertions[0] {
+        FieldAssertion::NumberRange(range) => {
+            assert_eq!(range.field, "sequence");
+            assert_eq!(range.min.as_ref().and_then(|n| n.as_i64()), Some(1));
+            assert!(range.max.is_none());
+        }
+        other => panic!("expected a number-range assertion, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_parameterized_method_keeps_its_request_table_as_named_params() {
+    let fixture = parse_rpc(&format!(
+        "method = \"get-ledgers\"
+
+[request]
+startLedger = 100
+xdrFormat = \"base64\"
+
+[request.pagination]
+limit = 5
+{ASSERT_EXISTS}"
+    ))
+    .unwrap();
+    assert_eq!(fixture.method, RpcMethod::GetLedgers);
+
+    let params = fixture
+        .request
+        .as_ref()
+        .expect("the [request] table is kept");
+    assert_eq!(params.len(), 3, "{params:?}");
+    assert_eq!(params["startLedger"], serde_json::json!(100));
+    assert_eq!(params["xdrFormat"], serde_json::json!("base64"));
+    assert_eq!(params["pagination"], serde_json::json!({ "limit": 5 }));
+    assert_eq!(
+        fixture.assertions,
+        vec![FieldAssertion::Exists {
+            field: "passphrase".to_string()
+        }]
+    );
+}
+
+#[test]
+fn an_all_optional_method_parses_with_or_without_a_request_table() {
+    let without = parse_rpc(&format!(
+        "method = \"get-events\"
+{ASSERT_EXISTS}"
+    ))
+    .unwrap();
+    assert_eq!(without.method, RpcMethod::GetEvents);
+    assert_eq!(without.request, None);
+
+    let with = parse_rpc(&format!(
+        "method = \"get-events\"
+
+[request]
+startLedger = 10
+endLedger = 20
+{ASSERT_EXISTS}"
+    ))
+    .unwrap();
+    let params = with.request.as_ref().expect("params are kept");
+    assert_eq!(params["startLedger"], serde_json::json!(10));
+    assert_eq!(params["endLedger"], serde_json::json!(20));
+}
+
+#[test]
+fn several_assertion_kinds_are_attached_in_order_alongside_params() {
+    let fixture = parse_rpc(
+        "method = \"get-ledgers\"
+
+[request]
+startLedger = 7
+
+         [[assert]]
+kind = \"field-exists\"
+field = \"latestLedger\"
+
+         [[assert]]
+kind = \"field-equals\"
+field = \"cursor\"
+value = \"abc\"
+
+         [[assert]]
+kind = \"field-one-of\"
+field = \"status\"
+values = [\"SUCCESS\", \"FAILED\"]
+",
+    )
+    .unwrap();
+    assert_eq!(fixture.method, RpcMethod::GetLedgers);
+    assert_eq!(fixture.request.as_ref().unwrap()["startLedger"], 7);
+    assert_eq!(fixture.assertions.len(), 3);
+    assert_eq!(
+        fixture.assertions[0],
+        FieldAssertion::Exists {
+            field: "latestLedger".to_string()
+        }
+    );
+    assert_eq!(
+        fixture.assertions[1],
+        FieldAssertion::Equals {
+            field: "cursor".to_string(),
+            value: serde_json::json!("abc")
+        }
+    );
+    match &fixture.assertions[2] {
+        FieldAssertion::OneOf(one_of) => {
+            assert_eq!(one_of.field, "status");
+            assert_eq!(
+                one_of.values,
+                vec![serde_json::json!("SUCCESS"), serde_json::json!("FAILED")]
+            );
+        }
+        other => panic!("expected a one-of assertion, got {other:?}"),
+    }
+}
+
 // --- method -----------------------------------------------------------------
 
 #[test]

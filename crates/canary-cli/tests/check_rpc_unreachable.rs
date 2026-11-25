@@ -26,6 +26,21 @@ rpc = true
 soroban = false
 "#;
 
+/// A live RPC fixture whose request cannot complete when the endpoint is
+/// unreachable, so the outage is attributed to the fixture rather than to a
+/// network probe the report does not carry.
+const RPC_FIXTURE: &str = "id = \"p28-rpc-1\"\n\
+     protocol = 28\n\
+     surface = \"rpc\"\n\
+     category = \"network\"\n\
+     description = \"test\"\n\
+     method = \"get-network\"\n\
+     \n\
+     [[assert]]\n\
+     kind = \"field-type\"\n\
+     field = \"passphrase\"\n\
+     expected_type = \"string\"\n";
+
 /// The URI of a TCP port nothing is listening on.
 ///
 /// Binding an ephemeral listener and dropping it hands back a port that is
@@ -49,20 +64,7 @@ fn closed_port_uri() -> String {
 fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
     let dir = TempProject::new("check-rpc-unreachable");
     dir.write(".stellar-canary.toml", UNREACHABLE_CONFIG);
-    dir.write(
-        "fixtures/p28-rpc-1.toml",
-        "id = \"p28-rpc-1\"\n\
-         protocol = 28\n\
-         surface = \"rpc\"\n\
-         category = \"network\"\n\
-         description = \"test\"\n\
-         method = \"get-network\"\n\
-         \n\
-         [[assert]]\n\
-         kind = \"field-type\"\n\
-         field = \"passphrase\"\n\
-         expected_type = \"string\"\n",
-    );
+    dir.write("fixtures/p28-rpc-1.toml", RPC_FIXTURE);
 
     let output = run_in(&dir.path, &["check", "--rpc-url", &closed_port_uri()]);
 
@@ -104,4 +106,54 @@ fn check_against_an_unreachable_endpoint_exits_with_an_execution_error() {
     assert!(err.contains("Hint:"), "stderr: {err}");
     assert!(err.contains("standalone node"), "stderr: {err}");
     assert!(err.contains("reachable"), "stderr: {err}");
+}
+
+/// The same outage over the machine-readable path (#706): CI consumers read
+/// the CF-01 report, so `--json` must emit a valid document whose verdict is
+/// `error` and whose counts tally the fixture as an execution error. A
+/// consumer that only sees exit code 3 cannot tell this apart from a
+/// compatibility failure, so the report is the part that must stay precise.
+#[test]
+fn check_json_against_an_unreachable_endpoint_emits_an_error_report() {
+    let dir = TempProject::new("check-rpc-unreachable-json");
+    dir.write(".stellar-canary.toml", UNREACHABLE_CONFIG);
+    dir.write("fixtures/p28-rpc-1.toml", RPC_FIXTURE);
+
+    let output = run_in(
+        &dir.path,
+        &["check", "--json", "--rpc-url", &closed_port_uri()],
+    );
+
+    assert_eq!(
+        output.status.code(),
+        Some(3),
+        "the JSON path keeps the execution-error exit code; stdout: {} | \
+         stderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    let report: serde_json::Value = serde_json::from_str(&stdout(&output))
+        .unwrap_or_else(|error| panic!("stdout must be the JSON report: {error}"));
+
+    assert_eq!(report["status"], "error", "the overall verdict is an error");
+    assert_eq!(report["counts"]["total"], 1, "the fixture ran");
+    assert_eq!(report["counts"]["passed"], 0);
+    assert_eq!(
+        report["counts"]["errors"], 1,
+        "an outage is an execution error, not a compatibility failure"
+    );
+    assert_eq!(report["counts"]["failed"], 0);
+
+    let results = report["results"].as_array().expect("`results` is an array");
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0]["testId"], "p28-rpc-1");
+    assert_eq!(results[0]["status"], "error");
+    let details = results[0]["details"]
+        .as_str()
+        .expect("the error result carries details");
+    assert!(
+        details.contains("network transport error"),
+        "the outage is named as a transport failure: {details}"
+    );
 }

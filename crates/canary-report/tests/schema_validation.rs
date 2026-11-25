@@ -376,6 +376,70 @@ fn a_result_missing_a_required_field_is_rejected() {
     assert!(err.contains("testId"), "{err}");
 }
 
+/// CF-01: every count is a non-negative integer (`"minimum": 0`). A
+/// report that reports a negative total is invalid, and the message names
+/// the offending field.
+#[test]
+fn a_negative_count_is_rejected() {
+    let mut report: Value =
+        serde_json::from_str(&rendered_report()).expect("rendered report parses");
+    report["counts"]["total"] = (-1).into();
+
+    let err = validate(&report, &schema(), "$").expect_err("counts must be non-negative");
+    assert!(err.contains("$.counts.total"), "{err}");
+    assert!(err.contains("minimum"), "{err}");
+}
+
+#[test]
+fn a_negative_passed_count_is_rejected() {
+    let mut report: Value =
+        serde_json::from_str(&rendered_report()).expect("rendered report parses");
+    report["counts"]["passed"] = (-1).into();
+
+    let err = validate(&report, &schema(), "$").expect_err("counts must be non-negative");
+    assert!(err.contains("$.counts.passed"), "{err}");
+}
+
+/// CF-01 section 3: each `skipped[]` entry requires `fixtureId`, `surface`
+/// and `reason`. Dropping one of them must be rejected, naming the field.
+#[test]
+fn a_skipped_item_missing_reason_is_rejected() {
+    let mut report: Value =
+        serde_json::from_str(&rendered_report()).expect("rendered report parses");
+    report["skipped"][0]
+        .as_object_mut()
+        .expect("skipped item is an object")
+        .remove("reason");
+
+    let err = validate(&report, &schema(), "$").expect_err("`reason` is required per skip");
+    assert!(err.contains("$.skipped[0]"), "{err}");
+    assert!(err.contains("reason"), "{err}");
+}
+
+#[test]
+fn a_skipped_item_missing_surface_is_rejected() {
+    let mut report: Value =
+        serde_json::from_str(&rendered_report()).expect("rendered report parses");
+    report["skipped"][0]
+        .as_object_mut()
+        .expect("skipped item is an object")
+        .remove("surface");
+
+    let err = validate(&report, &schema(), "$").expect_err("`surface` is required per skip");
+    assert!(err.contains("$.skipped[0]"), "{err}");
+    assert!(err.contains("surface"), "{err}");
+}
+
+#[test]
+fn a_skipped_item_with_an_invalid_surface_is_rejected() {
+    let mut report: Value =
+        serde_json::from_str(&rendered_report()).expect("rendered report parses");
+    report["skipped"][0]["surface"] = Value::String("wire".into());
+
+    let err = validate(&report, &schema(), "$").expect_err("skip surfaces are a closed set");
+    assert!(err.contains("$.skipped[0].surface"), "{err}");
+}
+
 #[test]
 fn a_schema_version_other_than_one_is_rejected() {
     let mut report: Value =

@@ -213,3 +213,48 @@ fn inspect_and_fixtures_still_work_on_an_empty_plan() {
         );
     }
 }
+
+/// Tests `check --allow-empty` in human-readable terminal mode (without
+/// `--json`). Verifies that when all fixtures are skipped due to protocol
+/// mismatch, the command exits successfully with a warning diagnostic and
+/// does not falsely claim that applicable checks passed.
+#[test]
+fn check_allow_empty_in_terminal_mode_with_no_applicable_checks() {
+    let dir = project();
+    // Create fixtures for protocol 28, but run with protocol 29 so all
+    // fixtures are skipped due to protocol mismatch.
+    dir.write("fixtures/p28-xdr-1.toml", &xdr_fixture("p28-xdr-1", 28, ""));
+    dir.write("fixtures/p28-xdr-2.toml", &xdr_fixture("p28-xdr-2", 28, ""));
+
+    // Run check with --allow-empty in terminal mode (no --json flag).
+    let output = run_in(&dir.path, &["check", "--protocol", "29", "--allow-empty"]);
+
+    // The command should exit successfully.
+    assert_eq!(output.status.code(), Some(0), "stdout: {}", stdout(&output));
+
+    // stderr should contain the warning about no checks running.
+    let err = stderr(&output);
+    assert!(
+        err.contains("warning: no checks ran"),
+        "stderr should contain 'warning: no checks ran'; stderr: {err}"
+    );
+    assert!(
+        err.contains("not evidence of compatibility"),
+        "stderr should explain the result is not evidence of compatibility; stderr: {err}"
+    );
+
+    // stdout should show the skipped count and 0/0 applicable checks.
+    let out = stdout(&output);
+    assert!(
+        out.contains("Skipped fixtures: 2"),
+        "stdout should show skipped fixtures count; stdout: {out}"
+    );
+    assert!(
+        out.contains("0/0 applicable checks passed."),
+        "stdout should show 0/0 applicable checks; stdout: {out}"
+    );
+    assert!(
+        out.contains("Status: PASS"),
+        "stdout should show PASS status; stdout: {out}"
+    );
+}

@@ -128,3 +128,58 @@ fn configured_retries_are_honored_by_the_check_run() {
         "--rpc-max-retries 2 must produce three attempts"
     );
 }
+
+/// Persistent server errors (5xx) must stop retrying after exactly
+/// max_attempts requests.
+#[test]
+fn persistent_5xx_errors_stop_after_max_attempts() {
+    let (rt, server) = failing_server();
+    let dir = TempProject::new("check-rpc-retries-persistent");
+    dir.write(".stellar-canary.toml", LIVE_CONFIG);
+
+    // Create a minimal fixtures directory so the binary does not warn about
+    // missing fixtures. An empty directory with a placeholder file is sufficient.
+    let fixtures_dir = dir.path.join("fixtures");
+    std::fs::create_dir_all(&fixtures_dir).expect("failed to create fixtures dir");
+    std::fs::write(
+        fixtures_dir.join("p28-xdr-1.toml"),
+        // Minimal valid Protocol 28 XDR fixture (surface = "xdr").
+        "id = \"p28-xdr-1\"\nprotocol = 28\nsurface = \"xdr\"\ncategory = \"cap-83\"\ndescription = \"test\"\ntype = \"StellarValue\"\nkind = \"decode-success\"\nvalue_base64 = \"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\"\n",
+    )
+    .expect("failed to write fixture");
+
+    let output = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--allow-empty",
+            "--rpc-url",
+            &server.uri(),
+            "--network",
+            "testnet",
+            "--rpc-max-retries",
+            "2",
+            "--rpc-retry-delay-ms",
+            "0",
+        ],
+    );
+
+    // The check should still exit 0 because with --allow-empty and no fixtures,
+    // a failed probe does not abort the run (see zero_retries test).
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {} | stderr: {}",
+        stdout(&output),
+        stderr(&output)
+    );
+
+    // The mock server should have received exactly max_attempts + 1 = 3 requests
+    // (the initial attempt plus 2 retries).
+    assert_eq!(
+        request_count(&rt, &server),
+        3,
+        "persistent 5xx must stop after max_attempts; server received {} requests",
+        request_count(&rt, &server)
+    );
+}

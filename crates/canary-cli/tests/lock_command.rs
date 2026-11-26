@@ -235,3 +235,61 @@ fn a_zero_protocol_is_rejected_before_anything_is_written() {
     );
     assert!(!lockfile_path(&project).exists());
 }
+
+#[cfg(unix)]
+#[test]
+fn lock_fails_when_destination_is_unwritable() {
+    use std::process::Command;
+
+    let project = TempProject::new("lock-unwritable-dest");
+    project.write("fixtures/p28-xdr-lock-001.toml", VALID_FIXTURE);
+
+    // Set project root to read-only (mode 0o555) so lockfile creation fails.
+    let _ = Command::new("chmod")
+        .args(["555", project.path.to_str().unwrap()])
+        .output()
+        .expect("failed to set project root to read-only");
+
+    let lockfile = lockfile_path(&project);
+    let output = run_in(&project.path, &["lock"]);
+
+    // The command must fail with exit code 2.
+    assert!(
+        !output.status.success(),
+        "lock must fail with exit code 2; stderr: {}",
+        stderr(&output)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "lock must exit with code 2 when destination is unwritable; stderr: {}",
+        stderr(&output)
+    );
+
+    // Stderr must name the permission error and the lockfile path.
+    let err_msg = stderr(&output);
+    assert!(
+        err_msg.contains("permission") || err_msg.contains("Permission"),
+        "stderr must mention permission error; got: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains(&*lockfile.to_string_lossy()),
+        "stderr must name the lockfile path; got: {}",
+        err_msg
+    );
+
+    // No orphaned .tmp file must remain.
+    let tmp_file = project.path.join(".stellar-canary.lock.tmp");
+    assert!(
+        !tmp_file.exists(),
+        "no orphaned .tmp file must remain after failed lock; tmp file exists: {}",
+        tmp_file.display()
+    );
+
+    // Restore write permissions.
+    let _ = Command::new("chmod")
+        .args(["755", project.path.to_str().unwrap()])
+        .output()
+        .expect("failed to restore project root permissions");
+}

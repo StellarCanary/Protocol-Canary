@@ -80,9 +80,9 @@ jobs:
             ref: main
             pack_dir: protocol-30
             protocol: 30
-            min_xdr: 9
+            min_xdr: 11
             vector: ""
-            expected_xdr_ids: p30-xdr-cap88-timepointms-endpoints-proposed-maximum,p30-xdr-cap88-timepointms-endpoints-proposed-zero,p30-xdr-cap88-timepointms-endpoints-signed-maximum,p30-xdr-cap88-timepointms-endpoints-signed-zero,p30-xdr-cap0084-muxed-contract-address-roundtrip,p30-xdr-cap0084-muxed-contract-id-u64-max,p30-xdr-cap0084-muxed-contract-id-zero,p30-xdr-cap0088-stellar-value-empty-tx-set-ms-roundtrip,p30-xdr-cap0088-stellar-value-signed-ms-roundtrip
+            expected_xdr_ids: p30-xdr-cap88-timepointms-endpoints-proposed-maximum,p30-xdr-cap88-timepointms-endpoints-proposed-zero,p30-xdr-cap88-timepointms-endpoints-signed-maximum,p30-xdr-cap88-timepointms-endpoints-signed-zero,p30-xdr-cap0084-muxed-contract-address-roundtrip,p30-xdr-cap0084-muxed-contract-id-u64-max,p30-xdr-cap0084-muxed-contract-id-zero,p30-xdr-cap0088-stellar-value-empty-tx-set-ms-roundtrip,p30-xdr-cap0088-stellar-value-empty-tx-set-ms-999ms,p30-xdr-cap0088-stellar-value-signed-ms-roundtrip,p30-xdr-cap0088-stellar-value-signed-ms-999ms
             expected_skipped_id: p30-rpc-version-info-protocol-30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

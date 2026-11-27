@@ -398,3 +398,40 @@ fn a_malformed_toml_vector_is_a_loader_parse_error_with_its_path() {
     let rendered = error.to_string();
     assert!(rendered.contains("xdr-toml-syntax.toml"), "{rendered}");
 }
+
+/// A fixture with only the required metadata keys (`id`, `protocol`,
+/// `surface`, `category`, `description`) and the minimum body its surface
+/// needs must load, validate and parse, with every optional field defaulted.
+#[test]
+fn a_minimal_fixture_with_all_optional_fields_omitted_loads_with_defaults() {
+    let dir = TempDir::new("canary-conformance-minimal");
+    std::fs::write(
+        dir.path.join("minimal.toml"),
+        "id = \"p28-rpc-minimal\"\nprotocol = 28\nsurface = \"rpc\"\ncategory = \"network\"\ndescription = \"minimal\"\nmethod = \"get-health\"\n\n[[assert]]\nkind = \"field-exists\"\nfield = \"status\"\n",
+    )
+    .expect("write minimal fixture");
+
+    let loaded = load_directory(&dir.path).expect("a minimal fixture loads");
+    assert_eq!(loaded.len(), 1);
+    let fixture = &loaded[0];
+
+    assert_eq!(fixture.metadata.id, "p28-rpc-minimal");
+    assert_eq!(fixture.metadata.protocol.0, 28);
+    assert_eq!(fixture.metadata.surface, Surface::Rpc);
+    assert_eq!(fixture.metadata.category, "network");
+    assert_eq!(fixture.metadata.description, "minimal");
+
+    // Omitted optional fields take their documented defaults.
+    assert_eq!(fixture.metadata.source_reference, None);
+    assert!(fixture.metadata.required_capabilities.is_empty());
+    assert_eq!(fixture.input_file, None);
+    assert_eq!(fixture.expected_file, None);
+    assert!(fixture.verification.is_none());
+    // Loaded from disk, so the content digest is still computed.
+    assert!(!fixture.metadata.content_digest.is_empty());
+
+    let store = validate(&loaded).expect("a minimal fixture passes validation");
+    assert_eq!(store.len(), 1);
+    parse_surface(fixture)
+        .unwrap_or_else(|error| panic!("minimal fixture failed to parse: {}", error.message()));
+}

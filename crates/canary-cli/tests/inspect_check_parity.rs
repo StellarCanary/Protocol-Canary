@@ -7,7 +7,7 @@
 
 mod support;
 
-use support::{run_in, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
+use support::{run_in, stderr, stdout, TempProject, VALID_STELLAR_VALUE_BASE64};
 
 use serde_json::Value;
 
@@ -64,10 +64,17 @@ fn parity_project(name: &str) -> TempProject {
 
 /// The plan `inspect` reports, as `(id, surface)` pairs in order.
 fn inspect_plan(dir: &TempProject) -> (Vec<FixtureRef>, Vec<FixtureRef>, Value) {
-    let output = run_in(
-        &dir.path,
-        &["inspect", "--format", "json", "--fixtures-dir", "fixtures"],
-    );
+    inspect_plan_with(dir, &[])
+}
+
+/// [`inspect_plan`] with extra flags, such as a `--fixture` filter.
+fn inspect_plan_with(
+    dir: &TempProject,
+    extra: &[&str],
+) -> (Vec<FixtureRef>, Vec<FixtureRef>, Value) {
+    let mut args = vec!["inspect", "--format", "json", "--fixtures-dir", "fixtures"];
+    args.extend_from_slice(extra);
+    let output = run_in(&dir.path, &args);
     assert!(
         output.status.success(),
         "inspect failed: {}",
@@ -103,10 +110,14 @@ fn inspect_plan(dir: &TempProject) -> (Vec<FixtureRef>, Vec<FixtureRef>, Value) 
 /// The results `check` reports, as `(fixtureId, surface)` pairs in
 /// execution order.
 fn check_results(dir: &TempProject) -> (Vec<FixtureRef>, Vec<FixtureRef>) {
-    let output = run_in(
-        &dir.path,
-        &["check", "--format", "json", "--fixtures-dir", "fixtures"],
-    );
+    check_results_with(dir, &[])
+}
+
+/// [`check_results`] with extra flags, such as a `--fixture` filter.
+fn check_results_with(dir: &TempProject, extra: &[&str]) -> (Vec<FixtureRef>, Vec<FixtureRef>) {
+    let mut args = vec!["check", "--format", "json", "--fixtures-dir", "fixtures"];
+    args.extend_from_slice(extra);
+    let output = run_in(&dir.path, &args);
     assert!(output.status.success(), "check failed: {}", stdout(&output));
     let report: Value = serde_json::from_str(&stdout(&output)).expect("check prints JSON");
 
@@ -312,4 +323,121 @@ fn the_terminal_format_is_still_the_default() {
         "{}",
         stdout(&defaulted)
     );
+}
+
+/// A project whose fixture ids share a `contract_` prefix, plus one that
+/// does not, so a wildcard filter has something to include and exclude.
+fn wildcard_project(name: &str) -> TempProject {
+    let dir = TempProject::new(name);
+    dir.write(".stellar-canary.toml", OFFLINE_CONFIG);
+    // Written out of id order so path order, not id order, decides.
+    dir.write("fixtures/xdr/z.toml", &xdr_fixture("contract_z", 28));
+    dir.write("fixtures/xdr/a.toml", &xdr_fixture("contract_a", 28));
+    dir.write("fixtures/xdr/m.toml", &xdr_fixture("other_m", 28));
+    // Matches the pattern but targets another protocol: skipped by both.
+    dir.write("fixtures/xdr/p.toml", &xdr_fixture("contract_old", 27));
+    dir
+}
+
+#[test]
+fn inspect_and_check_resolve_the_same_fixtures_for_a_wildcard_filter() {
+    let dir = wildcard_project("parity-wildcard");
+    let filter = ["--fixture", "contract_*"];
+
+    let (would_run, skipped, _document) = inspect_plan_with(&dir, &filter);
+    assert_eq!(
+        would_run,
+        vec![
+            ("contract_a".to_string(), "xdr".to_string()),
+            ("contract_z".to_string(), "xdr".to_string()),
+        ],
+        "the wildcard selects every contract_ fixture and nothing else"
+    );
+    assert_eq!(
+        skipped,
+        vec![("contract_old".to_string(), "xdr".to_string())],
+        "a matching fixture for another protocol is skipped, not dropped"
+    );
+
+    let (executed, check_skipped) = check_results_with(&dir, &filter);
+    assert_parity(&would_run, &executed);
+    assert_eq!(skipped, check_skipped);
+}
+
+#[test]
+fn inspect_and_check_agree_on_patterns_anchored_at_either_end() {
+    let dir = wildcard_project("parity-wildcard-anchors");
+    for pattern in ["*_a", "contract_*", "c*a", "*"] {
+        let filter = ["--fixture", pattern];
+        let (would_run, skipped, _document) = inspect_plan_with(&dir, &filter);
+        let (executed, check_skipped) = check_results_with(&dir, &filter);
+        assert_parity(&would_run, &executed);
+        assert_eq!(skipped, check_skipped, "skipped differ for {pattern:?}");
+    }
+}
+
+#[test]
+fn a_filter_without_a_wildcard_still_matches_one_exact_id_in_both() {
+    let dir = wildcard_project("parity-wildcard-exact");
+    let filter = ["--fixture", "contract_a"];
+    let (would_run, _skipped, _document) = inspect_plan_with(&dir, &filter);
+    assert_eq!(
+        would_run,
+        vec![("contract_a".to_string(), "xdr".to_string())]
+    );
+    let (executed, _check_skipped) = check_results_with(&dir, &filter);
+    assert_parity(&would_run, &executed);
+}
+
+#[test]
+fn a_non_matching_wildcard_fails_identically_in_inspect_and_check() {
+    let dir = wildcard_project("parity-wildcard-none");
+    let inspect = run_in(
+        &dir.path,
+        &[
+            "inspect",
+            "--format",
+            "json",
+            "--fixtures-dir",
+            "fixtures",
+            "--fixture",
+            "nothing_*",
+        ],
+    );
+    let check = run_in(
+        &dir.path,
+        &[
+            "check",
+            "--format",
+            "json",
+            "--fixtures-dir",
+            "fixtures",
+            "--fixture",
+            "nothing_*",
+        ],
+    );
+
+    assert!(!inspect.status.success() && !check.status.success());
+    assert_eq!(
+        inspect.status.code(),
+        check.status.code(),
+        "inspect and check must exit with the same code"
+    );
+    assert_eq!(
+        check.status.code(),
+        Some(2),
+        "a filter with no matches exits 2"
+    );
+    assert!(
+        stderr(&check).contains("no matching fixtures found for --fixture \"nothing_*\""),
+        "{}",
+        stderr(&check)
+    );
+    assert_eq!(
+        stderr(&inspect),
+        stderr(&check),
+        "inspect and check must print the same diagnostic"
+    );
+    assert!(stdout(&inspect).is_empty(), "{}", stdout(&inspect));
+    assert!(stdout(&check).is_empty(), "{}", stdout(&check));
 }

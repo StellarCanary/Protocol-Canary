@@ -173,6 +173,22 @@ fn resolve_cache_dir(
     Ok(dir)
 }
 
+/// The error `check` and `inspect` both raise when their fixture filters
+/// select nothing, so a non-matching filter reads the same in both.
+fn no_matching_fixtures(fixture: Option<&str>, surface: Option<Surface>) -> CanaryError {
+    let mut filters = Vec::new();
+    if let Some(fixture) = fixture {
+        filters.push(format!("--fixture {fixture:?}"));
+    }
+    if let Some(surface) = surface {
+        filters.push(format!("--surface {surface}"));
+    }
+    CanaryError::Configuration(format!(
+        "no matching fixtures found for {}",
+        filters.join(" and ")
+    ))
+}
+
 /// Runs `stellar-canary check`, the only command that executes fixtures.
 ///
 /// `args` holds the parsed `check` flags. [`CheckArgs::protocol`],
@@ -278,17 +294,10 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     .collect();
 
     if loaded_fixtures.is_empty() && (args.fixture.is_some() || args.surface.is_some()) {
-        let mut filters = Vec::new();
-        if let Some(fixture) = &args.fixture {
-            filters.push(format!("--fixture {fixture:?}"));
-        }
-        if let Some(surface) = args.surface {
-            filters.push(format!("--surface {}", Surface::from(surface)));
-        }
-        return Err(CanaryError::Configuration(format!(
-            "no matching fixtures found for {}",
-            filters.join(" and ")
-        )));
+        return Err(no_matching_fixtures(
+            args.fixture.as_deref(),
+            args.surface.map(Into::into),
+        ));
     }
 
     let fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
@@ -651,6 +660,8 @@ struct InspectSetup {
     target_protocol: ProtocolVersion,
     /// `flag`, `config` or `default` (CA-03).
     target_source: &'static str,
+    /// `--fixture`: the ID pattern that narrows the plan, as in `check`.
+    fixture: Option<String>,
 }
 
 fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
@@ -703,6 +714,19 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
 
+    // A `--fixture` pattern that selects nothing fails before any output,
+    // with the error and exit code `check` gives for the same pattern.
+    if let Some(pattern) = args.fixture.as_deref() {
+        let discovered = if fixtures_dir.is_dir() {
+            canary_fixtures::load_directory(&fixtures_dir)?
+        } else {
+            Vec::new()
+        };
+        if canary_runner::filter_fixtures(&discovered, Some(pattern), None).is_empty() {
+            return Err(no_matching_fixtures(Some(pattern), None));
+        }
+    }
+
     Ok(InspectSetup {
         root,
         root_selected_by,
@@ -715,6 +739,7 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
         explicit_type,
         target_protocol,
         target_source,
+        fixture: args.fixture.clone(),
     })
 }
 
@@ -745,11 +770,16 @@ fn inspect_plan(
     ),
     CanaryError,
 > {
-    let loaded_fixtures = if setup.fixtures_dir.is_dir() {
+    let discovered_fixtures = if setup.fixtures_dir.is_dir() {
         canary_fixtures::load_directory(&setup.fixtures_dir)?
     } else {
         Vec::new()
     };
+    let loaded_fixtures: Vec<_> =
+        canary_runner::filter_fixtures(&discovered_fixtures, setup.fixture.as_deref(), None)
+            .into_iter()
+            .cloned()
+            .collect();
     let _fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
     let enabled = EnabledSurfaces {
         xdr: setup.config.tests.xdr,
@@ -2269,6 +2299,7 @@ mod tests {
             format: crate::cli::InspectFormat::Terminal,
             json: false,
             verbose: false,
+            fixture: None,
         }
     }
 

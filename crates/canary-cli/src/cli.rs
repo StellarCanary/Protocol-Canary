@@ -196,7 +196,8 @@ pub struct CheckArgs {
     #[arg(long = "fixtures-dir", value_name = "PATH")]
     pub fixtures_dir: Option<PathBuf>,
 
-    /// Run only the fixture with this exact ID.
+    /// Run only fixtures whose ID matches this pattern (`*` matches any
+    /// characters; without `*` the ID must match exactly).
     #[arg(long, value_name = "ID")]
     pub fixture: Option<String>,
 
@@ -502,6 +503,11 @@ pub struct InspectArgs {
     /// `fixtures_dir` in .stellar-canary.toml; default: fixtures).
     #[arg(long = "fixtures-dir", value_name = "PATH")]
     pub fixtures_dir: Option<PathBuf>,
+
+    /// Plan only fixtures whose ID matches this pattern, as `check
+    /// --fixture` does (`*` matches any characters).
+    #[arg(long, value_name = "ID")]
+    pub fixture: Option<String>,
 
     /// Directory to treat as the project root (default: the current
     /// directory). Relative `--config`, `--fixtures-dir` and `--output`

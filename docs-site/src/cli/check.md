@@ -19,7 +19,7 @@ Options:
       --rpc-max-retries <RPC_MAX_RETRIES>  Maximum number of retries after a failed RPC attempt; 0 disables retries (attempts = n + 1) [default: 3]
       --rpc-retry-delay-ms <RPC_RETRY_DELAY_MS>  Base delay between RPC retry attempts in milliseconds, exponential backoff capped at 30s [default: 500]
       --fixtures-dir <FIXTURES_DIR>  Directory containing fixture files [default: fixtures]
-      --fixture <ID>                 Run only the fixture with this exact ID
+      --fixture <ID>                 Run only fixtures whose ID matches this pattern (`*` matches any characters; without `*` the ID must match exactly)
       --surface <SURFACE>            Run fixtures from only this surface [possible values: xdr, rpc, soroban]
       --cache-dir <PATH>             Directory for cached fixture execution results [default: .stellar-canary-cache in the project root; created if missing]
       --format <FORMAT>              Output format [default: terminal] [possible values: terminal, json, markdown]
@@ -53,7 +53,9 @@ fails with exit code `2` (see [No applicable fixtures](#no-applicable-fixtures))
 
 ## Targeting fixtures
 
-Use `--fixture <ID>` to run one fixture by its exact ID, or `--surface` to run
+Use `--fixture <ID>` to run one fixture by its exact ID (or every fixture
+whose ID matches a pattern such as `p28-xdr-*`, where `*` matches any
+characters; `inspect --fixture` plans the same selection), or `--surface` to run
 only `xdr`, `rpc` or `soroban` fixtures. Combine the flags to select one
 fixture on a specific surface. A filter with no matches exits `2` and reports
 `no matching fixtures found`.

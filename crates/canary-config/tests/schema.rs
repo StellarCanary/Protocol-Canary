@@ -559,6 +559,16 @@ fn an_absolute_or_empty_fixtures_dir_is_rejected() {
         r"\\server\fixtures",
         r"C:\fixtures",
         " leading",
+        // #708: a relative path that still climbs out of the project root is
+        // not a value for a directory documented as relative to that root.
+        "../fixtures",
+        "fixtures/../../etc",
+        "a/../../b",
+        r"..\fixtures",
+        // #708: a trailing space names a different directory from the one a
+        // reader of the configuration expects.
+        "fixtures ",
+        "tests/fixtures  ",
     ] {
         let error = validate_toml(&config_with("fixtures_dir", value))
             .expect_err("fixtures_dir is documented as a path relative to the project root");
@@ -571,6 +581,7 @@ fn an_absolute_or_empty_fixtures_dir_is_rejected() {
         r"fixtures\pack",
         "p 28 packs",
         ".fixtures",
+        "tests/fixtures.v2",
     ] {
         validate_toml(&config_with("fixtures_dir", value))
             .unwrap_or_else(|error| panic!("{value:?} is a relative path: {error}"));

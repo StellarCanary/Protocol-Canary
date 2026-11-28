@@ -36,8 +36,11 @@ pub const RPC_CLIENT_DEPENDENCIES: &[&str] = &[
 /// The raw, filesystem-level signals gathered for a project root.
 #[derive(Debug, Default, Clone)]
 pub struct DetectionSignals {
+    /// Parsed manifests whose dependency names are used for capability detection.
     pub manifests: Vec<ProjectManifest>,
+    /// Whether a `stellar.toml` file was found at the project root.
     pub has_stellar_toml: bool,
+    /// Whether a `.wasm` artifact was found in known build/output locations.
     pub has_wasm_artifact: bool,
 }
 

@@ -173,6 +173,22 @@ fn resolve_cache_dir(
     Ok(dir)
 }
 
+/// The error `check` and `inspect` both raise when their fixture filters
+/// select nothing, so a non-matching filter reads the same in both.
+fn no_matching_fixtures(fixture: Option<&str>, surface: Option<Surface>) -> CanaryError {
+    let mut filters = Vec::new();
+    if let Some(fixture) = fixture {
+        filters.push(format!("--fixture {fixture:?}"));
+    }
+    if let Some(surface) = surface {
+        filters.push(format!("--surface {surface}"));
+    }
+    CanaryError::Configuration(format!(
+        "no matching fixtures found for {}",
+        filters.join(" and ")
+    ))
+}
+
 /// Runs `stellar-canary check`, the only command that executes fixtures.
 ///
 /// `args` holds the parsed `check` flags. [`CheckArgs::protocol`],
@@ -278,17 +294,10 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     .collect();
 
     if loaded_fixtures.is_empty() && (args.fixture.is_some() || args.surface.is_some()) {
-        let mut filters = Vec::new();
-        if let Some(fixture) = &args.fixture {
-            filters.push(format!("--fixture {fixture:?}"));
-        }
-        if let Some(surface) = args.surface {
-            filters.push(format!("--surface {}", Surface::from(surface)));
-        }
-        return Err(CanaryError::Configuration(format!(
-            "no matching fixtures found for {}",
-            filters.join(" and ")
-        )));
+        return Err(no_matching_fixtures(
+            args.fixture.as_deref(),
+            args.surface.map(Into::into),
+        ));
     }
 
     let fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
@@ -441,12 +450,22 @@ async fn run_check_inner(args: CheckArgs) -> Result<ExitCode, CanaryError> {
     let results = canary_runner::execute(&plan, &context, &context.network.rpc_url).await;
 
     let has_warnings = canary_runner::summarize(&results).has_warnings();
+    // The report describes the run's own outcome, so `--fail-on-warning` does
+    // not rewrite it: a run whose only problems are warnings still reports
+    // `status: "warning"`. The flag is a CI gate, so it only promotes the
+    // decision used for the exit code (see `policy.rs` in `canary-core`). A
+    // configured `warnings_are_failures` remains a policy decision and does
+    // promote the report status to `fail`, as before.
     let policy = Policy {
-        warnings_are_failures: config.policy.warnings_are_failures
-            || (args.fail_on_warning && has_warnings),
+        warnings_are_failures: config.policy.warnings_are_failures,
     };
     let decision = DefaultPolicyEvaluator.evaluate(&results, &policy);
-    let exit_code = canary_core::exit_code_for_run(&results, decision);
+    let gate = if args.fail_on_warning && has_warnings {
+        canary_core::PolicyDecision::Fail
+    } else {
+        decision
+    };
+    let exit_code = canary_core::exit_code_for_run(&results, gate);
 
     // The fixtures' own CF-04 evidence, so the terminal report can show
     // which results are backed by a verification record. A fixture with
@@ -641,6 +660,8 @@ struct InspectSetup {
     target_protocol: ProtocolVersion,
     /// `flag`, `config` or `default` (CA-03).
     target_source: &'static str,
+    /// `--fixture`: the ID pattern that narrows the plan, as in `check`.
+    fixture: Option<String>,
 }
 
 fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
@@ -693,6 +714,19 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
     let target_protocol =
         ProtocolVersion(validated_protocol_flag(args.protocol)?.unwrap_or(config.protocol));
 
+    // A `--fixture` pattern that selects nothing fails before any output,
+    // with the error and exit code `check` gives for the same pattern.
+    if let Some(pattern) = args.fixture.as_deref() {
+        let discovered = if fixtures_dir.is_dir() {
+            canary_fixtures::load_directory(&fixtures_dir)?
+        } else {
+            Vec::new()
+        };
+        if canary_runner::filter_fixtures(&discovered, Some(pattern), None).is_empty() {
+            return Err(no_matching_fixtures(Some(pattern), None));
+        }
+    }
+
     Ok(InspectSetup {
         root,
         root_selected_by,
@@ -705,6 +739,7 @@ fn inspect_setup(args: &InspectArgs) -> Result<InspectSetup, CanaryError> {
         explicit_type,
         target_protocol,
         target_source,
+        fixture: args.fixture.clone(),
     })
 }
 
@@ -735,11 +770,16 @@ fn inspect_plan(
     ),
     CanaryError,
 > {
-    let loaded_fixtures = if setup.fixtures_dir.is_dir() {
+    let discovered_fixtures = if setup.fixtures_dir.is_dir() {
         canary_fixtures::load_directory(&setup.fixtures_dir)?
     } else {
         Vec::new()
     };
+    let loaded_fixtures: Vec<_> =
+        canary_runner::filter_fixtures(&discovered_fixtures, setup.fixture.as_deref(), None)
+            .into_iter()
+            .cloned()
+            .collect();
     let _fixture_store = canary_fixtures::validate(&loaded_fixtures)?;
     let enabled = EnabledSurfaces {
         xdr: setup.config.tests.xdr,
@@ -1267,10 +1307,21 @@ pub fn run_report(args: ReportArgs) -> ExitCode {
 fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
     // `report -` reads the report from standard input until EOF (E-053),
     // so a report can be piped straight through without a temporary file.
-    let json_text = if args.path == Path::new("-") {
-        canary_report::read_report_json(std::io::stdin()).map_err(|e| {
+    let from_stdin = args.path == Path::new("-");
+    let json_text = if from_stdin {
+        let text = canary_report::read_report_json(std::io::stdin()).map_err(|e| {
             CanaryError::Configuration(format!("failed to read report from standard input: {e}"))
-        })?
+        })?;
+        // An empty pipeline (or one that only wrote whitespace) is not a
+        // report. Saying so names the actual problem instead of leaving
+        // serde's "EOF while parsing a value" as the whole explanation.
+        if text.trim().is_empty() {
+            return Err(CanaryError::Configuration(
+                "failed to read report from standard input: the input contains no report data"
+                    .to_string(),
+            ));
+        }
+        text
     } else {
         std::fs::read_to_string(&args.path).map_err(|e| {
             CanaryError::Configuration(format!(
@@ -1279,8 +1330,16 @@ fn run_report_inner(args: ReportArgs) -> Result<ExitCode, CanaryError> {
             ))
         })?
     };
-    let report_input = canary_report::JsonReporter::parse(&json_text)
-        .map_err(|e| CanaryError::Configuration(format!("invalid report file: {e}")))?;
+    let report_input = canary_report::JsonReporter::parse(&json_text).map_err(|e| {
+        // Name the stream the broken JSON came from, so a truncated pipe is
+        // told apart from a bad file without guessing.
+        let message = if from_stdin {
+            format!("invalid report file: failed to parse report from standard input: {e}")
+        } else {
+            format!("invalid report file: {e}")
+        };
+        CanaryError::Configuration(message)
+    })?;
 
     let rendered = match args.format {
         OutputFormat::Terminal => TerminalReporter::render(&report_input),
@@ -2240,6 +2299,7 @@ mod tests {
             format: crate::cli::InspectFormat::Terminal,
             json: false,
             verbose: false,
+            fixture: None,
         }
     }
 

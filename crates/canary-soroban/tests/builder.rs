@@ -1,19 +1,22 @@
 //! Soroban argument builder tests: 128-bit, 256-bit, Void, Duration and
 //! Timepoint (issue #488), Bytes and Address (issue #427), and Vec and Map
-//! (issue #428) simulation arguments.
+//! (issue #428) simulation arguments, plus the operation-list validation that
+//! refuses an empty transaction envelope (issue #764).
 //!
 //! Every encoding test round-trips through `TransactionEnvelope::from_xdr_base64`
 //! so a passing assertion proves the argument survived as real XDR, not just
 //! that a string was produced.
 
 use canary_soroban::{
-    build_invoke_transaction_envelope, BuilderError, InvocationSpec, ScValInput, MAX_ARG_DEPTH,
+    build_invoke_transaction_envelope, BuilderError, InvocationSpec, OperationBuilder, ScValInput,
+    ValidationError, MAX_ARG_DEPTH,
 };
 use stellar_strkey::{ed25519::PublicKey as StrkeyPublicKey, Contract as StrkeyContract};
 use stellar_xdr::{
-    AccountId, ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts, Limits,
-    OperationBody, PublicKey, ReadXdr, ScAddress, ScBytes, ScMap, ScMapEntry, ScVal, ScVec,
-    TimePoint, TransactionEnvelope, UInt128Parts, UInt256Parts, Uint256,
+    AccountId, BumpSequenceOp, ContractId, Duration, Hash, HostFunction, Int128Parts, Int256Parts,
+    Limits, Operation, OperationBody, PublicKey, ReadXdr, ScAddress, ScBytes, ScMap, ScMapEntry,
+    ScVal, ScVec, SequenceNumber, TimePoint, TransactionEnvelope, UInt128Parts, UInt256Parts,
+    Uint256,
 };
 
 /// A well-formed but arbitrary account/contract pair (all-zero payload bytes)
@@ -52,6 +55,70 @@ fn encode(args: Vec<ScValInput>) -> Vec<ScVal> {
 /// Builds an envelope for `args` and returns the builder error.
 fn build_err(args: Vec<ScValInput>) -> BuilderError {
     build_invoke_transaction_envelope(&spec_with(args)).unwrap_err()
+}
+
+/// A placeholder operation that is valid XDR but says nothing about the
+/// builder's argument encoding; only the operation list is under test.
+fn bump_sequence(to: i64) -> Operation {
+    Operation {
+        source_account: None,
+        body: OperationBody::BumpSequence(BumpSequenceOp {
+            bump_to: SequenceNumber(to),
+        }),
+    }
+}
+
+/// An operation builder that has been given no operations cannot produce a
+/// transaction: encoding the empty list would yield an envelope with zero
+/// operations, which simulation and execution must never receive. The error
+/// must be the explicit validation variant and name the requirement.
+#[test]
+fn an_empty_operation_builder_is_rejected_with_empty_operations() {
+    let builder = OperationBuilder::new();
+    assert!(builder.is_empty(), "a new builder starts empty");
+
+    let error = builder
+        .build()
+        .expect_err("an empty operation list must not build a transaction");
+    assert_eq!(error, ValidationError::EmptyOperations);
+    assert!(
+        matches!(
+            BuilderError::from(error),
+            BuilderError::Validation(ValidationError::EmptyOperations)
+        ),
+        "the envelope builder must surface the same validation failure"
+    );
+
+    let message = error.to_string();
+    assert!(
+        message.contains("at least one operation"),
+        "the diagnostic must name the missing operation requirement, got {message:?}"
+    );
+}
+
+/// The non-empty path still hands back exactly the operations it was given,
+/// in order, so the validation above is not rejecting valid transactions.
+#[test]
+fn a_non_empty_operation_builder_returns_its_operations_in_order() {
+    let operations = OperationBuilder::new()
+        .with_operation(bump_sequence(1))
+        .with_operation(bump_sequence(2))
+        .build()
+        .expect("a builder with operations builds");
+
+    assert_eq!(operations.len(), 2);
+    assert_eq!(
+        operations[0].body,
+        OperationBody::BumpSequence(BumpSequenceOp {
+            bump_to: SequenceNumber(1)
+        })
+    );
+    assert_eq!(
+        operations[1].body,
+        OperationBody::BumpSequence(BumpSequenceOp {
+            bump_to: SequenceNumber(2)
+        })
+    );
 }
 
 #[test]

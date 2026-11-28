@@ -226,3 +226,82 @@ async fn runner_executes_get_health_fixture_pass_and_fail() {
     let fail_result = runner.run(&fail_fixture, &context()).await.unwrap();
     assert_eq!(fail_result.status, Status::Fail);
 }
+
+/// A node that is catching up reports a non-`healthy` status. The client
+/// must keep that status verbatim (it does not coerce it to `healthy`) and
+/// keep the ledger fields that show how far behind it is.
+#[tokio::test]
+async fn get_health_preserves_a_degraded_status_and_its_sync_lag_details() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "status": "degraded",
+                "latestLedger": 1_200_000,
+                "oldestLedger": 1_079_041,
+                "ledgerRetentionWindow": 120_960,
+                "latestLedgerCloseTime": "1728400000",
+                "oldestLedgerCloseTime": "1727795200"
+            }
+        })))
+        .mount(&server)
+        .await;
+
+    let client = HttpRpcClient::new(server.uri());
+    let response = observe_health(&client)
+        .await
+        .expect("a degraded node still answers getHealth");
+    assert_eq!(response.status, "degraded");
+    assert_ne!(response.status, "healthy");
+    assert_eq!(response.latest_ledger, Some(1_200_000));
+    assert_eq!(response.oldest_ledger, Some(1_079_041));
+    assert_eq!(response.ledger_retention_window, Some(120_960));
+    assert_eq!(
+        response.latest_ledger_close_time.as_deref(),
+        Some("1728400000")
+    );
+    assert_eq!(
+        response.oldest_ledger_close_time.as_deref(),
+        Some("1727795200")
+    );
+
+    // A fixture that expects `healthy` fails against the degraded node, and
+    // one that expects `degraded` passes, so a degraded endpoint is never
+    // reported as healthy.
+    let runner = DefaultRpcRunner::new(HttpRpcClient::new(server.uri()));
+    let expects_healthy = load_fixture(
+        "p28-rpc-health-degraded-expects-healthy",
+        r#"
+        method = "get-health"
+
+        [[assert]]
+        kind = "field-equals"
+        field = "status"
+        value = "healthy"
+        "#,
+    );
+    let result = runner.run(&expects_healthy, &context()).await.unwrap();
+    assert_eq!(result.status, Status::Fail);
+
+    let expects_degraded = load_fixture(
+        "p28-rpc-health-degraded-expects-degraded",
+        r#"
+        method = "get-health"
+
+        [[assert]]
+        kind = "field-equals"
+        field = "status"
+        value = "degraded"
+
+        [[assert]]
+        kind = "field-type"
+        field = "latestLedger"
+        expected_type = "number"
+        "#,
+    );
+    let result = runner.run(&expects_degraded, &context()).await.unwrap();
+    assert_eq!(result.status, Status::Pass);
+}

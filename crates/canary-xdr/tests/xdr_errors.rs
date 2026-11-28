@@ -23,7 +23,7 @@ use canary_xdr::{
     encode_ledger_header, encode_transaction_envelope, DecodedValue, XdrDecodeError, XdrTypeName,
 };
 use stellar_xdr::{
-    ContractExecutable, Hash, LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, ScVal,
+    ContractExecutable, Hash, LedgerCloseMeta, LedgerEntry, LedgerHeader, Limits, ReadXdr, ScVal,
     StellarValue, TransactionEnvelope, WriteXdr,
 };
 
@@ -65,6 +65,48 @@ fn stellar_value_bytes() -> Vec<u8> {
     StellarValue::default()
         .to_xdr(Limits::none())
         .expect("the default StellarValue encodes")
+}
+
+fn sc_val_bytes() -> Vec<u8> {
+    ScVal::Bool(true)
+        .to_xdr(Limits::none())
+        .expect("the ScVal encodes")
+}
+
+fn contract_executable_bytes() -> Vec<u8> {
+    ContractExecutable::Wasm(Hash([2; 32]))
+        .to_xdr(Limits::none())
+        .expect("the ContractExecutable encodes")
+}
+
+/// `ScVal`, `StellarValue` and `ContractExecutable` are decoded through the
+/// generic `decode` entry point, which surfaces `stellar_xdr::Error` rather
+/// than the typed `XdrDecodeError`. Assert it rejects a complete value with a
+/// suffix, and that the reader stops exactly at the end of the valid value —
+/// the byte offset the typed `InvalidXdr` variant reports for the dedicated
+/// decoders.
+fn assert_generic_trailing_bytes_rejected(type_name: XdrTypeName, valid: &[u8]) {
+    let mut oversized = valid.to_vec();
+    oversized.extend(std::iter::repeat_n(0u8, 4));
+    assert!(
+        decode(type_name, &to_base64(&oversized)).is_err(),
+        "generic decode must reject trailing bytes for {type_name}"
+    );
+
+    let mut cursor = std::io::Cursor::new(oversized.as_slice());
+    let mut limited = stellar_xdr::Limited::new(&mut cursor, Limits::none());
+    let read = match type_name {
+        XdrTypeName::ScVal => ScVal::read_xdr(&mut limited).map(|_| ()),
+        XdrTypeName::StellarValue => StellarValue::read_xdr(&mut limited).map(|_| ()),
+        XdrTypeName::ContractExecutable => ContractExecutable::read_xdr(&mut limited).map(|_| ()),
+        other => panic!("no generic trailing-byte case for {other}"),
+    };
+    read.expect("the valid prefix must decode");
+    assert_eq!(
+        limited.inner.position(),
+        valid.len() as u64,
+        "trailing bytes must be reported at the end of the valid {type_name}"
+    );
 }
 
 /// Asserts `err` is `InvalidXdr` for `expected_type_name` and returns the
